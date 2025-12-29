@@ -1,0 +1,427 @@
+:root{
+  --bg: #f5f8ff;
+  --panel: #ffffff;
+  --border: rgba(18, 40, 90, .10);
+  --text: #0f172a;
+  --muted: rgba(15, 23, 42, .65);
+
+  --primary: #1d4ed8;         /* azul */
+  --primary-2: #0ea5e9;       /* celeste */
+  --sidebar-grad-1: #0b2b7a;  /* azul profundo */
+  --sidebar-grad-2: #0a4fb8;  /* azul vivo */
+  --sidebar-grad-3: #0ea5e9;  /* acento */
+  --shadow: 0 10px 30px rgba(2, 8, 23, .08);
+}
+
+*{ box-sizing: border-box; }
+html, body { height: 100%; }
+body{
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  color: var(--text);
+  background: radial-gradient(1200px 500px at 20% 0%, rgba(29,78,216,.10), transparent 60%),
+              radial-gradient(900px 400px at 90% 20%, rgba(14,165,233,.08), transparent 60%),
+              var(--bg);
+}
+
+/* Layout */
+.app-shell{
+  display: grid;
+  grid-template-columns: 290px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar{
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  padding: 16px 14px;
+  color: rgba(255,255,255,.92);
+  background: linear-gradient(160deg,
+    var(--sidebar-grad-1) 0%,
+    var(--sidebar-grad-2) 50%,
+    rgba(14,165,233,.25) 100%);
+  border-right: 1px solid rgba(255,255,255,.10);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.main{
+  padding: 14px 18px 20px 18px;
+}
+
+/* Brand */
+.brand{
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  text-decoration: none;
+  color: inherit;
+}
+
+.brand-mark{
+  width: 40px; height: 40px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.12);
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255,255,255,.18);
+}
+
+.brand-dot{
+  width: 14px; height: 14px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #fff, rgba(255,255,255,.35));
+  box-shadow: 0 6px 20px rgba(255,255,255,.22);
+}
+
+.brand-title{
+  font-weight: 800;
+  letter-spacing: .3px;
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.brand-subtitle{
+  font-size: .78rem;
+  opacity: .85;
+  margin-top: 3px;
+}
+
+.sidebar-section-label{
+  font-size: .72rem;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  opacity: .7;
+  margin: 2px 2px 6px 2px;
+}
+
+/* Sidebar nav */
+.sidebar-nav{ width: 100%; display: flex; flex-direction: column; gap: 6px; }
+
+.nav-link{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  color: rgba(255,255,255,.92);
+  text-decoration: none;
+  border: 1px solid transparent;
+  transition: background .15s ease, border .15s ease, transform .12s ease;
+}
+
+.nav-link:hover{
+  background: rgba(255,255,255,.10);
+  border-color: rgba(255,255,255,.15);
+}
+
+.nav-link.active{
+  background: rgba(255,255,255,.16);
+  border-color: rgba(255,255,255,.22);
+}
+
+.nav-icon{
+  width: 18px;
+  display: inline-flex;
+  justify-content: center;
+  opacity: .95;
+}
+
+.badge-soft{
+  background: rgba(255,255,255,.18) !important;
+  color: rgba(255,255,255,.92) !important;
+  border: 1px solid rgba(255,255,255,.16);
+  font-weight: 700;
+}
+
+/* Collapsible groups */
+.nav-group { width: 100%; }
+
+.nav-group-toggle{
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 10px 12px;
+  color: rgba(255,255,255,.92);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background .15s ease, border .15s ease;
+}
+
+.nav-group-toggle:hover{
+  background: rgba(255,255,255,.10);
+  border-color: rgba(255,255,255,.15);
+}
+
+.nav-group-toggle.active{
+  background: rgba(255,255,255,.14);
+  border-color: rgba(255,255,255,.20);
+}
+
+.nav-group-toggle .nav-text{
+  flex: 1;
+  text-align: left;
+  font-weight: 700;
+}
+
+.nav-group-toggle .nav-caret{
+  opacity: .9;
+  transition: transform .18s ease;
+}
+
+.nav-group-toggle[aria-expanded="true"] .nav-caret{
+  transform: rotate(90deg);
+}
+
+.nav-muted{
+  opacity: .8;
+  font-size: .92rem;
+  color: rgba(255,255,255,.82);
+}
+
+/* Sidebar bottom user area */
+.sidebar-bottom{
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.user-chip{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255,255,255,.10);
+  border: 1px solid rgba(255,255,255,.16);
+}
+
+.user-avatar{
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.18);
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+}
+
+.user-meta{ line-height: 1.1; }
+.user-name{ font-weight: 800; font-size: .95rem; }
+.user-role{ font-size: .78rem; opacity: .8; }
+
+.btn-new-dist{
+  border-radius: 14px;
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--primary), var(--primary-2));
+  border: 0;
+  box-shadow: 0 10px 30px rgba(29,78,216,.25);
+}
+
+/* Topbar */
+.topbar{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(255,255,255,.72);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--shadow);
+}
+
+.topbar-left{ display: flex; align-items: center; gap: 10px; }
+.page-title{
+  font-weight: 900;
+  color: #0b1b3a;
+  letter-spacing: .2px;
+}
+
+.btn-ghost{
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.75);
+  border-radius: 12px;
+}
+
+.burger{
+  width: 18px;
+  height: 2px;
+  background: #0b1b3a;
+  display: inline-block;
+  position: relative;
+}
+.burger:before, .burger:after{
+  content: "";
+  position: absolute;
+  left: 0;
+  width: 18px;
+  height: 2px;
+  background: #0b1b3a;
+}
+.burger:before{ top: -6px; }
+.burger:after{ top: 6px; }
+
+.topbar-right{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.topbar-search input{
+  width: 240px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+
+.topbar-date{
+  font-size: .85rem;
+  color: rgba(15,23,42,.65);
+}
+
+/* Content */
+.content{
+  padding-top: 14px;
+}
+
+.flash-stack .alert{
+  border-radius: 14px;
+  border: 1px solid var(--border);
+}
+
+/* Sidebar collapsed mode */
+.app-shell.sidebar-collapsed{
+  grid-template-columns: 92px 1fr;
+}
+
+.app-shell.sidebar-collapsed .brand-text,
+.app-shell.sidebar-collapsed .sidebar-section-label,
+.app-shell.sidebar-collapsed .nav-text,
+.app-shell.sidebar-collapsed .nav-group-toggle .nav-caret,
+.app-shell.sidebar-collapsed .user-meta,
+.app-shell.sidebar-collapsed .btn-new-dist{
+  display: none !important;
+}
+
+.app-shell.sidebar-collapsed .nav-link,
+.app-shell.sidebar-collapsed .nav-group-toggle{
+  justify-content: center;
+}
+
+.app-shell.sidebar-collapsed .user-chip{
+  justify-content: center;
+}
+
+/* Make tables/cards a bit nicer by default */
+.card{
+  border-radius: 16px !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: var(--shadow);
+}
+
+.table{
+  margin-bottom: 0;
+}
+
+/* =========================
+   FIX: Layout spacing + sidebar offset
+   ========================= */
+
+/* Si tu HTML usa .content (como en tu screenshot), dale padding real */
+.content{
+  padding: 18px 22px 26px 22px;  /* más aire */
+}
+
+/* Asegura que el contenido no quede pegado al sidebar */
+.page{
+  margin-top: 14px;
+}
+
+/* En pantallas medianas/grandes, aumenta el aire general */
+@media (min-width: 992px){
+  .content{ padding-left: 26px; padding-right: 26px; }
+}
+
+/* =========================
+   FIX: Collapsible groups
+   ========================= */
+
+/* por defecto el grupo está cerrado */
+.nav-group-items{
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding-left: 10px; /* sangría */
+}
+
+/* cuando está abierto */
+.nav-group.open .nav-group-items{
+  display: flex;
+}
+
+/* el caret rota cuando abre */
+.nav-group.open .nav-caret{
+  transform: rotate(180deg);
+}
+
+/* Links dentro del grupo: un poquito más compactos */
+.nav-group-items .nav-link{
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.08);
+}
+
+/* hover/active suaves */
+.nav-group-items .nav-link:hover{
+  background: rgba(255,255,255,.12);
+  border-color: rgba(255,255,255,.16);
+}
+.nav-group-items .nav-link.active{
+  background: rgba(255,255,255,.16);
+  border-color: rgba(255,255,255,.22);
+}
+
+/* =========================
+   FIX: Topbar spacing
+   ========================= */
+
+.topbar{
+  margin: 0 0 14px 0;
+}
+
+/* =========================
+   FIX: Tables not glued + better cards
+   ========================= */
+
+.card{
+  margin-bottom: 16px;
+}
+
+.table-responsive{
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+/* Make table header breathe */
+.table thead th{
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+/* =========================
+   Sidebar width on small screens
+   ========================= */
+@media (max-width: 900px){
+  .app-shell{ grid-template-columns: 1fr; }
+  .sidebar{ position: relative; height: auto; }
+}

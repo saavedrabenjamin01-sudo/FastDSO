@@ -1,0 +1,232 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<!-- Filtros de cabecera -->
+<form class="filters-bar mb-2" method="get" action="{{ url_for('dashboard') }}">
+  <div class="filter-group">
+    <label for="store">Tienda</label>
+    <select class="form-select" id="store" name="store">
+      <option value="">Todas las tiendas</option>
+      {% for s in stores %}
+        <option value="{{ s.name }}" {% if selected_store == s.name %}selected{% endif %}>
+          {{ s.name }}
+        </option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="filter-group">
+    <label for="folio">Folio (placeholder)</label>
+    <input type="text"
+           class="form-control form-control-sm"
+           id="folio"
+           name="folio"
+           value="{{ folio or '' }}"
+           placeholder="Buscar por folio">
+  </div>
+
+  <div class="filter-group">
+    <label for="responsable">Responsable (placeholder)</label>
+    <input type="text"
+           class="form-control form-control-sm"
+           id="responsable"
+           name="responsable"
+           value="{{ responsable or '' }}"
+           placeholder="Responsable">
+  </div>
+
+  <div class="filter-group filter-actions">
+    <button type="submit" class="btn btn-primary btn-sm">Aplicar filtros</button>
+    <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary btn-sm">Limpiar</a>
+  </div>
+</form>
+
+<!-- KPIs + Acciones rápidas -->
+<div class="row g-3 mt-2 align-items-stretch">
+  <div class="col-12 col-md-3">
+    <div class="card p-3 h-100">
+      <div class="text-muted small">Unidades sugeridas</div>
+      <div class="fs-3 fw-bold">{{ kpi_units_suggested }}</div>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-3">
+    <div class="card p-3 h-100">
+      <div class="text-muted small">SKUs con distribución</div>
+      <div class="fs-3 fw-bold">{{ kpi_skus_distintos }}</div>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-3">
+    <div class="card p-3 h-100">
+      <div class="text-muted small">Tiendas alcanzadas</div>
+      <div class="fs-3 fw-bold">{{ kpi_tiendas_alcanzadas }}</div>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-3">
+    <div class="card p-3 h-100 d-flex flex-row justify-content-between align-items-center">
+      <div>
+        <div class="text-muted small">Stock CD hoy</div>
+        <div class="fs-3 fw-bold">{{ kpi_stock_cd_total }}</div>
+      </div>
+
+      <!-- Acciones rápidas (compactas) -->
+      <div class="d-flex flex-column gap-1">
+        <form method="post" action="{{ url_for('reset_sales') }}"
+              onsubmit="return confirm('¿Seguro que deseas eliminar TODAS las ventas cargadas?')">
+          <button class="btn btn-outline-danger btn-sm" type="submit" title="Reset ventas">🧾</button>
+        </form>
+
+        <form method="post" action="{{ url_for('reset_predictions') }}"
+              onsubmit="return confirm('¿Seguro que deseas eliminar TODAS las distribuciones sugeridas?')">
+          <button class="btn btn-outline-danger btn-sm" type="submit" title="Reset distribuciones">📊</button>
+        </form>
+
+        <form method="post" action="{{ url_for('reset_store_stock') }}"
+              onsubmit="return confirm('¿Seguro que deseas eliminar TODO el stock de tiendas?')">
+          <button class="btn btn-outline-danger btn-sm" type="submit" title="Reset stock tiendas">🏬</button>
+        </form>
+
+        <form method="post" action="{{ url_for('reset_stock_cd') }}"
+              onsubmit="return confirm('¿Seguro que deseas eliminar TODO el stock del CD?')">
+          <button class="btn btn-outline-danger btn-sm" type="submit" title="Reset stock CD">📦</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Bloque central: ventas vs distribución -->
+<div class="row g-3 mt-3">
+  <!-- Top ventas -->
+  <div class="col-12 col-lg-6">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>
+          Top 10 productos vendidos (últimos datos cargados)
+          {% if selected_store %} — {{ selected_store }}{% else %} — Todas las tiendas{% endif %}
+        </span>
+      </div>
+
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-sm mb-0">
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>Producto</th>
+                <th>Tienda</th>
+                <th class="text-end">Unidades</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in top_sales %}
+                <tr>
+                  <td>{{ r.sku }}</td>
+                  <td>{{ r.product }}</td>
+                  <td>{{ r.store }}</td>
+                  <td class="text-end">{{ r.units }}</td>
+                </tr>
+              {% endfor %}
+
+              {% if not top_sales %}
+                <tr><td colspan="4" class="text-muted p-2">Sin datos en el período / filtro.</td></tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Distribución sugerida -->
+  <div class="col-12 col-lg-6">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>
+          Distribución sugerida
+          {% if predictions %} — {{ predictions[0][0].model_name }}{% endif %}
+        </span>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('export_predictions') }}">Exportar</a>
+      </div>
+
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-sm mb-0">
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>Producto</th>
+                <th>Tienda</th>
+                <th class="text-end">Cant.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for p, prod, st in predictions[:10] %}
+                <tr>
+                  <td>{{ prod.sku }}</td>
+                  <td>{{ prod.name }}</td>
+                  <td>{{ st.name }}</td>
+                  <td class="text-end">{{ p.quantity }}</td>
+                </tr>
+              {% endfor %}
+
+              {% if not predictions %}
+                <tr><td colspan="4" class="text-muted p-2">Sin predicciones para los filtros seleccionados.</td></tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Remanente CD -->
+<div class="row g-3 mt-3">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Resumen remanente CD (solo SKUs de la última distribución)</span>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('export_cd_remanente') }}">Exportar remanente</a>
+      </div>
+
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-sm mb-0">
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>Producto</th>
+                <th class="text-end">Stock CD disponible</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% if stock_cd_filtered %}
+                {% for cd, prod in stock_cd_filtered[:10] %}
+                  <tr>
+                    <td>{{ prod.sku }}</td>
+                    <td>{{ prod.name }}</td>
+                    <td class="text-end">{{ cd.quantity }}</td>
+                  </tr>
+                {% endfor %}
+              {% else %}
+                <tr>
+                  <td colspan="3" class="text-muted p-2">
+                    Sin datos de Stock CD disponibles en este momento para los filtros seleccionados.
+                  </td>
+                </tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+{% endblock %}

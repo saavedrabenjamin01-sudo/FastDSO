@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>{% block title %}FastDSO{% endblock %}</title>
+
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <!-- Bootstrap (solo CSS) -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+
+  <!-- Bootstrap Icons -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons/font/bootstrap-icons.css" rel="stylesheet">
+
+  <!-- CSS global -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+<body>
+
+<div class="app-shell" id="appShell">
+
+  <!-- ========== SIDEBAR ========== -->
+  <aside class="sidebar">
+
+    <!-- Brand -->
+    <a href="{{ url_for('dashboard') }}" class="brand">
+      <div class="brand-mark">
+        <div class="brand-dot"></div>
+      </div>
+      <div class="brand-text">
+        <div class="brand-title">FastDSO</div>
+        <div class="brand-subtitle">Fast Distribution & Sales Operation</div>
+      </div>
+    </a>
+
+    <div class="sidebar-section-label">Panel</div>
+
+    <!-- ===== Ventas y Compras ===== -->
+    <div class="nav-group">
+      <button class="nav-group-toggle" aria-expanded="true">
+        <span class="nav-icon"><i class="bi bi-graph-up-arrow"></i></span>
+        <span class="nav-text">Ventas y Compras</span>
+        <span class="nav-caret">▶</span>
+      </button>
+
+      <div class="sidebar-nav" style="display:flex;">
+        <a class="nav-link" href="{{ url_for('dashboard') }}">
+          <span class="nav-icon"><i class="bi bi-speedometer2"></i></span>
+          <span class="nav-text">Dashboard</span>
+        </a>
+
+        <a class="nav-link" href="{{ url_for('upload') }}">
+          <span class="nav-icon"><i class="bi bi-upload"></i></span>
+          <span class="nav-text">Carga ventas</span>
+        </a>
+
+        <a class="nav-link" href="{{ url_for('purchase_projection') }}">
+          <span class="nav-icon"><i class="bi bi-bag-plus"></i></span>
+          <span class="nav-text">Proyección compra</span>
+        </a>
+      </div>
+    </div>
+
+    <!-- ===== Stock General ===== -->
+    <div class="nav-group">
+      <button class="nav-group-toggle" aria-expanded="true">
+        <span class="nav-icon"><i class="bi bi-box-seam"></i></span>
+        <span class="nav-text">Stock General</span>
+        <span class="nav-caret">▶</span>
+      </button>
+
+      <div class="sidebar-nav" style="display:flex;">
+        <a class="nav-link" href="{{ url_for('upload_stock') }}">
+          <span class="nav-icon"><i class="bi bi-shop"></i></span>
+          <span class="nav-text">Stock tiendas</span>
+        </a>
+
+        <a class="nav-link" href="{{ url_for('upload_stock_cd') }}">
+          <span class="nav-icon"><i class="bi bi-building"></i></span>
+          <span class="nav-text">Stock CD</span>
+        </a>
+
+        <a class="nav-link" href="{{ url_for('stock_query') }}">
+          <span class="nav-icon"><i class="bi bi-search"></i></span>
+          <span class="nav-text">Consulta stock</span>
+        </a>
+      </div>
+    </div>
+
+    <!-- ===== Operaciones ===== -->
+    <div class="nav-group">
+      <button class="nav-group-toggle" aria-expanded="false">
+        <span class="nav-icon"><i class="bi bi-diagram-3"></i></span>
+        <span class="nav-text">Operaciones</span>
+        <span class="nav-caret">▶</span>
+      </button>
+
+      <div class="sidebar-nav" style="display:none;">
+        <!-- vacío por ahora -->
+      </div>
+    </div>
+
+    <!-- ===== Bottom ===== -->
+    <div class="sidebar-bottom">
+
+      <button class="btn btn-new-dist text-white">
+        <i class="bi bi-plus-circle"></i>
+        <span class="nav-text ms-1">Nueva distribución</span>
+      </button>
+
+      <div class="user-chip">
+        <div class="user-avatar">
+          {{ current_user.username[0:1] | upper if current_user.is_authenticated else 'U' }}
+        </div>
+        <div class="user-meta">
+          <div class="user-name">
+            {{ current_user.username if current_user.is_authenticated else 'Usuario' }}
+          </div>
+          <div class="user-role">Operador</div>
+        </div>
+      </div>
+
+      <a class="nav-link nav-muted" href="{{ url_for('logout') }}">
+        <span class="nav-icon"><i class="bi bi-box-arrow-right"></i></span>
+        <span class="nav-text">Cerrar sesión</span>
+      </a>
+
+    </div>
+
+  </aside>
+
+  <!-- ========== MAIN ========== -->
+  <main class="main">
+
+    <!-- Topbar -->
+    <div class="topbar">
+      <div class="topbar-left">
+        <button class="btn btn-ghost" id="btnToggleSidebar">
+          <span class="burger"></span>
+        </button>
+        <div class="page-title">{% block page_title %}Panel{% endblock %}</div>
+      </div>
+
+      <div class="topbar-right">
+        <div class="topbar-search">
+          <input type="text" class="form-control" placeholder="Buscar (próximamente)">
+        </div>
+      </div>
+    </div>
+
+    <!-- Flash messages -->
+    <div class="content">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="flash-stack mb-3">
+            {% for category, msg in messages %}
+              <div class="alert alert-{{ category }}">{{ msg }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      {% block content %}{% endblock %}
+    </div>
+
+  </main>
+
+</div>
+
+<!-- ========== JS ========== -->
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+
+  // Sidebar collapse
+  document.getElementById("btnToggleSidebar")?.addEventListener("click", () => {
+    document.getElementById("appShell").classList.toggle("sidebar-collapsed");
+  });
+
+  // Nav groups
+  document.querySelectorAll(".nav-group-toggle").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const expanded = btn.getAttribute("aria-expanded") === "true";
+      btn.setAttribute("aria-expanded", !expanded);
+
+      const menu = btn.nextElementSibling;
+      if (menu) {
+        menu.style.display = expanded ? "none" : "flex";
+      }
+    });
+  });
+
+});
+</script>
+
+</body>
+</html>

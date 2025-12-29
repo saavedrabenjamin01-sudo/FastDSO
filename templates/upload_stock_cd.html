@@ -1,0 +1,68 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <div>
+    <h5 class="mb-0">Carga de stock CD</h5>
+    <small class="text-muted">
+      Stock disponible en el centro de distribución para asignar a tiendas.
+    </small>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <p class="mb-1">
+      <strong>Columnas requeridas:</strong>
+      <code>sku</code>,
+      <code>product_name</code>,
+      <code>quantity</code>.
+    </p>
+    <p class="text-muted mb-0">
+      Usa el modo de carga para decidir si reemplaza o suma al snapshot actual.
+    </p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <form method="post" enctype="multipart/form-data" class="row g-3">
+
+      <div class="col-md-5">
+        <label class="form-label fw-semibold">Archivo de stock CD</label>
+        <input type="file"
+               class="form-control"
+               name="file"
+               accept=".csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+               required>
+        <small class="text-muted">
+          Acepta <code>.csv</code> y <code>.xlsx</code>.
+        </small>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label fw-semibold">Modo de carga</label>
+        <select class="form-select" name="mode">
+          <option value="append">Sumar al stock actual</option>
+          <option value="replace_today">Reemplazar solo snapshot de hoy</option>
+          <option value="replace_all">Borrar histórico y cargar desde cero</option>
+        </select>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label fw-semibold">Fecha snapshot</label>
+        <input type="date"
+               class="form-control form-control-sm"
+               name="fecha_doc">
+      </div>
+
+      <div class="col-12 d-flex justify-content-end mt-2">
+        <button type="submit" class="btn btn-primary">
+          Cargar stock CD
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% endblock %}

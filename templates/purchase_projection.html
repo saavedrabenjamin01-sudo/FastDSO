@@ -1,0 +1,65 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<h3 class="mb-3">Proyección de Compras</h3>
+
+<form method="post" class="row g-3 mb-3">
+  <div class="col-md-3">
+    <label class="form-label">Lead time (semanas)</label>
+    <input type="number" min="0" class="form-control" name="lead_time_w" value="{{ lead_time_w }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">Colchón de seguridad (%)</label>
+    <input type="number" min="0" step="1" class="form-control" name="safety_pct" value="{{ safety_pct }}">
+  </div>
+  <div class="col-md-3 d-flex align-items-end">
+    <button class="btn btn-primary w-100" type="submit">Calcular</button>
+  </div>
+  <div class="col-md-3 d-flex align-items-end">
+    <form method="post" action="{{ url_for('export_purchase_projection') }}">
+      <input type="hidden" name="lead_time_w" value="{{ lead_time_w }}">
+      <input type="hidden" name="safety_pct" value="{{ safety_pct }}">
+      <button class="btn btn-outline-success w-100" type="submit">Exportar Excel</button>
+    </form>
+  </div>
+</form>
+
+<div class="card">
+  <div class="card-header">
+    Vista previa (Top 20 con necesidad &gt; 0)
+    {% if latest_week %} — Semana objetivo: {{ latest_week }} {% endif %}
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead>
+        <tr>
+          <th>SKU</th>
+          <th>Producto</th>
+          <th>Demanda base</th>
+          <th>Stock CD</th>
+          <th>Lead</th>
+          <th>Colchón</th>
+          <th>Necesidad Neta</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in preview %}
+        <tr>
+          <td>{{ r["SKU"] }}</td>
+          <td>{{ r["Producto"] }}</td>
+          <td>{{ r["Demanda base (últ. dist.)"] }}</td>
+          <td>{{ r["Stock CD hoy"] }}</td>
+          <td>{{ r["Lead time (sem)"] }}</td>
+          <td>{{ r["Colchón (%)"] }}</td>
+          <td><strong>{{ r["Necesidad Neta"] }}</strong></td>
+        </tr>
+        {% endfor %}
+        {% if not preview %}
+        <tr><td colspan="7" class="text-muted p-2">Sin resultados para los parámetros actuales.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

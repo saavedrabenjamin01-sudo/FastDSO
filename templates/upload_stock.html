@@ -1,0 +1,68 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <div>
+    <h5 class="mb-0">Carga de stock tiendas</h5>
+    <small class="text-muted">
+      Snapshot de stock por tienda. Se usa para evitar sobrecargar locales al sugerir la distribución.
+    </small>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <p class="mb-1">
+      <strong>Formato sugerido:</strong>
+      <code>sku</code>,
+      <code>product_name</code>, y una columna por tienda
+      (<code>B_p.oeste</code>, <code>B_p.sur</code>, etc.) con el stock numérico.
+    </p>
+    <p class="text-muted mb-0">
+      Cada nueva carga reemplaza el snapshot anterior (según la lógica que ya tienes en el backend).
+    </p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <form method="post" enctype="multipart/form-data" class="row g-3">
+
+      <div class="col-md-6">
+        <label class="form-label fw-semibold">Archivo de stock tiendas</label>
+        <input type="file"
+               class="form-control"
+               name="file"
+               accept=".csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+               required>
+        <small class="text-muted">
+          Acepta <code>.csv</code> y <code>.xlsx</code>.
+        </small>
+      </div>
+
+      <!-- opcional: metadatos, si tu ruta los ignora no pasa nada -->
+      <div class="col-md-3">
+        <label class="form-label fw-semibold">Fecha snapshot</label>
+        <input type="date"
+               class="form-control form-control-sm"
+               name="fecha_doc">
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label fw-semibold">Responsable</label>
+        <input type="text"
+               class="form-control form-control-sm"
+               name="responsable"
+               placeholder="Quién cargó el stock">
+      </div>
+
+      <div class="col-12 d-flex justify-content-end mt-2">
+        <button type="submit" class="btn btn-primary">
+          Cargar stock tiendas
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% endblock %}
