@@ -10,9 +10,21 @@
   </div>
 </div>
 
+{% if not has_cd_stock %}
+<div class="alert alert-warning mb-3" role="alert">
+  <strong>Aviso:</strong> No hay snapshot de Stock CD cargado. El stock disponible se considera 0 para todos los SKUs.
+</div>
+{% endif %}
+
+{% if not has_sales %}
+<div class="alert alert-info mb-3" role="alert">
+  <strong>Sin ventas:</strong> No se encontraron ventas en la ventana de analisis seleccionada. Intenta ajustar el metodo de demanda o cargar datos de ventas.
+</div>
+{% endif %}
+
 <div class="card mb-3">
   <div class="card-body">
-    <form class="row g-3" method="post" action="{{ url_for('purchase_forecast_v2') }}">
+    <form id="forecastForm" class="row g-3" method="post" action="{{ url_for('purchase_forecast_v2') }}">
       <div class="col-md-2">
         <label class="form-label fw-semibold">Lead time (dias)</label>
         <input type="number" name="lead_time_days" min="0" class="form-control form-control-sm" value="{{ lead_time_days }}">
@@ -57,8 +69,9 @@
         <input type="text" name="campaign_tag" class="form-control form-control-sm" value="{{ campaign_tag }}" placeholder="Ej: Verano 2025">
       </div>
 
-      <div class="col-md-3 d-flex align-items-end">
+      <div class="col-md-3 d-flex align-items-end gap-2">
         <button type="submit" class="btn btn-primary btn-sm">Calcular proyeccion</button>
+        <button type="submit" formaction="{{ url_for('export_purchase_forecast_v2') }}" class="btn btn-outline-secondary btn-sm">Exportar Excel</button>
       </div>
     </form>
   </div>
@@ -68,7 +81,7 @@
   <div class="card-header d-flex justify-content-between align-items-center">
     <span>Top 50 SKUs por compra sugerida</span>
     {% if rows %}
-    <span class="badge-soft">{{ rows|length }} SKUs</span>
+    <span class="badge-soft">{{ rows|length }} de {{ total_skus }} SKUs</span>
     {% endif %}
   </div>
   <div class="card-body p-0">
@@ -107,7 +120,7 @@
           {% else %}
             <tr>
               <td colspan="7" class="text-muted p-3">
-                No se encontraron ventas en la ventana seleccionada, o no hay stock CD cargado.
+                No se encontraron SKUs con ventas en la ventana seleccionada. Ajusta los parametros o carga datos de ventas.
               </td>
             </tr>
           {% endif %}

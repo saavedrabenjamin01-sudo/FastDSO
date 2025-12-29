@@ -883,11 +883,16 @@ def purchase_forecast_v2():
         })
 
     result.sort(key=lambda x: x["suggested"], reverse=True)
-    result = result[:50]
+
+    has_cd_stock = bool(cd_rows)
+    has_sales = bool(sales_rows)
+
+    result_limited = result[:50]
 
     return render_template(
         'purchase_forecast_v2.html',
-        rows=result,
+        rows=result_limited,
+        total_skus=len(result),
         stores=stores,
         lead_time_days=lead_time_days,
         coverage_weeks=coverage_weeks,
@@ -898,6 +903,150 @@ def purchase_forecast_v2():
         campaign_tag=campaign_tag,
         today=today,
         cd_snapshot_date=latest_cd_date,
+        has_cd_stock=has_cd_stock,
+        has_sales=has_sales,
+    )
+
+@app.route('/export_purchase_forecast_v2', methods=['POST'])
+@login_required
+def export_purchase_forecast_v2():
+    """Export Purchase Forecast V2 results to Excel."""
+    from datetime import datetime
+    today = date.today()
+
+    try:
+        lead_time_days = int(request.form.get('lead_time_days', 14))
+    except ValueError:
+        lead_time_days = 14
+    try:
+        coverage_weeks = float(request.form.get('coverage_weeks', 4))
+    except ValueError:
+        coverage_weeks = 4.0
+    try:
+        safety_weeks = float(request.form.get('safety_weeks', 1))
+    except ValueError:
+        safety_weeks = 1.0
+    try:
+        min_weeks_history = int(request.form.get('min_weeks_history', 1))
+    except ValueError:
+        min_weeks_history = 1
+
+    demand_method = request.form.get('demand_method', 'sma3').strip()
+    store_filter = request.form.get('store_filter', '').strip()
+    campaign_tag = request.form.get('campaign_tag', '').strip()
+
+    lead_time_days = max(lead_time_days, 0)
+    coverage_weeks = max(coverage_weeks, 0.5)
+    safety_weeks = max(safety_weeks, 0)
+    min_weeks_history = max(min_weeks_history, 1)
+
+    if demand_method == 'sma3':
+        lookback_days = 21
+        weeks_divisor = 3.0
+    elif demand_method == 'sma2':
+        lookback_days = 14
+        weeks_divisor = 2.0
+    else:
+        lookback_days = 7
+        weeks_divisor = 1.0
+
+    cutoff = today - timedelta(days=lookback_days)
+    lead_time_weeks = lead_time_days / 7.0
+    total_weeks_needed = coverage_weeks + safety_weeks + lead_time_weeks
+
+    week_expr = db.func.strftime('%Y-%W', DistributionRecord.event_date)
+    sales_q = (
+        db.session.query(
+            Product.id.label('product_id'),
+            Product.sku.label('sku'),
+            Product.name.label('name'),
+            db.func.sum(DistributionRecord.quantity).label('qty_period'),
+        )
+        .join(Product, DistributionRecord.product_id == Product.id)
+        .join(Store, DistributionRecord.store_id == Store.id)
+        .filter(DistributionRecord.event_date >= cutoff)
+    )
+
+    if store_filter:
+        sales_q = sales_q.filter(Store.name == store_filter)
+
+    sales_rows = (
+        sales_q
+        .group_by(Product.id, Product.sku, Product.name)
+        .having(db.func.count(db.func.distinct(week_expr)) >= min_weeks_history)
+        .all()
+    )
+
+    latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar() or today
+    cd_rows = (
+        db.session.query(
+            StockCD.product_id,
+            db.func.sum(StockCD.quantity).label('cd_qty')
+        )
+        .filter(StockCD.as_of_date == latest_cd_date)
+        .group_by(StockCD.product_id)
+        .all()
+    )
+    cd_stock_map = {r.product_id: int(r.cd_qty) for r in cd_rows}
+
+    rows = []
+    for r in sales_rows:
+        demand_per_week = float(r.qty_period) / weeks_divisor if weeks_divisor > 0 else 0.0
+        required_units = demand_per_week * total_weeks_needed
+        available_units = cd_stock_map.get(r.product_id, 0)
+        suggested = max(int(round(required_units)) - available_units, 0)
+
+        rows.append({
+            "SKU": str(r.sku),
+            "Producto": r.name,
+            "Demanda/Semana": round(demand_per_week, 2),
+            "Stock CD": available_units,
+            "Requerido": round(required_units, 2),
+            "Sugerido Compra": suggested,
+            "Campana": campaign_tag or "",
+            "Metodo": demand_method,
+            "Lead Time Dias": lead_time_days,
+            "Cobertura Sem": coverage_weeks,
+            "Safety Sem": safety_weeks,
+        })
+
+    rows.sort(key=lambda x: x["Sugerido Compra"], reverse=True)
+
+    if not rows:
+        rows.append({
+            "SKU": "",
+            "Producto": "Sin datos",
+            "Demanda/Semana": 0,
+            "Stock CD": 0,
+            "Requerido": 0,
+            "Sugerido Compra": 0,
+            "Campana": campaign_tag or "",
+            "Metodo": demand_method,
+            "Lead Time Dias": lead_time_days,
+            "Cobertura Sem": coverage_weeks,
+            "Safety Sem": safety_weeks,
+        })
+
+    df = pd.DataFrame(rows)
+    df["SKU"] = df["SKU"].astype(str)
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Forecast Compra V2")
+        ws = writer.sheets["Forecast Compra V2"]
+        for cell in ws["A"]:
+            cell.number_format = "@"
+
+    output.seek(0)
+    ts = datetime.now().strftime('%Y%m%d_%H%M')
+    tag_part = f"_{campaign_tag.replace(' ', '_')}" if campaign_tag else ""
+    fname = f"forecast_compra_v2_{ts}{tag_part}.xlsx"
+
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=fname,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
 @app.route('/export_cd_remanente', methods=['GET'])
