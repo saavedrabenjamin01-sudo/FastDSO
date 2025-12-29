@@ -4,6 +4,20 @@
 <!-- Filtros de cabecera -->
 <form class="filters-bar mb-2" method="get" action="{{ url_for('dashboard') }}">
   <div class="filter-group">
+    <label for="run_id">Corrida</label>
+    <select class="form-select" id="run_id" name="run_id">
+      {% for run in runs %}
+        <option value="{{ run.run_id }}" {% if selected_run_id == run.run_id %}selected{% endif %}>
+          {{ run.label() }}
+        </option>
+      {% endfor %}
+      {% if not runs %}
+        <option value="">Sin corridas</option>
+      {% endif %}
+    </select>
+  </div>
+
+  <div class="filter-group">
     <label for="store">Tienda</label>
     <select class="form-select" id="store" name="store">
       <option value="">Todas las tiendas</option>
