@@ -1,10 +1,50 @@
 {% extends 'base.html' %}
 {% block content %}
 
-<div class="d-flex justify-content-between align-items-center mb-3">
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <div>
     <h5 class="mb-0">Historial de Corridas</h5>
-    <small class="text-muted">Ultimas 50 corridas del sistema</small>
+    <small class="text-muted">{{ pagination.total }} corridas en total</small>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <form method="get" action="{{ url_for('runs') }}" class="d-flex flex-wrap gap-2 align-items-center">
+      <div class="d-flex gap-1 flex-wrap">
+        <a href="{{ url_for('runs', search=search, per_page=per_page) }}" 
+           class="btn btn-sm {% if not run_type_filter %}btn-primary{% else %}btn-outline-secondary{% endif %}">
+          Todos
+        </a>
+        <a href="{{ url_for('runs', run_type='sales_upload', search=search, per_page=per_page) }}" 
+           class="btn btn-sm {% if run_type_filter == 'sales_upload' %}btn-info{% else %}btn-outline-info{% endif %}">
+          Ventas
+        </a>
+        <a href="{{ url_for('runs', run_type='distribution', search=search, per_page=per_page) }}" 
+           class="btn btn-sm {% if run_type_filter == 'distribution' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+          Distribucion
+        </a>
+        <a href="{{ url_for('runs', run_type='forecast_v2', search=search, per_page=per_page) }}" 
+           class="btn btn-sm {% if run_type_filter == 'forecast_v2' %}btn-success{% else %}btn-outline-success{% endif %}">
+          Forecast V2
+        </a>
+      </div>
+      <div class="flex-grow-1"></div>
+      <div class="d-flex gap-2 align-items-center">
+        <input type="text" 
+               name="search" 
+               class="form-control form-control-sm" 
+               placeholder="Buscar folio, responsable, categoria..." 
+               value="{{ search }}"
+               style="width: 220px;">
+        <input type="hidden" name="run_type" value="{{ run_type_filter }}">
+        <input type="hidden" name="per_page" value="{{ per_page }}">
+        <button type="submit" class="btn btn-sm btn-primary">Buscar</button>
+        {% if search %}
+        <a href="{{ url_for('runs', run_type=run_type_filter, per_page=per_page) }}" class="btn btn-sm btn-outline-secondary">Limpiar</a>
+        {% endif %}
+      </div>
+    </form>
   </div>
 </div>
 
@@ -60,13 +100,62 @@
             {% endfor %}
           {% else %}
             <tr>
-              <td colspan="8" class="text-muted p-3">No hay corridas registradas.</td>
+              <td colspan="8" class="text-center py-4">
+                <div class="text-muted mb-2" style="font-size: 2rem;">📋</div>
+                <p class="text-muted mb-2">No hay corridas que coincidan con los filtros.</p>
+                {% if search or run_type_filter %}
+                <a href="{{ url_for('runs') }}" class="btn btn-sm btn-outline-primary">Ver todas las corridas</a>
+                {% else %}
+                <a href="{{ url_for('upload') }}" class="btn btn-sm btn-outline-primary">Cargar ventas</a>
+                {% endif %}
+              </td>
             </tr>
           {% endif %}
         </tbody>
       </table>
     </div>
+
+    {% if pagination and pagination.total > 0 %}
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 px-3 py-2 border-top bg-light">
+      <div class="d-flex align-items-center gap-2">
+        <small class="text-muted">Mostrando {{ runs|length }} de {{ pagination.total }}</small>
+        <select class="form-select form-select-sm" style="width: auto;" onchange="updatePerPage(this.value)">
+          <option value="10" {% if per_page == 10 %}selected{% endif %}>10</option>
+          <option value="25" {% if per_page == 25 %}selected{% endif %}>25</option>
+          <option value="50" {% if per_page == 50 %}selected{% endif %}>50</option>
+        </select>
+      </div>
+      <nav aria-label="Pagination">
+        <ul class="pagination pagination-sm mb-0">
+          <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+            <a class="page-link" href="{{ url_for('runs', page=pagination.prev_num or 1, per_page=per_page, search=search, run_type=run_type_filter) }}">Ant</a>
+          </li>
+          {% for p in pagination.iter_pages() %}
+            {% if p %}
+              <li class="page-item {% if p == pagination.page %}active{% endif %}">
+                <a class="page-link" href="{{ url_for('runs', page=p, per_page=per_page, search=search, run_type=run_type_filter) }}">{{ p }}</a>
+              </li>
+            {% else %}
+              <li class="page-item disabled"><span class="page-link">...</span></li>
+            {% endif %}
+          {% endfor %}
+          <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+            <a class="page-link" href="{{ url_for('runs', page=pagination.next_num or pagination.pages, per_page=per_page, search=search, run_type=run_type_filter) }}">Sig</a>
+          </li>
+        </ul>
+      </nav>
+    </div>
+    {% endif %}
   </div>
 </div>
+
+<script>
+function updatePerPage(value) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('per_page', value);
+  url.searchParams.set('page', 1);
+  window.location.href = url.toString();
+}
+</script>
 
 {% endblock %}

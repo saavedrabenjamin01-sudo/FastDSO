@@ -1,0 +1,66 @@
+Upgrade the UI/UX of FastDSO by adding professional tables with pagination, search, sorting (optional), and export-by-filters, without breaking existing functionality or changing business logic.
+
+SCOPE (Do NOT break current routes or runs logic)
+	•	Keep all current features working: sales upload, stock uploads, distribution generation, runs history, forecast V2.
+	•	Only improve presentation and filtering mechanics.
+
+	1.	Dashboard tables: “Top Sales”, “Suggested Distribution”, “CD Remainder”
+
+	•	Convert each into a paginated table:
+	•	default page size: 10
+	•	controls: Previous/Next + page number
+	•	allow page size dropdown: 10 / 25 / 50
+	•	Add a local search input per table:
+	•	Top Sales: search by SKU or product name
+	•	Suggested Distribution: search by SKU, product, store
+	•	CD Remainder: search by SKU or product
+	•	Preserve current filters (store/folio/responsable/run selector). Pagination/search must respect them.
+
+	2.	Runs page
+
+	•	Add pagination + search across: run_id, folio, responsable, categoria, run_type.
+	•	Add quick filter chips for run_type (sales_upload / distribution / forecast_v2).
+
+	3.	Export improvements
+
+	•	Export buttons must export exactly the currently filtered dataset:
+	•	selected run_id
+	•	selected store filter
+	•	current search term (if feasible; if not, at least run_id + store)
+	•	Filenames should be clear:
+	•	FastDSO_Distribution_<run_id>_.xlsx
+	•	FastDSO_SalesTop_<run_id>_.xlsx
+	•	FastDSO_CD_Remainder_<run_id>_.xlsx
+
+	4.	Empty and loading states
+
+	•	If no results, show a friendly empty state (icon + short message + suggested action).
+	•	Make sure tables never appear “blank” without explanation.
+	•	Add a subtle “Loading…” indicator only if needed (server-side pagination is ok without JS loader).
+
+	5.	Keep styling consistent
+
+	•	Use existing style.css design system (cards, spacing, sidebar).
+	•	Add spacing so tables aren’t glued to sidebar; keep consistent padding.
+	•	Do NOT introduce a new CSS framework.
+
+IMPLEMENTATION NOTES
+	•	Prefer server-side pagination via query params:
+	•	?page=1&page_size=10&search=xxx
+	•	Keep params separate per table (e.g., sales_page, pred_page, cd_page) so changing one table doesn’t reset others.
+	•	Make changes minimal: modify dashboard route to compute paginated datasets, and update dashboard.html accordingly.
+	•	Avoid heavy JS; if needed, use tiny vanilla JS for preserving query params.
+
+DELIVERABLES
+	•	Provide code changes for:
+	•	dashboard route/controller
+	•	dashboard.html
+	•	runs route + template
+	•	export endpoints (if needed)
+	•	any helper functions for pagination
+	•	Ensure all current routes still work and tests/manual checks pass.
+
+VALIDATION
+	•	Confirm dashboard loads fast with 11k SKUs in DB (pagination prevents rendering huge tables).
+	•	Confirm export matches filters and selected run.
+	•	Confirm switching pages does not break filters.

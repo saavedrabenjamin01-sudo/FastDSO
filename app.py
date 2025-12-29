@@ -8,13 +8,50 @@ from collections import defaultdict
 import pandas as pd
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import (
     LoginManager, login_user, login_required, logout_user, current_user, UserMixin
 )
 MIN_WEEKS = 3  # mínimo de semanas de historia requeridas por SKU–Tienda
+
+
+# ------------------ Pagination Helper ------------------
+class Pagination:
+    def __init__(self, page, per_page, total, items):
+        self.page = page
+        self.per_page = per_page
+        self.total = total
+        self.items = items
+        self.pages = max(1, (total + per_page - 1) // per_page)
+    
+    @property
+    def has_prev(self):
+        return self.page > 1
+    
+    @property
+    def has_next(self):
+        return self.page < self.pages
+    
+    @property
+    def prev_num(self):
+        return self.page - 1 if self.has_prev else None
+    
+    @property
+    def next_num(self):
+        return self.page + 1 if self.has_next else None
+    
+    def iter_pages(self, left_edge=1, left_current=2, right_current=2, right_edge=1):
+        last = 0
+        for num in range(1, self.pages + 1):
+            if num <= left_edge or \
+               (self.page - left_current <= num <= self.page + right_current) or \
+               num > self.pages - right_edge:
+                if last + 1 != num:
+                    yield None
+                yield num
+                last = num
 
 
 # ------------------ Config ------------------
@@ -548,16 +585,34 @@ from sqlalchemy import func, desc
 @app.route('/dashboard', methods=['GET'])
 @login_required
 def dashboard():
-    # --- Filtros ---
+    # --- Filtros globales ---
     store_filter = (request.args.get('store') or '').strip()
     folio_filter = (request.args.get('folio') or '').strip()
     responsable_filter = (request.args.get('responsable') or '').strip()
     run_id_filter = (request.args.get('run_id') or '').strip()
 
+    # --- Pagination params per table ---
+    sales_page = request.args.get('sales_page', 1, type=int)
+    sales_size = request.args.get('sales_size', 10, type=int)
+    sales_search = (request.args.get('sales_search') or '').strip()
+
+    pred_page = request.args.get('pred_page', 1, type=int)
+    pred_size = request.args.get('pred_size', 10, type=int)
+    pred_search = (request.args.get('pred_search') or '').strip()
+
+    cd_page = request.args.get('cd_page', 1, type=int)
+    cd_size = request.args.get('cd_size', 10, type=int)
+    cd_search = (request.args.get('cd_search') or '').strip()
+
+    # Validate page sizes
+    sales_size = sales_size if sales_size in [10, 25, 50] else 10
+    pred_size = pred_size if pred_size in [10, 25, 50] else 10
+    cd_size = cd_size if cd_size in [10, 25, 50] else 10
+
     # --- Fechas / helpers ---
     today = date.today()
 
-    # --- Load available runs (limit 50, newest first, ignore null run_id) ---
+    # --- Load available runs (limit 50, newest first, all run types) ---
     runs = (
         PredictionRun.query
         .filter(PredictionRun.run_id.isnot(None))
@@ -607,17 +662,41 @@ def dashboard():
     if responsable_filter:
         pred_q = pred_q.filter(Prediction.model_name.ilike(f"%Resp:%{responsable_filter}%"))
 
+    # Search filter for predictions
+    if pred_search:
+        pred_q = pred_q.filter(
+            or_(
+                Product.sku.ilike(f"%{pred_search}%"),
+                Product.name.ilike(f"%{pred_search}%"),
+                Store.name.ilike(f"%{pred_search}%")
+            )
+        )
+
+    pred_total = pred_q.count()
     predictions = (
         pred_q
         .order_by(Product.sku.asc(), Store.name.asc())
-        .limit(50)
+        .offset((pred_page - 1) * pred_size)
+        .limit(pred_size)
         .all()
     )
+    pred_pagination = Pagination(pred_page, pred_size, pred_total, predictions)
 
-    # --- KPI (solo sobre el set filtrado) ---
-    kpi_units_suggested = sum(int(p.quantity or 0) for p, _, _ in predictions)
-    kpi_skus_distintos = len(set(prod.id for _, prod, _ in predictions))
-    kpi_tiendas_alcanzadas = len(set(st.id for _, _, st in predictions))
+    # --- KPI (from full filtered set, not just current page) ---
+    kpi_q = (
+        db.session.query(
+            func.coalesce(func.sum(Prediction.quantity), 0),
+            func.count(func.distinct(Prediction.product_id)),
+            func.count(func.distinct(Prediction.store_id))
+        )
+        .filter(Prediction.run_id == selected_run_id) if selected_run_id else None
+    )
+    if kpi_q and store_filter:
+        kpi_q = kpi_q.join(Store, Prediction.store_id == Store.id).filter(Store.name == store_filter)
+    kpi_result = kpi_q.first() if kpi_q else (0, 0, 0)
+    kpi_units_suggested = int(kpi_result[0] or 0) if kpi_result else 0
+    kpi_skus_distintos = int(kpi_result[1] or 0) if kpi_result else 0
+    kpi_tiendas_alcanzadas = int(kpi_result[2] or 0) if kpi_result else 0
 
     # Stock CD hoy (total)
     kpi_stock_cd_total = (
@@ -626,8 +705,7 @@ def dashboard():
         .scalar()
     )
 
-    # --- Top 10 ventas (resumen) ---
-    # Usa DistributionRecord (ventas) y filtra por tienda si corresponde.
+    # --- Top ventas (with pagination) ---
     sales_q = (
         db.session.query(
             Product.sku.label("sku"),
@@ -641,27 +719,62 @@ def dashboard():
     if store_filter:
         sales_q = sales_q.filter(Store.name == store_filter)
 
+    if sales_search:
+        sales_q = sales_q.filter(
+            or_(
+                Product.sku.ilike(f"%{sales_search}%"),
+                Product.name.ilike(f"%{sales_search}%")
+            )
+        )
+
+    sales_q = sales_q.group_by(Product.sku, Product.name, Store.name)
+    sales_count_q = db.session.query(func.count()).select_from(sales_q.subquery())
+    sales_total = sales_count_q.scalar() or 0
+
     top_sales = (
         sales_q
-        .group_by(Product.sku, Product.name, Store.name)
         .order_by(desc("units"))
-        .limit(10)
+        .offset((sales_page - 1) * sales_size)
+        .limit(sales_size)
         .all()
     )
+    sales_pagination = Pagination(sales_page, sales_size, sales_total, top_sales)
 
-    # --- Remanente CD: SOLO SKUs de la última distribución (filtrada) ---
+    # --- Remanente CD (with pagination) ---
     stock_cd_filtered = []
-    if predictions:
-        product_ids = list({prod.id for _, prod, _ in predictions})
-        stock_cd_filtered = (
+    cd_pagination = Pagination(1, cd_size, 0, [])
+    if selected_run_id:
+        pred_product_ids = (
+            db.session.query(Prediction.product_id)
+            .filter(Prediction.run_id == selected_run_id)
+            .distinct()
+            .subquery()
+        )
+
+        cd_q = (
             db.session.query(StockCD, Product)
             .join(Product, StockCD.product_id == Product.id)
             .filter(StockCD.as_of_date == today)
-            .filter(StockCD.product_id.in_(product_ids))
+            .filter(StockCD.product_id.in_(pred_product_ids))
+        )
+
+        if cd_search:
+            cd_q = cd_q.filter(
+                or_(
+                    Product.sku.ilike(f"%{cd_search}%"),
+                    Product.name.ilike(f"%{cd_search}%")
+                )
+            )
+
+        cd_total = cd_q.count()
+        stock_cd_filtered = (
+            cd_q
             .order_by(Product.sku.asc())
-            .limit(50)
+            .offset((cd_page - 1) * cd_size)
+            .limit(cd_size)
             .all()
         )
+        cd_pagination = Pagination(cd_page, cd_size, cd_total, stock_cd_filtered)
 
     # --- Lista de tiendas para el select ---
     stores = Store.query.order_by(Store.name.asc()).all()
@@ -674,9 +787,21 @@ def dashboard():
         responsable=responsable_filter,
 
         latest_week=latest_week,
+
         predictions=predictions,
+        pred_pagination=pred_pagination,
+        pred_search=pred_search,
+        pred_size=pred_size,
+
         top_sales=top_sales,
+        sales_pagination=sales_pagination,
+        sales_search=sales_search,
+        sales_size=sales_size,
+
         stock_cd_filtered=stock_cd_filtered,
+        cd_pagination=cd_pagination,
+        cd_search=cd_search,
+        cd_size=cd_size,
 
         kpi_units_suggested=kpi_units_suggested,
         kpi_skus_distintos=kpi_skus_distintos,
@@ -1091,10 +1216,11 @@ def export_cd_remanente():
         df.to_excel(writer, index=False, sheet_name="Remanente")
     output.seek(0)
 
+    run_id_short = run_id[:8] if run_id else "norun"
     return send_file(
         output,
         as_attachment=True,
-        download_name=f"remanente_cd_{today.strftime('%Y%m%d')}.xlsx",
+        download_name=f"FastDSO_CD_Remainder_{run_id_short}_{today.strftime('%Y%m%d')}.xlsx",
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
@@ -1777,7 +1903,7 @@ def export_predictions():
 
     output.seek(0)
     today = date.today()
-    fname = f"distribucion_sugerida_{today.strftime('%Y%m%d')}_{run_id[:8]}.xlsx"
+    fname = f"FastDSO_Distribution_{run_id[:8]}_{today.strftime('%Y%m%d')}.xlsx"
     return send_file(
         output,
         as_attachment=True,
@@ -1788,18 +1914,48 @@ def export_predictions():
 @app.route('/runs', methods=['GET'])
 @login_required
 def runs():
-    """Display history of all runs."""
+    """Display history of all runs with pagination, search, and filter chips."""
     page = request.args.get('page', 1, type=int)
-    per_page = 50
+    per_page = request.args.get('per_page', 10, type=int)
+    search = (request.args.get('search') or '').strip()
+    run_type_filter = (request.args.get('run_type') or '').strip()
 
-    runs_query = (
-        Run.query
+    per_page = per_page if per_page in [10, 25, 50] else 10
+
+    runs_q = Run.query
+
+    if run_type_filter:
+        runs_q = runs_q.filter(Run.run_type == run_type_filter)
+
+    if search:
+        runs_q = runs_q.filter(
+            or_(
+                Run.run_id.ilike(f"%{search}%"),
+                Run.folio.ilike(f"%{search}%"),
+                Run.responsable.ilike(f"%{search}%"),
+                Run.categoria.ilike(f"%{search}%"),
+                Run.run_type.ilike(f"%{search}%")
+            )
+        )
+
+    total = runs_q.count()
+    runs_list = (
+        runs_q
         .order_by(Run.created_at.desc())
+        .offset((page - 1) * per_page)
         .limit(per_page)
         .all()
     )
+    pagination = Pagination(page, per_page, total, runs_list)
 
-    return render_template('runs.html', runs=runs_query)
+    return render_template(
+        'runs.html',
+        runs=runs_list,
+        pagination=pagination,
+        search=search,
+        per_page=per_page,
+        run_type_filter=run_type_filter
+    )
 
 
 @app.route('/run/<run_id>', methods=['GET'])

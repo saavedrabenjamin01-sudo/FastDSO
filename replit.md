@@ -63,6 +63,7 @@ PredDist is a Flask-based web application for managing product distribution pred
 The application runs on port 5000 with the "Start Flask App" workflow.
 
 ## Recent Changes
+- December 29, 2025: Added professional UI/UX with paginated tables, search, filter chips, and improved exports
 - December 29, 2025: Implemented Runs History system with versioned tracking for sales, distribution, and forecast runs
 - December 29, 2025: Removed legacy purchase_forecast module, consolidated to Forecast Compra V2
 - December 29, 2025: Initial Replit environment setup, configured to bind to 0.0.0.0:5000

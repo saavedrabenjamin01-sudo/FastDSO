@@ -1,7 +1,48 @@
 {% extends 'base.html' %}
 {% block content %}
 
-<!-- Filtros de cabecera -->
+{% macro pagination_controls(pag, page_param, size_param, search_param, search_val, size_val, table_id) %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-2 px-2 py-2 border-top bg-light">
+  <div class="d-flex align-items-center gap-2">
+    <small class="text-muted">{{ pag.total }} registros</small>
+    <select class="form-select form-select-sm" style="width: auto;" onchange="updateParam('{{ size_param }}', this.value, '{{ page_param }}')">
+      <option value="10" {% if size_val == 10 %}selected{% endif %}>10</option>
+      <option value="25" {% if size_val == 25 %}selected{% endif %}>25</option>
+      <option value="50" {% if size_val == 50 %}selected{% endif %}>50</option>
+    </select>
+  </div>
+  <nav aria-label="Pagination">
+    <ul class="pagination pagination-sm mb-0">
+      <li class="page-item {% if not pag.has_prev %}disabled{% endif %}">
+        <a class="page-link" href="javascript:void(0)" onclick="updateParam('{{ page_param }}', {{ pag.prev_num or 1 }})">Ant</a>
+      </li>
+      {% for p in pag.iter_pages() %}
+        {% if p %}
+          <li class="page-item {% if p == pag.page %}active{% endif %}">
+            <a class="page-link" href="javascript:void(0)" onclick="updateParam('{{ page_param }}', {{ p }})">{{ p }}</a>
+          </li>
+        {% else %}
+          <li class="page-item disabled"><span class="page-link">...</span></li>
+        {% endif %}
+      {% endfor %}
+      <li class="page-item {% if not pag.has_next %}disabled{% endif %}">
+        <a class="page-link" href="javascript:void(0)" onclick="updateParam('{{ page_param }}', {{ pag.next_num or pag.pages }})">Sig</a>
+      </li>
+    </ul>
+  </nav>
+</div>
+{% endmacro %}
+
+{% macro empty_state(icon, message, action_text, action_url) %}
+<div class="text-center py-4">
+  <div class="text-muted mb-2" style="font-size: 2rem;">{{ icon }}</div>
+  <p class="text-muted mb-2">{{ message }}</p>
+  {% if action_url %}
+  <a href="{{ action_url }}" class="btn btn-sm btn-outline-primary">{{ action_text }}</a>
+  {% endif %}
+</div>
+{% endmacro %}
+
 <form class="filters-bar mb-2" method="get" action="{{ url_for('dashboard') }}">
   <div class="filter-group">
     <label for="run_id">Corrida</label>
@@ -30,7 +71,7 @@
   </div>
 
   <div class="filter-group">
-    <label for="folio">Folio (placeholder)</label>
+    <label for="folio">Folio</label>
     <input type="text"
            class="form-control form-control-sm"
            id="folio"
@@ -40,7 +81,7 @@
   </div>
 
   <div class="filter-group">
-    <label for="responsable">Responsable (placeholder)</label>
+    <label for="responsable">Responsable</label>
     <input type="text"
            class="form-control form-control-sm"
            id="responsable"
@@ -55,26 +96,25 @@
   </div>
 </form>
 
-<!-- KPIs + Acciones rápidas -->
 <div class="row g-3 mt-2 align-items-stretch">
   <div class="col-12 col-md-3">
     <div class="card p-3 h-100">
       <div class="text-muted small">Unidades sugeridas</div>
-      <div class="fs-3 fw-bold">{{ kpi_units_suggested }}</div>
+      <div class="fs-3 fw-bold">{{ "{:,}".format(kpi_units_suggested) }}</div>
     </div>
   </div>
 
   <div class="col-12 col-md-3">
     <div class="card p-3 h-100">
       <div class="text-muted small">SKUs con distribución</div>
-      <div class="fs-3 fw-bold">{{ kpi_skus_distintos }}</div>
+      <div class="fs-3 fw-bold">{{ "{:,}".format(kpi_skus_distintos) }}</div>
     </div>
   </div>
 
   <div class="col-12 col-md-3">
     <div class="card p-3 h-100">
       <div class="text-muted small">Tiendas alcanzadas</div>
-      <div class="fs-3 fw-bold">{{ kpi_tiendas_alcanzadas }}</div>
+      <div class="fs-3 fw-bold">{{ "{:,}".format(kpi_tiendas_alcanzadas) }}</div>
     </div>
   </div>
 
@@ -82,10 +122,9 @@
     <div class="card p-3 h-100 d-flex flex-row justify-content-between align-items-center">
       <div>
         <div class="text-muted small">Stock CD hoy</div>
-        <div class="fs-3 fw-bold">{{ kpi_stock_cd_total }}</div>
+        <div class="fs-3 fw-bold">{{ "{:,}".format(kpi_stock_cd_total) }}</div>
       </div>
 
-      <!-- Acciones rápidas (compactas) -->
       <div class="d-flex flex-column gap-1">
         <form method="post" action="{{ url_for('reset_sales') }}"
               onsubmit="return confirm('¿Seguro que deseas eliminar TODAS las ventas cargadas?')">
@@ -111,16 +150,22 @@
   </div>
 </div>
 
-<!-- Bloque central: ventas vs distribución -->
 <div class="row g-3 mt-3">
-  <!-- Top ventas -->
   <div class="col-12 col-lg-6">
     <div class="card">
-      <div class="card-header d-flex justify-content-between align-items-center">
+      <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
         <span>
-          Top 10 productos vendidos (últimos datos cargados)
+          Top productos vendidos
           {% if selected_store %} — {{ selected_store }}{% else %} — Todas las tiendas{% endif %}
         </span>
+        <div class="d-flex gap-2 align-items-center">
+          <input type="text" 
+                 class="form-control form-control-sm" 
+                 placeholder="Buscar SKU o producto..." 
+                 value="{{ sales_search }}"
+                 style="width: 160px;"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();updateParam('sales_search', this.value, 'sales_page');}">
+        </div>
       </div>
 
       <div class="card-body p-0">
@@ -135,39 +180,48 @@
               </tr>
             </thead>
             <tbody>
-              {% for r in top_sales %}
-                <tr>
-                  <td>{{ r.sku }}</td>
-                  <td>{{ r.product }}</td>
-                  <td>{{ r.store }}</td>
-                  <td class="text-end">{{ r.units }}</td>
-                </tr>
-              {% endfor %}
-
-              {% if not top_sales %}
-                <tr><td colspan="4" class="text-muted p-2">Sin datos en el período / filtro.</td></tr>
+              {% if top_sales %}
+                {% for r in top_sales %}
+                  <tr>
+                    <td>{{ r.sku }}</td>
+                    <td>{{ r.product }}</td>
+                    <td>{{ r.store }}</td>
+                    <td class="text-end">{{ "{:,}".format(r.units|int) }}</td>
+                  </tr>
+                {% endfor %}
+              {% else %}
+                <tr><td colspan="4">{{ empty_state('📊', 'Sin datos de ventas para los filtros seleccionados.', 'Cargar ventas', url_for('upload')) }}</td></tr>
               {% endif %}
             </tbody>
           </table>
         </div>
+        {% if sales_pagination %}
+        {{ pagination_controls(sales_pagination, 'sales_page', 'sales_size', 'sales_search', sales_search, sales_size, 'sales') }}
+        {% endif %}
       </div>
-
     </div>
   </div>
 
-  <!-- Distribución sugerida -->
   <div class="col-12 col-lg-6">
     <div class="card">
-      <div class="card-header d-flex justify-content-between align-items-center">
+      <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
         <span>
           Distribución sugerida
-          {% if predictions %} — {{ predictions[0][0].model_name }}{% endif %}
+          {% if predictions %} — {{ predictions[0][0].model_name.split('—')[0] }}{% endif %}
         </span>
-        {% if selected_run_id %}
-        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('export_predictions', run_id=selected_run_id) }}">Exportar</a>
-        {% else %}
-        <button class="btn btn-sm btn-outline-secondary" disabled>Exportar</button>
-        {% endif %}
+        <div class="d-flex gap-2 align-items-center">
+          <input type="text" 
+                 class="form-control form-control-sm" 
+                 placeholder="Buscar SKU, producto, tienda..." 
+                 value="{{ pred_search }}"
+                 style="width: 180px;"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();updateParam('pred_search', this.value, 'pred_page');}">
+          {% if selected_run_id %}
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('export_predictions', run_id=selected_run_id) }}">Exportar</a>
+          {% else %}
+          <button class="btn btn-sm btn-outline-secondary" disabled>Exportar</button>
+          {% endif %}
+        </div>
       </div>
 
       <div class="card-body p-0">
@@ -182,38 +236,47 @@
               </tr>
             </thead>
             <tbody>
-              {% for p, prod, st in predictions[:10] %}
-                <tr>
-                  <td>{{ prod.sku }}</td>
-                  <td>{{ prod.name }}</td>
-                  <td>{{ st.name }}</td>
-                  <td class="text-end">{{ p.quantity }}</td>
-                </tr>
-              {% endfor %}
-
-              {% if not predictions %}
-                <tr><td colspan="4" class="text-muted p-2">Sin predicciones para los filtros seleccionados.</td></tr>
+              {% if predictions %}
+                {% for p, prod, st in predictions %}
+                  <tr>
+                    <td>{{ prod.sku }}</td>
+                    <td>{{ prod.name }}</td>
+                    <td>{{ st.name }}</td>
+                    <td class="text-end">{{ "{:,}".format(p.quantity|int) }}</td>
+                  </tr>
+                {% endfor %}
+              {% else %}
+                <tr><td colspan="4">{{ empty_state('📦', 'Sin predicciones para los filtros seleccionados.', 'Cargar ventas', url_for('upload')) }}</td></tr>
               {% endif %}
             </tbody>
           </table>
         </div>
+        {% if pred_pagination %}
+        {{ pagination_controls(pred_pagination, 'pred_page', 'pred_size', 'pred_search', pred_search, pred_size, 'pred') }}
+        {% endif %}
       </div>
-
     </div>
   </div>
 </div>
 
-<!-- Remanente CD -->
 <div class="row g-3 mt-3">
   <div class="col-12">
     <div class="card">
-      <div class="card-header d-flex justify-content-between align-items-center">
-        <span>Resumen remanente CD (solo SKUs de la última distribución)</span>
-        {% if selected_run_id %}
-        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('export_cd_remanente', run_id=selected_run_id) }}">Exportar remanente</a>
-        {% else %}
-        <button class="btn btn-sm btn-outline-secondary" disabled>Exportar remanente</button>
-        {% endif %}
+      <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span>Resumen remanente CD (solo SKUs de la distribución seleccionada)</span>
+        <div class="d-flex gap-2 align-items-center">
+          <input type="text" 
+                 class="form-control form-control-sm" 
+                 placeholder="Buscar SKU o producto..." 
+                 value="{{ cd_search }}"
+                 style="width: 160px;"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();updateParam('cd_search', this.value, 'cd_page');}">
+          {% if selected_run_id %}
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('export_cd_remanente', run_id=selected_run_id) }}">Exportar remanente</a>
+          {% else %}
+          <button class="btn btn-sm btn-outline-secondary" disabled>Exportar remanente</button>
+          {% endif %}
+        </div>
       </div>
 
       <div class="card-body p-0">
@@ -228,27 +291,36 @@
             </thead>
             <tbody>
               {% if stock_cd_filtered %}
-                {% for cd, prod in stock_cd_filtered[:10] %}
+                {% for cd, prod in stock_cd_filtered %}
                   <tr>
                     <td>{{ prod.sku }}</td>
                     <td>{{ prod.name }}</td>
-                    <td class="text-end">{{ cd.quantity }}</td>
+                    <td class="text-end">{{ "{:,}".format(cd.quantity|int) }}</td>
                   </tr>
                 {% endfor %}
               {% else %}
-                <tr>
-                  <td colspan="3" class="text-muted p-2">
-                    Sin datos de Stock CD disponibles en este momento para los filtros seleccionados.
-                  </td>
-                </tr>
+                <tr><td colspan="3">{{ empty_state('🏭', 'Sin datos de Stock CD disponibles para los filtros seleccionados.', 'Cargar Stock CD', url_for('upload_stock_cd')) }}</td></tr>
               {% endif %}
             </tbody>
           </table>
         </div>
+        {% if cd_pagination %}
+        {{ pagination_controls(cd_pagination, 'cd_page', 'cd_size', 'cd_search', cd_search, cd_size, 'cd') }}
+        {% endif %}
       </div>
-
     </div>
   </div>
 </div>
+
+<script>
+function updateParam(param, value, resetPageParam) {
+  const url = new URL(window.location.href);
+  url.searchParams.set(param, value);
+  if (resetPageParam && param !== resetPageParam) {
+    url.searchParams.set(resetPageParam, 1);
+  }
+  window.location.href = url.toString();
+}
+</script>
 
 {% endblock %}
