@@ -23,11 +23,11 @@ ROLE_PERMISSIONS = {
     'Admin': [
         'dashboard:view', 'sales:upload', 'stock_store:upload', 'stock_cd:upload',
         'stock:query', 'distribution:generate', 'distribution:export',
-        'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'admin:users', 'admin:reset'
+        'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'admin:users', 'admin:reset', 'audit:view'
     ],
     'Management': [
         'dashboard:view', 'stock:query', 'distribution:export',
-        'forecast_v2:view', 'runs:view'
+        'forecast_v2:view', 'runs:view', 'audit:view'
     ],
     'CategoryManager': [
         'dashboard:view', 'sales:upload', 'distribution:generate', 'distribution:export',
@@ -177,6 +177,7 @@ class Run(db.Model):
     run_id = db.Column(db.String(36), unique=True, nullable=False, index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     run_type = db.Column(db.String(50), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     folio = db.Column(db.String(100), nullable=True)
     responsable = db.Column(db.String(100), nullable=True)
     categoria = db.Column(db.String(100), nullable=True)
@@ -184,6 +185,10 @@ class Run(db.Model):
     notes = db.Column(db.Text, nullable=True)
     status = db.Column(db.String(20), default='completed', nullable=False)
     mode = db.Column(db.String(50), nullable=True)
+    rows_count = db.Column(db.Integer, nullable=True)
+    predictions_count = db.Column(db.Integer, nullable=True)
+
+    user = db.relationship('User', backref='runs')
 
     def label(self):
         parts = []
@@ -229,6 +234,28 @@ class ForecastResult(db.Model):
 
     product = db.relationship('Product')
 
+
+class AuditLog(db.Model):
+    """Audit trail for all significant actions in the system."""
+    __tablename__ = 'audit_log'
+    id = db.Column(db.Integer, primary_key=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    username_snapshot = db.Column(db.String(80), nullable=True)
+    role_snapshot = db.Column(db.String(50), nullable=True)
+    action = db.Column(db.String(100), nullable=False, index=True)
+    entity_type = db.Column(db.String(100), nullable=True)
+    entity_id = db.Column(db.String(100), nullable=True)
+    run_id = db.Column(db.String(36), nullable=True, index=True)
+    status = db.Column(db.String(20), nullable=False, default='success')
+    message = db.Column(db.String(500), nullable=True)
+    metadata_json = db.Column(db.Text, nullable=True)
+    ip_address = db.Column(db.String(45), nullable=True)
+    user_agent = db.Column(db.String(500), nullable=True)
+
+    user = db.relationship('User', backref='audit_logs')
+
+
 # ------------------ Login loader ------------------
 
 
@@ -263,6 +290,66 @@ def require_permission(permission):
             return f(*args, **kwargs)
         return decorated_function
     return decorator
+
+
+# ------------------ Audit Trail Helper ------------------
+import json
+
+def log_audit(action, status="success", message="", entity_type=None, entity_id=None, run_id=None, metadata=None):
+    """
+    Log an audit trail entry. Safe to call - won't crash if logging fails.
+    
+    Args:
+        action: Action identifier (e.g., "sales.upload", "distribution.run")
+        status: "success" or "fail"
+        message: Human-readable description
+        entity_type: Type of entity affected (e.g., "DistributionRecord", "StockCD")
+        entity_id: ID of specific entity (optional)
+        run_id: UUID of related run (optional)
+        metadata: Dict with additional context (will be JSON-serialized)
+    """
+    try:
+        user_id = None
+        username_snapshot = None
+        role_snapshot = None
+        ip_address = None
+        user_agent = None
+        
+        if current_user and current_user.is_authenticated:
+            user_id = current_user.id
+            username_snapshot = current_user.username
+            role_snapshot = current_user.role
+        
+        if request:
+            ip_address = request.remote_addr
+            user_agent = request.headers.get('User-Agent', '')[:500]
+        
+        metadata_json = None
+        if metadata:
+            try:
+                metadata_json = json.dumps(metadata, default=str, ensure_ascii=False)
+            except Exception:
+                metadata_json = str(metadata)
+        
+        audit_entry = AuditLog(
+            user_id=user_id,
+            username_snapshot=username_snapshot,
+            role_snapshot=role_snapshot,
+            action=action,
+            entity_type=entity_type,
+            entity_id=str(entity_id) if entity_id else None,
+            run_id=run_id,
+            status=status,
+            message=message[:500] if message else None,
+            metadata_json=metadata_json,
+            ip_address=ip_address,
+            user_agent=user_agent
+        )
+        db.session.add(audit_entry)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Failed to write audit log: {e}")
 
 
 # ------------------ Utilidades ------------------
@@ -1336,14 +1423,17 @@ def upload():
         # Create sales_upload run
         from uuid import uuid4
         sales_run_id = str(uuid4())
+        user_id = current_user.id if current_user.is_authenticated else None
         sales_run = Run(
             run_id=sales_run_id,
             run_type='sales_upload',
+            user_id=user_id,
             folio=meta.get("folio"),
             responsable=meta.get("responsable"),
             categoria=meta.get("categoria"),
             notes=meta.get("fecha_doc"),
-            status='completed'
+            status='completed',
+            rows_count=len(df)
         )
         db.session.add(sales_run)
         db.session.flush()
@@ -1692,8 +1782,15 @@ def export_purchase_projection():
 @login_required
 @require_permission('admin:reset')
 def reset_sales():
+    count = db.session.query(DistributionRecord).count()
     db.session.query(DistributionRecord).delete()
     db.session.commit()
+    log_audit(
+        action="reset.sales",
+        message=f"Eliminados {count} registros de ventas",
+        entity_type="DistributionRecord",
+        metadata={"deleted_count": count}
+    )
     flash('✅ Se eliminaron todos los registros de ventas cargadas.', 'warning')
     return redirect(url_for('dashboard'))
 
@@ -1702,8 +1799,15 @@ def reset_sales():
 @login_required
 @require_permission('admin:reset')
 def reset_store_stock():
+    count = db.session.query(StockSnapshot).count()
     db.session.query(StockSnapshot).delete()
     db.session.commit()
+    log_audit(
+        action="reset.stock_store",
+        message=f"Eliminados {count} snapshots de stock tiendas",
+        entity_type="StockSnapshot",
+        metadata={"deleted_count": count}
+    )
     flash('✅ Se eliminó todo el stock de tiendas.', 'warning')
     return redirect(url_for('dashboard'))
 
@@ -1712,8 +1816,15 @@ def reset_store_stock():
 @login_required
 @require_permission('admin:reset')
 def reset_predictions():
+    count = db.session.query(Prediction).count()
     db.session.query(Prediction).delete()
     db.session.commit()
+    log_audit(
+        action="reset.predictions",
+        message=f"Eliminadas {count} predicciones",
+        entity_type="Prediction",
+        metadata={"deleted_count": count}
+    )
     flash('✅ Se eliminaron todas las distribuciones sugeridas.', 'warning')
     return redirect(url_for('dashboard'))
 
@@ -1722,8 +1833,15 @@ def reset_predictions():
 @login_required
 @require_permission('admin:reset')
 def reset_stock_cd():
+    count = StockCD.query.count()
     StockCD.query.delete()
     db.session.commit()
+    log_audit(
+        action="reset.stock_cd",
+        message=f"Eliminados {count} registros stock CD",
+        entity_type="StockCD",
+        metadata={"deleted_count": count}
+    )
     flash('Stock CD completamente reiniciado.', 'success')
     return redirect(url_for('dashboard'))
 
@@ -2172,25 +2290,47 @@ def admin_reset_password(user_id):
 
 
 def init_database():
-    """Initialize database with safe schema migration for RBAC columns."""
+    """Initialize database with safe schema migration for RBAC and Audit columns."""
     from sqlalchemy import inspect, text
     
     db.create_all()
     
     inspector = inspect(db.engine)
-    columns = [col['name'] for col in inspector.get_columns('user')]
     
-    if 'role' not in columns:
+    user_columns = [col['name'] for col in inspector.get_columns('user')]
+    
+    if 'role' not in user_columns:
         with db.engine.connect() as conn:
             conn.execute(text("ALTER TABLE user ADD COLUMN role VARCHAR(50) DEFAULT 'Admin'"))
             conn.commit()
         print("✅ Added 'role' column to user table")
     
-    if 'is_active' not in columns:
+    if 'is_active' not in user_columns:
         with db.engine.connect() as conn:
             conn.execute(text("ALTER TABLE user ADD COLUMN is_active BOOLEAN DEFAULT 1"))
             conn.commit()
         print("✅ Added 'is_active' column to user table")
+    
+    if 'run' in inspector.get_table_names():
+        run_columns = [col['name'] for col in inspector.get_columns('run')]
+        
+        if 'user_id' not in run_columns:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE run ADD COLUMN user_id INTEGER"))
+                conn.commit()
+            print("✅ Added 'user_id' column to run table")
+        
+        if 'rows_count' not in run_columns:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE run ADD COLUMN rows_count INTEGER"))
+                conn.commit()
+            print("✅ Added 'rows_count' column to run table")
+        
+        if 'predictions_count' not in run_columns:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE run ADD COLUMN predictions_count INTEGER"))
+                conn.commit()
+            print("✅ Added 'predictions_count' column to run table")
     
     admin = User.query.filter_by(username="admin").first()
     if not admin:

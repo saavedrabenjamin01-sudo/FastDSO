@@ -1,0 +1,89 @@
+Implement a full audit trail system for FastDSO with strong traceability linked to existing user accounts (RBAC already implemented). The goal is to record who did what, when, and what changed, across key modules: Sales upload, Stock Store upload, Stock CD upload, Distribution runs (prediction generation), Exports, Resets, and Forecast V2.
+
+CONTEXT
+	•	We already have User model with roles (Admin, Management, CategoryManager, WarehouseOps, Viewer).
+	•	We have modules and routes for: uploads (sales, store stock, CD stock), generate_predictions/distribution, exports (distribution + CD remanent), reset actions, forecast purchase V2.
+	•	Database is SQLite in Replit. Use SQLAlchemy models. Avoid breaking current behavior.
+
+HIGH-LEVEL REQUIREMENTS
+	1.	Add a new SQLAlchemy model AuditLog storing:
+	•	id (int pk)
+	•	created_at (datetime UTC default)
+	•	user_id (FK to User, nullable True for system events)
+	•	username_snapshot (string) to preserve identity even if username changes
+	•	role_snapshot (string) same reason
+	•	action (string) e.g. “sales.upload”, “stock_cd.upload”, “distribution.run”, “reset.sales”, “export.predictions”, etc.
+	•	entity_type (string, optional) e.g. “DistributionRun”, “StockCD”, “StockSnapshot”, “DistributionRecord”
+	•	entity_id (string/int, optional)
+	•	run_id (string UUID, optional) link to distribution/prediction run if relevant
+	•	status (string: “success” or “fail”)
+	•	message (short text)
+	•	metadata_json (Text) store JSON payload (counts, filters used, filename, etc.)
+	•	ip_address (string, optional) from request.remote_addr
+	•	user_agent (string, optional) from request.headers.get(“User-Agent”)
+	2.	Add DistributionRun model to version runs coherently:
+	•	id (int pk)
+	•	run_id (string UUID unique, indexed)
+	•	created_at (datetime UTC default)
+	•	user_id (FK to User)
+	•	mode (string) prediction method used
+	•	folio/responsable/categoria/fecha_doc (nullable fields copied from meta)
+	•	store_filter (nullable) if run was scoped
+	•	rows_in_sales (int)
+	•	predictions_count (int)
+	•	stock_cd_snapshot_date (date nullable)
+	•	notes/message (optional)
+	3.	Link predictions to runs:
+	•	Ensure Prediction model has run_id (string UUID, indexed).
+	•	When generate_predictions executes, create a new DistributionRun row FIRST, generate UUID, attach run_id to all Prediction rows created/updated for this run.
+	•	IMPORTANT: Do not overwrite older runs. Dashboard “latest” must show only the newest run by created_at or by newest run_id, not mix runs.
+	4.	Add audit logging helper:
+	•	function log_audit(action, status=“success”, message=””, entity_type=None, entity_id=None, run_id=None, metadata=None)
+	•	Should safely JSON-dump metadata into metadata_json.
+	•	Always store user_id/username_snapshot/role_snapshot if current_user authenticated.
+	•	If error occurs, still write an audit log with status=“fail”.
+	5.	Instrument key actions:
+	•	Sales upload route:
+	•	log action “sales.upload” with filename, rows count, distinct skus, distinct stores, date range if possible.
+	•	Stock Store upload route:
+	•	log “stock_store.upload” with filename, rows count, distinct skus, distinct stores, as_of_date used, replace vs append choice.
+	•	Stock CD upload route:
+	•	log “stock_cd.upload” with similar metadata + snapshot date.
+	•	generate_predictions / distribution run:
+	•	log “distribution.run” with mode, meta fields, predictions_count, stock snapshot date, any filters used.
+	•	Export endpoints:
+	•	log “export.predictions” and “export.cd_remanente” with row count, run_id, filters.
+	•	Reset endpoints:
+	•	log “reset.sales”, “reset.stock_cd”, “reset.stock_store”, “reset.predictions” with count of rows deleted.
+	•	Forecast V2:
+	•	log “forecast_v2.run” and/or “forecast_v2.view” as appropriate.
+	6.	Add “Audit” module UI (read-only):
+	•	Route: /audit (permission: admin or management)
+	•	Table with pagination: created_at, user, role, action, status, message, run_id, metadata (expand/collapse).
+	•	Filter controls: date range, user, action, status, run_id.
+	•	Do not expose sensitive info (password hashes etc.).
+	7.	Ensure coherence with user profiles:
+	•	Always store user_id and snapshot fields (username_snapshot, role_snapshot) so old logs remain meaningful even if user changes role later.
+	8.	Safety:
+	•	Logging must not crash the request if logging fails. Wrap audit writes in try/except and continue.
+	•	Use UTC timestamps.
+	•	Keep metadata_json under control: store only summary counts, not full datasets.
+
+DELIVERABLES
+	•	New models: AuditLog, DistributionRun
+	•	Updated Prediction to include run_id (if missing) and link to DistributionRun
+	•	Updated generate_predictions to create a DistributionRun and assign run_id to predictions; ensure dashboard uses the latest DistributionRun (not mixing with previous runs)
+	•	Updated routes to call log_audit with meaningful metadata
+	•	New /audit page template + route, added to sidebar (only for allowed roles)
+
+VALIDATION CHECKLIST
+	•	After running sales upload and distribution run, /audit shows entries with correct user and role snapshot.
+	•	Running two distribution runs back-to-back results in dashboard showing only the latest run by default; older runs accessible via filters.
+	•	Reset actions show deleted row counts in audit.
+	•	Exports add audit entries including run_id and row counts.
+	•	No crashes if audit write fails.
+
+Implementation notes:
+	•	Use uuid.uuid4() for run_id.
+	•	If SQLite schema migration is hard, implement a safe “dev reset DB” option or add columns via raw SQL ALTER TABLE guarded by try/except.
+	•	Keep changes minimal and backward-compatible.
