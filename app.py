@@ -177,20 +177,31 @@ from collections import defaultdict
 from datetime import date
 
 def generate_predictions(
-
     mode: str = "sma3_min3",
     meta: dict | None = None,
     df: pd.DataFrame | None = None
 ):
-    # NEW: run_id único por corrida
     from uuid import uuid4
     run_id = str(uuid4())
+    
+    meta = meta or {}
+    prediction_run = PredictionRun(
+        run_id=run_id,
+        folio=meta.get("folio"),
+        responsable=meta.get("responsable"),
+        categoria=meta.get("categoria"),
+        fecha_doc=meta.get("fecha_doc"),
+        mode=mode
+    )
+    db.session.add(prediction_run)
+    db.session.flush()
 
     # 1) Origen de datos: df pasado o histórico completo
     if df is None:
         rows = DistributionRecord.query.all()
         if not rows:
-            return 0
+            db.session.commit()
+            return run_id, 0
         data = [{
             'sku': r.product.sku,
             'store': r.store.name,
@@ -390,14 +401,12 @@ def generate_predictions(
 
     db.session.commit()
 
-    # NEW (opcional): guardar el último run_id en el contexto del request
     try:
         g.latest_run_id = run_id
     except Exception:
         pass
 
-    # Devolvemos el TOTAL de predicciones trabajadas (nuevas + actualizadas)
-    return len(final_preds)
+    return run_id, len(final_preds)
 
 from flask import g
 from datetime import date
@@ -909,7 +918,7 @@ def upload():
             "fecha_doc": request.form.get('fecha_doc', '').strip() or None,
         }
 
-        n_preds = generate_predictions(mode=analysis_mode, meta=meta, df=df)
+        run_id, n_preds = generate_predictions(mode=analysis_mode, meta=meta, df=df)
 
         if n_preds == 0:
             flash(
