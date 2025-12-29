@@ -528,29 +528,36 @@ def dashboard():
     store_filter = (request.args.get('store') or '').strip()
     folio_filter = (request.args.get('folio') or '').strip()
     responsable_filter = (request.args.get('responsable') or '').strip()
+    run_id_filter = (request.args.get('run_id') or '').strip()
 
     # --- Fechas / helpers ---
     today = date.today()
 
-    # --- Último run_id (corrida más reciente) ---
-    latest_run_id = (
-        db.session.query(Prediction.run_id)
-        .order_by(Prediction.id.desc())
-        .limit(1)
-        .scalar()
+    # --- Load available runs (limit 50, newest first) ---
+    runs = (
+        PredictionRun.query
+        .order_by(PredictionRun.created_at.desc())
+        .limit(50)
+        .all()
     )
 
-    # --- Última semana de predicción (de la última corrida) ---
-    if latest_run_id:
+    # --- Determine selected_run_id ---
+    if run_id_filter:
+        selected_run_id = run_id_filter
+    elif runs:
+        selected_run_id = runs[0].run_id
+    else:
+        selected_run_id = None
+
+    # --- Última semana de predicción (del run seleccionado) ---
+    if selected_run_id:
         latest_week = (
             db.session.query(func.max(Prediction.target_period_start))
-            .filter(Prediction.run_id == latest_run_id)
+            .filter(Prediction.run_id == selected_run_id)
             .scalar()
         )
     else:
         latest_week = None
-
-    force_latest_run = (not folio_filter and not responsable_filter)
 
     # --- Query base de predicciones + joins ---
     pred_q = (
@@ -559,16 +566,15 @@ def dashboard():
         .join(Store, Prediction.store_id == Store.id)
     )
 
-    # Por defecto, mostrar solo la última corrida
-    if force_latest_run and latest_run_id:
-        pred_q = pred_q.filter(Prediction.run_id == latest_run_id)
+    # Always filter by selected run_id
+    if selected_run_id:
+        pred_q = pred_q.filter(Prediction.run_id == selected_run_id)
 
     # Filtro tienda
     if store_filter:
         pred_q = pred_q.filter(Store.name == store_filter)
 
-    # Filtros folio / responsable (van en model_name)
-    # (Si se usan, NO forzamos run_id; así puedes ver corridas anteriores)
+    # Filtros folio / responsable (filter within the selected run)
     if folio_filter:
         pred_q = pred_q.filter(Prediction.model_name.ilike(f"%Folio:%{folio_filter}%"))
     if responsable_filter:
@@ -651,7 +657,8 @@ def dashboard():
         kpi_stock_cd_total=int(kpi_stock_cd_total or 0),
 
         # (opcional) por si después quieres mostrar “corrida actual”
-        latest_run_id=latest_run_id,
+        runs=runs,
+        selected_run_id=selected_run_id,
     )
 
 @app.route('/purchase_forecast', methods=['GET', 'POST'])
