@@ -9,11 +9,38 @@ import pandas as pd
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import func, or_
+from functools import wraps
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import (
     LoginManager, login_user, login_required, logout_user, current_user, UserMixin
 )
+
+# ------------------ RBAC Configuration ------------------
+ROLES = ['Admin', 'Management', 'CategoryManager', 'WarehouseOps', 'Viewer']
+
+ROLE_PERMISSIONS = {
+    'Admin': [
+        'dashboard:view', 'sales:upload', 'stock_store:upload', 'stock_cd:upload',
+        'stock:query', 'distribution:generate', 'distribution:export',
+        'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'admin:users', 'admin:reset'
+    ],
+    'Management': [
+        'dashboard:view', 'stock:query', 'distribution:export',
+        'forecast_v2:view', 'runs:view'
+    ],
+    'CategoryManager': [
+        'dashboard:view', 'sales:upload', 'distribution:generate', 'distribution:export',
+        'forecast_v2:view', 'forecast_v2:run', 'runs:view'
+    ],
+    'WarehouseOps': [
+        'dashboard:view', 'stock_store:upload', 'stock_cd:upload', 'stock:query',
+        'distribution:export'
+    ],
+    'Viewer': [
+        'dashboard:view', 'stock:query'
+    ]
+}
 MIN_WEEKS = 3  # mínimo de semanas de historia requeridas por SKU–Tienda
 
 
@@ -81,6 +108,8 @@ class User(db.Model, UserMixin):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(256), nullable=False)
+    role = db.Column(db.String(50), nullable=False, default='Viewer')
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def set_password(self, password):
@@ -88,6 +117,13 @@ class User(db.Model, UserMixin):
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+
+    def has_permission(self, permission):
+        permissions = ROLE_PERMISSIONS.get(self.role, [])
+        return permission in permissions
+
+    def get_permissions(self):
+        return ROLE_PERMISSIONS.get(self.role, [])
 
 
 class Product(db.Model):
@@ -208,8 +244,25 @@ def inject_globals():
     Variables globales disponibles en todos los templates Jinja.
     """
     return {
-        'date': date
+        'date': date,
+        'ROLES': ROLES,
+        'ROLE_PERMISSIONS': ROLE_PERMISSIONS
     }
+
+
+def require_permission(permission):
+    """Decorator to require a specific permission to access a route."""
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if not current_user.is_authenticated:
+                return redirect(url_for('login'))
+            if not current_user.has_permission(permission):
+                flash(f'No tienes permiso para acceder a esta sección.', 'warning')
+                return redirect(url_for('dashboard'))
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
 
 
 # ------------------ Utilidades ------------------
@@ -541,6 +594,9 @@ def login():
 
         user = User.query.filter_by(username=username).first()
         if user and check_password_hash(user.password_hash, password):
+            if not user.is_active:
+                flash('Tu cuenta está desactivada. Contacta al administrador.', 'danger')
+                return render_template('login.html')
             login_user(user)
             return redirect(url_for('dashboard'))
 
@@ -584,6 +640,7 @@ from sqlalchemy import func, desc
 
 @app.route('/dashboard', methods=['GET'])
 @login_required
+@require_permission('dashboard:view')
 def dashboard():
     # --- Filtros globales ---
     store_filter = (request.args.get('store') or '').strip()
@@ -815,12 +872,14 @@ def dashboard():
 
 @app.route('/purchase_forecast', methods=['GET', 'POST'])
 @login_required
+@require_permission('forecast_v2:view')
 def purchase_forecast():
     """Legacy route - redirect to V2."""
     return redirect(url_for('purchase_forecast_v2'))
 
 @app.route('/purchase_forecast_v2', methods=['GET', 'POST'])
 @login_required
+@require_permission('forecast_v2:view')
 def purchase_forecast_v2():
     """
     Purchase Forecast V2:
@@ -996,6 +1055,7 @@ def purchase_forecast_v2():
 
 @app.route('/export_purchase_forecast_v2', methods=['POST'])
 @login_required
+@require_permission('forecast_v2:run')
 def export_purchase_forecast_v2():
     """Export Purchase Forecast V2 results to Excel."""
     from datetime import datetime
@@ -1138,6 +1198,7 @@ def export_purchase_forecast_v2():
 
 @app.route('/export_cd_remanente', methods=['GET'])
 @login_required
+@require_permission('distribution:export')
 def export_cd_remanente():
     """Exporta a Excel el remanente de CD solo de los SKUs usados en una corrida específica."""
     today = date.today()
@@ -1226,6 +1287,7 @@ def export_cd_remanente():
 
 @app.route('/upload', methods=['GET', 'POST'])
 @login_required
+@require_permission('sales:upload')
 def upload():
     # ¿hay stock de tienda cargado?
     has_stock = db.session.query(StockSnapshot.id).first() is not None
@@ -1344,6 +1406,7 @@ def upload():
 
 @app.route('/stock', methods=['GET', 'POST'])
 @login_required
+@require_permission('stock_store:upload')
 def upload_stock():
     if request.method == 'POST':
         f = request.files.get('file')
@@ -1472,6 +1535,7 @@ import io
 
 @app.route('/purchase_projection', methods=['GET', 'POST'])
 @login_required
+@require_permission('forecast_v2:view')
 def purchase_projection():
     # Parámetros por defecto
     lead_time_w = 2
@@ -1547,6 +1611,7 @@ def purchase_projection():
 
 @app.route('/export_purchase_projection', methods=['POST'])
 @login_required
+@require_permission('forecast_v2:run')
 def export_purchase_projection():
     try:
         lead_time_w = max(int(request.form.get('lead_time_w', 2)), 0)
@@ -1625,6 +1690,7 @@ def export_purchase_projection():
 
 @app.route('/reset_sales', methods=['POST'])
 @login_required
+@require_permission('admin:reset')
 def reset_sales():
     db.session.query(DistributionRecord).delete()
     db.session.commit()
@@ -1634,6 +1700,7 @@ def reset_sales():
 
 @app.route('/reset_store_stock', methods=['POST'])
 @login_required
+@require_permission('admin:reset')
 def reset_store_stock():
     db.session.query(StockSnapshot).delete()
     db.session.commit()
@@ -1643,6 +1710,7 @@ def reset_store_stock():
 
 @app.route('/reset_predictions', methods=['POST'])
 @login_required
+@require_permission('admin:reset')
 def reset_predictions():
     db.session.query(Prediction).delete()
     db.session.commit()
@@ -1652,6 +1720,7 @@ def reset_predictions():
 
 @app.route('/reset_stock_cd', methods=['POST'])
 @login_required
+@require_permission('admin:reset')
 def reset_stock_cd():
     StockCD.query.delete()
     db.session.commit()
@@ -1660,6 +1729,7 @@ def reset_stock_cd():
 
 @app.route('/stock_cd', methods=['GET', 'POST'])
 @login_required
+@require_permission('stock_cd:upload')
 def upload_stock_cd():
     from datetime import date
 
@@ -1753,6 +1823,7 @@ def upload_stock_cd():
 
 @app.route('/stock_query', methods=['GET'])
 @login_required
+@require_permission('stock:query')
 def stock_query():
     sku = (request.args.get("sku") or "").strip()
     scope = (request.args.get("scope") or "cd").strip()  # cd | tiendas
@@ -1822,6 +1893,7 @@ def stock_query():
 
 @app.route('/export_predictions', methods=['GET'])
 @login_required
+@require_permission('distribution:export')
 def export_predictions():
     from io import BytesIO
     import pandas as pd
@@ -1913,6 +1985,7 @@ def export_predictions():
 
 @app.route('/runs', methods=['GET'])
 @login_required
+@require_permission('runs:view')
 def runs():
     """Display history of all runs with pagination, search, and filter chips."""
     page = request.args.get('page', 1, type=int)
@@ -1960,6 +2033,7 @@ def runs():
 
 @app.route('/run/<run_id>', methods=['GET'])
 @login_required
+@require_permission('runs:view')
 def view_run(run_id):
     """View details of a specific run."""
     run = Run.query.filter_by(run_id=run_id).first_or_404()
@@ -2005,19 +2079,139 @@ def view_run(run_id):
     return render_template('run_detail.html', run=run)
 
 
+# ======================================================
+# ADMIN USER MANAGEMENT
+# ======================================================
+
+@app.route('/admin/users', methods=['GET'])
+@login_required
+@require_permission('admin:users')
+def admin_users():
+    """Admin page to manage users."""
+    users = User.query.order_by(User.username.asc()).all()
+    return render_template('admin_users.html', users=users, roles=ROLES)
+
+
+@app.route('/admin/users/create', methods=['POST'])
+@login_required
+@require_permission('admin:users')
+def admin_create_user():
+    """Create a new user."""
+    username = (request.form.get('username') or '').strip().lower()
+    password = request.form.get('password') or ''
+    role = request.form.get('role') or 'Viewer'
+    
+    if not username or not password:
+        flash('Usuario y contraseña son requeridos.', 'danger')
+        return redirect(url_for('admin_users'))
+    
+    if role not in ROLES:
+        flash('Rol inválido.', 'danger')
+        return redirect(url_for('admin_users'))
+    
+    existing = User.query.filter_by(username=username).first()
+    if existing:
+        flash(f'El usuario "{username}" ya existe.', 'danger')
+        return redirect(url_for('admin_users'))
+    
+    new_user = User(
+        username=username,
+        password_hash=generate_password_hash(password),
+        role=role,
+        is_active=True
+    )
+    db.session.add(new_user)
+    db.session.commit()
+    
+    flash(f'Usuario "{username}" creado con rol {role}.', 'success')
+    return redirect(url_for('admin_users'))
+
+
+@app.route('/admin/users/<int:user_id>/update', methods=['POST'])
+@login_required
+@require_permission('admin:users')
+def admin_update_user(user_id):
+    """Update user role and active status."""
+    user = User.query.get_or_404(user_id)
+    
+    if user.username == 'admin' and current_user.id != user.id:
+        flash('No puedes modificar al usuario admin.', 'danger')
+        return redirect(url_for('admin_users'))
+    
+    role = request.form.get('role')
+    is_active = request.form.get('is_active') == 'on'
+    
+    if role and role in ROLES:
+        user.role = role
+    
+    if user.username != 'admin':
+        user.is_active = is_active
+    
+    db.session.commit()
+    flash(f'Usuario "{user.username}" actualizado.', 'success')
+    return redirect(url_for('admin_users'))
+
+
+@app.route('/admin/users/<int:user_id>/reset-password', methods=['POST'])
+@login_required
+@require_permission('admin:users')
+def admin_reset_password(user_id):
+    """Reset user password."""
+    user = User.query.get_or_404(user_id)
+    new_password = request.form.get('new_password') or ''
+    
+    if not new_password:
+        flash('La nueva contraseña es requerida.', 'danger')
+        return redirect(url_for('admin_users'))
+    
+    user.password_hash = generate_password_hash(new_password)
+    db.session.commit()
+    
+    flash(f'Contraseña de "{user.username}" actualizada.', 'success')
+    return redirect(url_for('admin_users'))
+
+
+def init_database():
+    """Initialize database with safe schema migration for RBAC columns."""
+    from sqlalchemy import inspect, text
+    
+    db.create_all()
+    
+    inspector = inspect(db.engine)
+    columns = [col['name'] for col in inspector.get_columns('user')]
+    
+    if 'role' not in columns:
+        with db.engine.connect() as conn:
+            conn.execute(text("ALTER TABLE user ADD COLUMN role VARCHAR(50) DEFAULT 'Admin'"))
+            conn.commit()
+        print("✅ Added 'role' column to user table")
+    
+    if 'is_active' not in columns:
+        with db.engine.connect() as conn:
+            conn.execute(text("ALTER TABLE user ADD COLUMN is_active BOOLEAN DEFAULT 1"))
+            conn.commit()
+        print("✅ Added 'is_active' column to user table")
+    
+    admin = User.query.filter_by(username="admin").first()
+    if not admin:
+        admin = User(
+            username="admin",
+            password_hash=generate_password_hash("admin"),
+            role='Admin',
+            is_active=True
+        )
+        db.session.add(admin)
+        db.session.commit()
+        print("✅ Usuario admin creado (admin / admin)")
+    elif not admin.role or admin.role not in ROLES:
+        admin.role = 'Admin'
+        admin.is_active = True
+        db.session.commit()
+        print("✅ Usuario admin actualizado con rol Admin")
+
+
 if __name__ == "__main__":
     with app.app_context():
-        db.create_all()
-
-        # Crear admin si no existe (Flask 3 friendly)
-        admin = User.query.filter_by(username="admin").first()
-        if not admin:
-            admin = User(
-                username="admin",
-                password_hash=generate_password_hash("admin")
-            )
-            db.session.add(admin)
-            db.session.commit()
-            print("✅ Usuario admin creado (admin / admin)")
+        init_database()
 
     app.run(host='0.0.0.0', port=5000, debug=True)

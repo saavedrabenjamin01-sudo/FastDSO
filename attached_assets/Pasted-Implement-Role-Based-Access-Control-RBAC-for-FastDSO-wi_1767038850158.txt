@@ -1,0 +1,84 @@
+Implement Role-Based Access Control (RBAC) for FastDSO with minimal disruption. The app has modules: Dashboard, Sales Upload, Stock Store Upload, Stock CD Upload, Stock Query, Distribution generation/export, Runs history, Purchase Forecast V2. We need roles for management and operations.
+
+GOALS
+	•	Add roles and permissions (feature flags) to restrict access to routes and UI menu items.
+	•	Do NOT break existing functionality.
+	•	Keep it simple and maintainable (RBAC v1, no complex scopes yet).
+
+ROLES (v1)
+	•	Admin: full access.
+	•	Management: view-only + exports + runs.
+	•	CategoryManager: sales upload + distribution generate/export + forecast v2 (optional) + runs view.
+	•	WarehouseOps: stock uploads (store+CD) + stock query + view distribution; no forecast; no resets.
+	•	Viewer: dashboard + stock query view only.
+
+PERMISSIONS (define constants)
+dashboard:view
+sales:upload
+stock_store:upload
+stock_cd:upload
+stock:query
+distribution:generate
+distribution:export
+forecast_v2:view
+forecast_v2:run
+runs:view
+admin:users
+admin:reset
+
+IMPLEMENTATION REQUIREMENTS
+	1.	Database changes
+
+	•	Extend User model with:
+	•	role (string, default “Admin” for existing admin)
+	•	is_active (bool, default True)
+	•	Create a RolePermissions mapping in code (dict) OR a DB table if already using migrations; prefer code mapping for speed.
+	•	If using SQLite without migrations, implement a safe “schema check” on startup or provide instructions to recreate DB for dev.
+
+	2.	Auth & decorators
+
+	•	Add a decorator @require_permission(“permission_name”) that:
+	•	redirects to dashboard with flash message if unauthorized.
+	•	Apply to routes:
+	•	Sales upload route -> sales:upload
+	•	Upload stock store -> stock_store:upload
+	•	Upload stock cd -> stock_cd:upload
+	•	Stock query -> stock:query
+	•	Generate distribution (if separate) -> distribution:generate
+	•	Export distribution -> distribution:export
+	•	Forecast V2 -> forecast_v2:view (and forecast_v2:run if there is a “run” action)
+	•	Runs page -> runs:view
+	•	Reset routes -> admin:reset
+	•	User management routes -> admin:users
+
+	3.	UI changes
+
+	•	Sidebar: hide menu items user cannot access (do not just disable; hide).
+	•	Show the logged-in user role in the user chip.
+	•	If user is not authorized for a page and hits the URL, show a friendly message.
+
+	4.	Admin user management (minimal)
+
+	•	Create a simple “Users” page for Admin:
+	•	list users, role dropdown, active toggle
+	•	create new user with username/password/role
+	•	Keep it basic (no email required; username-based is fine).
+
+	5.	Default data
+
+	•	Ensure admin/admin exists on first run.
+	•	Existing users should get role “Admin” if no role exists to avoid lockout.
+
+DELIVERABLES
+	•	Updated models (User role/is_active)
+	•	Permission mapping + decorator
+	•	Updated routes with permission checks
+	•	Updated base.html sidebar rendering with permission checks
+	•	Admin Users page template + route(s)
+
+VALIDATION CHECKLIST
+	•	Admin sees all modules and can reset.
+	•	Management cannot access upload/reset routes.
+	•	WarehouseOps can upload stocks but cannot access forecast v2.
+	•	CategoryManager can generate/export distributions.
+	•	Unauthorized route access redirects gracefully.

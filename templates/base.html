@@ -37,6 +37,7 @@
     <div class="sidebar-section-label">Panel</div>
 
     <!-- ===== Ventas y Compras ===== -->
+    {% if current_user.is_authenticated and (current_user.has_permission('dashboard:view') or current_user.has_permission('sales:upload') or current_user.has_permission('forecast_v2:view')) %}
     <div class="nav-group">
       <button class="nav-group-toggle" aria-expanded="true">
         <span class="nav-icon"><i class="bi bi-graph-up-arrow"></i></span>
@@ -45,24 +46,32 @@
       </button>
 
       <div class="sidebar-nav" style="display:flex;">
+        {% if current_user.has_permission('dashboard:view') %}
         <a class="nav-link" href="{{ url_for('dashboard') }}">
           <span class="nav-icon"><i class="bi bi-speedometer2"></i></span>
           <span class="nav-text">Dashboard</span>
         </a>
+        {% endif %}
 
+        {% if current_user.has_permission('sales:upload') %}
         <a class="nav-link" href="{{ url_for('upload') }}">
           <span class="nav-icon"><i class="bi bi-upload"></i></span>
           <span class="nav-text">Carga ventas</span>
         </a>
+        {% endif %}
 
+        {% if current_user.has_permission('forecast_v2:view') %}
         <a class="nav-link" href="{{ url_for('purchase_forecast_v2') }}">
           <span class="nav-icon"><i class="bi bi-cart-plus"></i></span>
           <span class="nav-text">Forecast compra</span>
         </a>
+        {% endif %}
       </div>
     </div>
+    {% endif %}
 
     <!-- ===== Stock General ===== -->
+    {% if current_user.is_authenticated and (current_user.has_permission('stock_store:upload') or current_user.has_permission('stock_cd:upload') or current_user.has_permission('stock:query')) %}
     <div class="nav-group">
       <button class="nav-group-toggle" aria-expanded="true">
         <span class="nav-icon"><i class="bi bi-box-seam"></i></span>
@@ -71,24 +80,32 @@
       </button>
 
       <div class="sidebar-nav" style="display:flex;">
+        {% if current_user.has_permission('stock_store:upload') %}
         <a class="nav-link" href="{{ url_for('upload_stock') }}">
           <span class="nav-icon"><i class="bi bi-shop"></i></span>
           <span class="nav-text">Stock tiendas</span>
         </a>
+        {% endif %}
 
+        {% if current_user.has_permission('stock_cd:upload') %}
         <a class="nav-link" href="{{ url_for('upload_stock_cd') }}">
           <span class="nav-icon"><i class="bi bi-building"></i></span>
           <span class="nav-text">Stock CD</span>
         </a>
+        {% endif %}
 
+        {% if current_user.has_permission('stock:query') %}
         <a class="nav-link" href="{{ url_for('stock_query') }}">
           <span class="nav-icon"><i class="bi bi-search"></i></span>
           <span class="nav-text">Consulta stock</span>
         </a>
+        {% endif %}
       </div>
     </div>
+    {% endif %}
 
     <!-- ===== Operaciones ===== -->
+    {% if current_user.is_authenticated and current_user.has_permission('runs:view') %}
     <div class="nav-group">
       <button class="nav-group-toggle" aria-expanded="true">
         <span class="nav-icon"><i class="bi bi-diagram-3"></i></span>
@@ -103,6 +120,25 @@
         </a>
       </div>
     </div>
+    {% endif %}
+
+    <!-- ===== Administración ===== -->
+    {% if current_user.is_authenticated and current_user.has_permission('admin:users') %}
+    <div class="nav-group">
+      <button class="nav-group-toggle" aria-expanded="true">
+        <span class="nav-icon"><i class="bi bi-gear"></i></span>
+        <span class="nav-text">Administración</span>
+        <span class="nav-caret">▶</span>
+      </button>
+
+      <div class="sidebar-nav" style="display:flex;">
+        <a class="nav-link" href="{{ url_for('admin_users') }}">
+          <span class="nav-icon"><i class="bi bi-people"></i></span>
+          <span class="nav-text">Gestión usuarios</span>
+        </a>
+      </div>
+    </div>
+    {% endif %}
 
     <!-- ===== Bottom ===== -->
     <div class="sidebar-bottom">
@@ -120,7 +156,7 @@
           <div class="user-name">
             {{ current_user.username if current_user.is_authenticated else 'Usuario' }}
           </div>
-          <div class="user-role">Operador</div>
+          <div class="user-role">{{ current_user.role if current_user.is_authenticated else 'Invitado' }}</div>
         </div>
       </div>
 
@@ -170,6 +206,9 @@
   </main>
 
 </div>
+
+<!-- Bootstrap JS (for modals, dropdowns, etc.) -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
 <!-- ========== JS ========== -->
 <script>

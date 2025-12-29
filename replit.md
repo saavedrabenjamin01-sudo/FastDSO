@@ -40,7 +40,7 @@ PredDist is a Flask-based web application for managing product distribution pred
 ```
 
 ### Database Models
-- **User**: Authentication (username, password_hash)
+- **User**: Authentication (username, password_hash, role, is_active)
 - **Product**: SKU and product name
 - **Store**: Store names
 - **Run**: Versioned run history (run_id, run_type, folio, responsable, categoria, store_filter, notes, status)
@@ -58,11 +58,47 @@ PredDist is a Flask-based web application for managing product distribution pred
 5. **Forecast Compra (V2)**: Advanced purchase forecasting with lead time, safety stock, coverage, demand methods
 6. **Runs History**: View all runs (sales uploads, distribution, forecast) with versioning
 7. **Export**: Download predictions and forecasts as Excel files
+8. **Admin Users**: User management with RBAC (Admin only)
+
+## Role-Based Access Control (RBAC)
+
+### Roles
+| Role | Description |
+|------|-------------|
+| **Admin** | Full access to all features including user management and reset operations |
+| **Management** | View-only + exports + runs history (no uploads, no reset) |
+| **CategoryManager** | Sales upload + distribution generate/export + forecast V2 + runs view |
+| **WarehouseOps** | Stock uploads (store + CD) + stock query + distribution export (no forecast) |
+| **Viewer** | Dashboard + stock query view only |
+
+### Permissions
+- `dashboard:view` - View dashboard
+- `sales:upload` - Upload sales data
+- `stock_store:upload` - Upload store stock
+- `stock_cd:upload` - Upload CD stock
+- `stock:query` - Query stock levels
+- `distribution:generate` - Generate distribution predictions
+- `distribution:export` - Export distributions
+- `forecast_v2:view` - View forecast V2
+- `forecast_v2:run` - Run and export forecasts
+- `runs:view` - View runs history
+- `admin:users` - Manage users
+- `admin:reset` - Reset data operations
+
+### Test Users
+- `admin / admin` - Admin role
+- `management / test123` - Management role
+- `categorymanager / test123` - CategoryManager role
+- `warehouseops / test123` - WarehouseOps role
+- `viewer / test123` - Viewer role
 
 ## Running the Application
 The application runs on port 5000 with the "Start Flask App" workflow.
 
 ## Recent Changes
+- December 29, 2025: Implemented Role-Based Access Control (RBAC) with 5 roles and 12 permissions
+- December 29, 2025: Added Admin Users management page with role/password management
+- December 29, 2025: Updated sidebar to hide menu items based on user permissions
 - December 29, 2025: Added professional UI/UX with paginated tables, search, filter chips, and improved exports
 - December 29, 2025: Implemented Runs History system with versioned tracking for sales, distribution, and forecast runs
 - December 29, 2025: Removed legacy purchase_forecast module, consolidated to Forecast Compra V2

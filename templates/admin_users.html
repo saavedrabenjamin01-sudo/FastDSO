@@ -1,0 +1,179 @@
+{% extends 'base.html' %}
+{% block title %}Gestión de Usuarios - FastDSO{% endblock %}
+{% block page_title %}Gestión de Usuarios{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+
+  <div class="row mb-4">
+    <div class="col-md-8">
+      <div class="card">
+        <div class="card-header d-flex align-items-center justify-content-between">
+          <h5 class="mb-0"><i class="bi bi-people me-2"></i>Usuarios del Sistema</h5>
+          <span class="badge bg-primary">{{ users|length }} usuarios</span>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-hover mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Usuario</th>
+                  <th>Rol</th>
+                  <th>Estado</th>
+                  <th>Creado</th>
+                  <th class="text-end">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for user in users %}
+                <tr>
+                  <td>
+                    <div class="d-flex align-items-center">
+                      <div class="user-avatar-sm me-2">{{ user.username[0:1] | upper }}</div>
+                      <strong>{{ user.username }}</strong>
+                      {% if user.username == 'admin' %}
+                      <span class="badge bg-warning text-dark ms-2">Super Admin</span>
+                      {% endif %}
+                    </div>
+                  </td>
+                  <td>
+                    <form action="{{ url_for('admin_update_user', user_id=user.id) }}" method="POST" class="d-inline">
+                      <select name="role" class="form-select form-select-sm d-inline-block w-auto" onchange="this.form.submit()" {% if user.username == 'admin' and current_user.username != 'admin' %}disabled{% endif %}>
+                        {% for role in roles %}
+                        <option value="{{ role }}" {% if user.role == role %}selected{% endif %}>{{ role }}</option>
+                        {% endfor %}
+                      </select>
+                      <input type="hidden" name="is_active" value="{{ 'on' if user.is_active else '' }}">
+                    </form>
+                  </td>
+                  <td>
+                    {% if user.username == 'admin' %}
+                    <span class="badge bg-success">Siempre activo</span>
+                    {% else %}
+                    <form action="{{ url_for('admin_update_user', user_id=user.id) }}" method="POST" class="d-inline">
+                      <input type="hidden" name="role" value="{{ user.role }}">
+                      <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" name="is_active" {% if user.is_active %}checked{% endif %} onchange="this.form.submit()">
+                        <label class="form-check-label">{{ 'Activo' if user.is_active else 'Inactivo' }}</label>
+                      </div>
+                    </form>
+                    {% endif %}
+                  </td>
+                  <td>
+                    <small class="text-muted">{{ user.created_at.strftime('%Y-%m-%d') if user.created_at else 'N/A' }}</small>
+                  </td>
+                  <td class="text-end">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#resetPasswordModal{{ user.id }}">
+                      <i class="bi bi-key"></i> Cambiar contraseña
+                    </button>
+                  </td>
+                </tr>
+
+                <div class="modal fade" id="resetPasswordModal{{ user.id }}" tabindex="-1">
+                  <div class="modal-dialog">
+                    <div class="modal-content">
+                      <form action="{{ url_for('admin_reset_password', user_id=user.id) }}" method="POST">
+                        <div class="modal-header">
+                          <h5 class="modal-title">Cambiar contraseña: {{ user.username }}</h5>
+                          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                          <div class="mb-3">
+                            <label class="form-label">Nueva contraseña</label>
+                            <input type="password" name="new_password" class="form-control" required minlength="4">
+                          </div>
+                        </div>
+                        <div class="modal-footer">
+                          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                          <button type="submit" class="btn btn-primary">Guardar</button>
+                        </div>
+                      </form>
+                    </div>
+                  </div>
+                </div>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-4">
+      <div class="card">
+        <div class="card-header">
+          <h5 class="mb-0"><i class="bi bi-person-plus me-2"></i>Crear Usuario</h5>
+        </div>
+        <div class="card-body">
+          <form action="{{ url_for('admin_create_user') }}" method="POST">
+            <div class="mb-3">
+              <label class="form-label">Nombre de usuario</label>
+              <input type="text" name="username" class="form-control" required pattern="[a-zA-Z0-9_]+" title="Solo letras, números y guión bajo">
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Contraseña</label>
+              <input type="password" name="password" class="form-control" required minlength="4">
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Rol</label>
+              <select name="role" class="form-select">
+                {% for role in roles %}
+                <option value="{{ role }}">{{ role }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <button type="submit" class="btn btn-primary w-100">
+              <i class="bi bi-plus-circle me-1"></i> Crear usuario
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <div class="card mt-4">
+        <div class="card-header">
+          <h5 class="mb-0"><i class="bi bi-shield-check me-2"></i>Permisos por Rol</h5>
+        </div>
+        <div class="card-body">
+          <div class="accordion" id="rolesAccordion">
+            {% for role_name, permissions in ROLE_PERMISSIONS.items() %}
+            <div class="accordion-item">
+              <h2 class="accordion-header">
+                <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#collapse{{ loop.index }}">
+                  <strong>{{ role_name }}</strong>
+                  <span class="badge bg-secondary ms-2">{{ permissions|length }}</span>
+                </button>
+              </h2>
+              <div id="collapse{{ loop.index }}" class="accordion-collapse collapse" data-bs-parent="#rolesAccordion">
+                <div class="accordion-body py-2">
+                  <ul class="list-unstyled mb-0 small">
+                    {% for perm in permissions %}
+                    <li><i class="bi bi-check-circle-fill text-success me-1"></i>{{ perm }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<style>
+.user-avatar-sm {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+</style>
+{% endblock %}
