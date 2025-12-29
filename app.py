@@ -933,11 +933,11 @@ def upload_stock():
         df.columns = [str(c).strip() for c in df.columns]
         cols_lower = {c.lower(): c for c in df.columns}
 
-        sku_col = cols_lower.get('sku')
-        prod_col = cols_lower.get('producto') or cols_lower.get('product') or cols_lower.get('product_name')
+        sku_col = cols_lower.get('sku') or cols_lower.get('codigo')
+        prod_col = cols_lower.get('producto') or cols_lower.get('product') or cols_lower.get('product_name') or cols_lower.get('nombre')
 
         if not sku_col:
-            flash('El archivo debe tener columna "SKU".', 'danger')
+            flash('El archivo debe tener columna "SKU" o "Codigo".', 'danger')
             return redirect(url_for('upload_stock'))
 
         # columnas de tiendas = todo lo que no es SKU ni Producto
