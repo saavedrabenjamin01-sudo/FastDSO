@@ -1258,6 +1258,13 @@ def upload_stock_cd():
         df['sku'] = df['sku'].astype(str).str.strip()
         df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0).astype(int)
 
+        # Detectar columna de nombre del producto si existe
+        name_col = None
+        for col in ['product_name', 'producto', 'name', 'nombre']:
+            if col in df.columns:
+                name_col = col
+                break
+
         # modo replace → borrar snapshot de ESA fecha antes de cargar
         if modo == 'replace':
             StockCD.query.filter_by(as_of_date=snapshot_date).delete()
@@ -1269,12 +1276,20 @@ def upload_stock_cd():
             sku = row['sku']
             qty = int(row['quantity'])
 
+            # Obtener nombre del producto si está disponible
+            pname = None
+            if name_col and pd.notna(row.get(name_col)):
+                pname = str(row[name_col]).strip()
+
             product = Product.query.filter_by(sku=sku).first()
             if not product:
-                # opcional: crear producto si no existe
-                product = Product(sku=sku, name=f"SKU {sku}")
+                # Crear producto con nombre real si está disponible
+                product = Product(sku=sku, name=pname if pname else f"SKU {sku}")
                 db.session.add(product)
                 db.session.flush()
+            elif pname and product.name.startswith("SKU "):
+                # Actualizar nombre si teníamos un placeholder
+                product.name = pname
 
             stock_row = StockCD.query.filter_by(
                 as_of_date=snapshot_date,
