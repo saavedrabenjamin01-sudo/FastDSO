@@ -71,6 +71,7 @@ class DistributionRecord(db.Model):
     store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False)
     quantity = db.Column(db.Integer, nullable=False)
     event_date = db.Column(db.Date, nullable=False)
+    run_id = db.Column(db.String(36), nullable=True, index=True)
 
     product = db.relationship('Product')
     store = db.relationship('Store')
@@ -97,15 +98,18 @@ class StockSnapshot(db.Model):
     store = db.relationship('Store')
 
 
-class PredictionRun(db.Model):
-    __tablename__ = 'prediction_run'
+class Run(db.Model):
+    __tablename__ = 'run'
     id = db.Column(db.Integer, primary_key=True)
     run_id = db.Column(db.String(36), unique=True, nullable=False, index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    run_type = db.Column(db.String(50), nullable=False, index=True)
     folio = db.Column(db.String(100), nullable=True)
     responsable = db.Column(db.String(100), nullable=True)
     categoria = db.Column(db.String(100), nullable=True)
-    fecha_doc = db.Column(db.String(50), nullable=True)
+    store_filter = db.Column(db.String(255), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    status = db.Column(db.String(20), default='completed', nullable=False)
     mode = db.Column(db.String(50), nullable=True)
 
     def label(self):
@@ -119,6 +123,8 @@ class PredictionRun(db.Model):
             return f"{' | '.join(parts)} — {date_str}"
         return date_str or f"Run {self.run_id[:8]}"
 
+PredictionRun = Run
+
 
 class Prediction(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -128,12 +134,27 @@ class Prediction(db.Model):
     target_period_start = db.Column(db.Date, nullable=False)
     quantity = db.Column(db.Integer, nullable=False)
     model_name = db.Column(db.String(255), default='SMA_3w')
-    # 🔑 NUEVO — NO EXISTÍA ANTES
     run_id = db.Column(db.String(36), nullable=False, index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     product = db.relationship('Product')
     store = db.relationship('Store')
+
+
+class ForecastResult(db.Model):
+    __tablename__ = 'forecast_result'
+    id = db.Column(db.Integer, primary_key=True)
+    run_id = db.Column(db.String(36), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    sku = db.Column(db.String(64), nullable=False)
+    name = db.Column(db.String(255), nullable=True)
+    demand_per_week = db.Column(db.Float, nullable=False)
+    available_cd = db.Column(db.Integer, nullable=False)
+    required_units = db.Column(db.Float, nullable=False)
+    suggested = db.Column(db.Integer, nullable=False)
+    campaign_tag = db.Column(db.String(100), nullable=True)
+
+    product = db.relationship('Product')
 
 # ------------------ Login loader ------------------
 
@@ -179,19 +200,22 @@ from datetime import date
 def generate_predictions(
     mode: str = "sma3_min3",
     meta: dict | None = None,
-    df: pd.DataFrame | None = None
+    df: pd.DataFrame | None = None,
+    sales_run_id: str | None = None
 ):
     from uuid import uuid4
     run_id = str(uuid4())
     
     meta = meta or {}
-    prediction_run = PredictionRun(
+    prediction_run = Run(
         run_id=run_id,
+        run_type='distribution',
         folio=meta.get("folio"),
         responsable=meta.get("responsable"),
         categoria=meta.get("categoria"),
-        fecha_doc=meta.get("fecha_doc"),
-        mode=mode
+        notes=meta.get("fecha_doc"),
+        mode=mode,
+        status='completed'
     )
     db.session.add(prediction_run)
     db.session.flush()
@@ -791,6 +815,39 @@ def purchase_forecast_v2():
     has_cd_stock = bool(cd_rows)
     has_sales = bool(sales_rows)
 
+    forecast_run_id = None
+    if request.method == 'POST' and result:
+        from uuid import uuid4
+        forecast_run_id = str(uuid4())
+        forecast_run = Run(
+            run_id=forecast_run_id,
+            run_type='forecast_v2',
+            folio=campaign_tag or None,
+            store_filter=store_filter or None,
+            notes=f"method={demand_method}, lead={lead_time_days}d, coverage={coverage_weeks}w, safety={safety_weeks}w",
+            status='completed',
+            mode=demand_method
+        )
+        db.session.add(forecast_run)
+
+        for r in result:
+            product = Product.query.filter_by(sku=str(r['sku'])).first()
+            if product:
+                fr = ForecastResult(
+                    run_id=forecast_run_id,
+                    product_id=product.id,
+                    sku=str(r['sku']),
+                    name=r['name'],
+                    demand_per_week=r['demand_per_week'],
+                    available_cd=r['available_cd'],
+                    required_units=r['required_units'],
+                    suggested=r['suggested'],
+                    campaign_tag=campaign_tag or None
+                )
+                db.session.add(fr)
+
+        db.session.commit()
+
     result_limited = result[:50]
 
     return render_template(
@@ -809,6 +866,7 @@ def purchase_forecast_v2():
         cd_snapshot_date=latest_cd_date,
         has_cd_stock=has_cd_stock,
         has_sales=has_sales,
+        forecast_run_id=forecast_run_id,
     )
 
 @app.route('/export_purchase_forecast_v2', methods=['POST'])
@@ -1078,6 +1136,30 @@ def upload():
             flash('El archivo debe tener las columnas: sku, product_name, store, quantity, date', 'danger')
             return redirect(url_for('upload'))
 
+        # leer parámetros del formulario primero
+        analysis_mode = request.form.get('analysis_mode', 'sma3_min3')
+        meta = {
+            "folio": request.form.get('folio', '').strip() or None,
+            "responsable": request.form.get('responsable', '').strip() or None,
+            "categoria": request.form.get('categoria', '').strip() or None,
+            "fecha_doc": request.form.get('fecha_doc', '').strip() or None,
+        }
+
+        # Create sales_upload run
+        from uuid import uuid4
+        sales_run_id = str(uuid4())
+        sales_run = Run(
+            run_id=sales_run_id,
+            run_type='sales_upload',
+            folio=meta.get("folio"),
+            responsable=meta.get("responsable"),
+            categoria=meta.get("categoria"),
+            notes=meta.get("fecha_doc"),
+            status='completed'
+        )
+        db.session.add(sales_run)
+        db.session.flush()
+
         created = 0
         for _, row in df.iterrows():
             sku = str(row['sku']).strip()
@@ -1100,29 +1182,20 @@ def upload():
                 db.session.add(store)
                 db.session.flush()
 
-            # guardar distribución histórica (ventas / movimientos)
+            # guardar distribución histórica con run_id
             dist = DistributionRecord(
                 product_id=product.id,
                 store_id=store.id,
                 quantity=qty,
-                event_date=event_date
+                event_date=event_date,
+                run_id=sales_run_id
             )
             db.session.add(dist)
             created += 1
 
         db.session.commit()
 
-        # leer parámetros del formulario
-        analysis_mode = request.form.get('analysis_mode', 'sma3_min3')
-
-        meta = {
-            "folio": request.form.get('folio', '').strip() or None,
-            "responsable": request.form.get('responsable', '').strip() or None,
-            "categoria": request.form.get('categoria', '').strip() or None,
-            "fecha_doc": request.form.get('fecha_doc', '').strip() or None,
-        }
-
-        run_id, n_preds = generate_predictions(mode=analysis_mode, meta=meta, df=df)
+        run_id, n_preds = generate_predictions(mode=analysis_mode, meta=meta, df=df, sales_run_id=sales_run_id)
 
         if n_preds == 0:
             flash(
@@ -1711,6 +1784,70 @@ def export_predictions():
         download_name=fname,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+@app.route('/runs', methods=['GET'])
+@login_required
+def runs():
+    """Display history of all runs."""
+    page = request.args.get('page', 1, type=int)
+    per_page = 50
+
+    runs_query = (
+        Run.query
+        .order_by(Run.created_at.desc())
+        .limit(per_page)
+        .all()
+    )
+
+    return render_template('runs.html', runs=runs_query)
+
+
+@app.route('/run/<run_id>', methods=['GET'])
+@login_required
+def view_run(run_id):
+    """View details of a specific run."""
+    run = Run.query.filter_by(run_id=run_id).first_or_404()
+
+    if run.run_type == 'distribution':
+        predictions = (
+            db.session.query(Prediction, Product, Store)
+            .join(Product, Prediction.product_id == Product.id)
+            .join(Store, Prediction.store_id == Store.id)
+            .filter(Prediction.run_id == run_id)
+            .order_by(Prediction.quantity.desc())
+            .limit(100)
+            .all()
+        )
+        return render_template('run_detail.html', run=run, predictions=predictions)
+
+    elif run.run_type == 'forecast_v2':
+        forecast_results = (
+            ForecastResult.query
+            .filter_by(run_id=run_id)
+            .order_by(ForecastResult.suggested.desc())
+            .limit(100)
+            .all()
+        )
+        return render_template('run_detail.html', run=run, forecast_results=forecast_results)
+
+    elif run.run_type == 'sales_upload':
+        sales_summary = (
+            db.session.query(
+                Product.sku,
+                Product.name,
+                db.func.sum(DistributionRecord.quantity).label('total_qty')
+            )
+            .join(Product, DistributionRecord.product_id == Product.id)
+            .filter(DistributionRecord.run_id == run_id)
+            .group_by(Product.id, Product.sku, Product.name)
+            .order_by(db.func.sum(DistributionRecord.quantity).desc())
+            .limit(50)
+            .all()
+        )
+        return render_template('run_detail.html', run=run, sales_summary=sales_summary)
+
+    return render_template('run_detail.html', run=run)
+
 
 if __name__ == "__main__":
     with app.app_context():

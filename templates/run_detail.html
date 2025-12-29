@@ -1,0 +1,134 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h5 class="mb-0">
+      {% if run.run_type == 'sales_upload' %}
+        Detalle: Carga de Ventas
+      {% elif run.run_type == 'distribution' %}
+        Detalle: Distribucion Sugerida
+      {% elif run.run_type == 'forecast_v2' %}
+        Detalle: Forecast Compra V2
+      {% else %}
+        Detalle de Corrida
+      {% endif %}
+    </h5>
+    <small class="text-muted">
+      Run ID: {{ run.run_id[:8] }} | {{ run.created_at.strftime('%Y-%m-%d %H:%M') if run.created_at else '-' }}
+    </small>
+  </div>
+  <a href="{{ url_for('runs') }}" class="btn btn-outline-secondary btn-sm">Volver</a>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">Metadatos</div>
+  <div class="card-body">
+    <div class="row">
+      <div class="col-md-3"><strong>Folio:</strong> {{ run.folio or '-' }}</div>
+      <div class="col-md-3"><strong>Responsable:</strong> {{ run.responsable or '-' }}</div>
+      <div class="col-md-3"><strong>Categoria:</strong> {{ run.categoria or '-' }}</div>
+      <div class="col-md-3"><strong>Tienda:</strong> {{ run.store_filter or '-' }}</div>
+    </div>
+    <div class="row mt-2">
+      <div class="col-md-6"><strong>Modo:</strong> {{ run.mode or '-' }}</div>
+      <div class="col-md-6"><strong>Notas:</strong> {{ run.notes or '-' }}</div>
+    </div>
+  </div>
+</div>
+
+{% if run.run_type == 'distribution' and predictions %}
+<div class="card">
+  <div class="card-header">Distribucion Sugerida (Top 100)</div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead>
+          <tr>
+            <th>SKU</th>
+            <th>Producto</th>
+            <th>Tienda</th>
+            <th class="text-end">Cantidad</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p, prod, store in predictions %}
+          <tr>
+            <td>{{ prod.sku }}</td>
+            <td>{{ prod.name }}</td>
+            <td>{{ store.name }}</td>
+            <td class="text-end">{{ p.quantity }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if run.run_type == 'forecast_v2' and forecast_results %}
+<div class="card">
+  <div class="card-header">Forecast Compra V2 (Top 100)</div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead>
+          <tr>
+            <th>SKU</th>
+            <th>Producto</th>
+            <th class="text-end">Demanda/sem</th>
+            <th class="text-end">Stock CD</th>
+            <th class="text-end">Requerido</th>
+            <th class="text-end">Sugerido</th>
+            <th>Campana</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for fr in forecast_results %}
+          <tr>
+            <td>{{ fr.sku }}</td>
+            <td>{{ fr.name }}</td>
+            <td class="text-end">{{ fr.demand_per_week }}</td>
+            <td class="text-end">{{ fr.available_cd }}</td>
+            <td class="text-end">{{ fr.required_units }}</td>
+            <td class="text-end fw-semibold">{{ fr.suggested }}</td>
+            <td>{{ fr.campaign_tag or '-' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if run.run_type == 'sales_upload' and sales_summary %}
+<div class="card">
+  <div class="card-header">Resumen de Ventas (Top 50 SKUs)</div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead>
+          <tr>
+            <th>SKU</th>
+            <th>Producto</th>
+            <th class="text-end">Total Unidades</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for sku, name, total_qty in sales_summary %}
+          <tr>
+            <td>{{ sku }}</td>
+            <td>{{ name }}</td>
+            <td class="text-end">{{ total_qty }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

@@ -90,14 +90,17 @@
 
     <!-- ===== Operaciones ===== -->
     <div class="nav-group">
-      <button class="nav-group-toggle" aria-expanded="false">
+      <button class="nav-group-toggle" aria-expanded="true">
         <span class="nav-icon"><i class="bi bi-diagram-3"></i></span>
         <span class="nav-text">Operaciones</span>
         <span class="nav-caret">▶</span>
       </button>
 
-      <div class="sidebar-nav" style="display:none;">
-        <!-- vacío por ahora -->
+      <div class="sidebar-nav" style="display:flex;">
+        <a class="nav-link" href="{{ url_for('runs') }}">
+          <span class="nav-icon"><i class="bi bi-clock-history"></i></span>
+          <span class="nav-text">Historial corridas</span>
+        </a>
       </div>
     </div>
 

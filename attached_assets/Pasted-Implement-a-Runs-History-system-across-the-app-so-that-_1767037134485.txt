@@ -1,0 +1,62 @@
+Implement a “Runs History” system across the app so that sales uploads, distribution predictions, and purchase forecast V2 are versioned and never mixed.
+
+GOALS
+	1.	Create a new DB model Run:
+
+	•	id (uuid string, primary key or unique indexed)
+	•	created_at (utc datetime)
+	•	run_type (string: “sales_upload”, “distribution”, “forecast_v2”)
+	•	folio (nullable string)
+	•	responsable (nullable string)
+	•	categoria (nullable string)
+	•	store_filter (nullable string)
+	•	notes/json_meta (nullable text/json) for future metadata
+	•	status (string: “completed”/“failed”)
+
+	2.	Link data to runs:
+
+	•	Add run_id FK (or indexed string) to:
+	•	DistributionRecord (sales rows) -> run_id
+	•	Prediction -> run_id
+	•	Forecast tables/results (whatever model V2 uses) -> run_id
+	•	Ensure SKU string formatting is preserved exactly (leading zeros).
+
+	3.	On /upload (sales):
+
+	•	Generate a new run_id when user uploads sales.
+	•	Save that run row with meta fields from the form.
+	•	Attach run_id to all inserted DistributionRecord rows.
+	•	When generate_predictions is called, it must:
+	•	use ONLY df for that run (not historical DB)
+	•	save predictions with the same run_id
+
+	4.	On forecast_v2:
+
+	•	Generate a run_id each time forecast is generated
+	•	Store results with that run_id + the meta fields
+	•	Export should export the selected run_id
+
+	5.	UI:
+
+	•	Add a “Runs” page showing the last 50 runs with columns:
+created_at, run_type, folio, responsable, categoria, store_filter, status
+	•	Each run has “View” that opens:
+	•	For distribution runs: show predictions + remanente + top sales for that run
+	•	For sales runs: show top sales summary for that run
+	•	For forecast_v2: show forecast results for that run
+	•	Dashboard should default to “latest distribution run” and must never show merged predictions from older runs.
+
+	6.	Migration:
+
+	•	Since this is a test app, migration can be destructive:
+	•	If sqlite migration is complex, it’s acceptable to reset the sqlite DB and recreate tables.
+	•	Provide exact instructions or code that recreates DB cleanly.
+
+VALIDATION
+	•	Run two different uploads with different SKUs (e.g., Consoles then Games)
+	•	Confirm dashboard “Distribución sugerida” shows ONLY the latest distribution run
+	•	Confirm filters allow selecting an older run and viewing it without mixing.
+
+DELIVERABLE
+	•	List all files changed and show the final code diffs.
+	•	Keep changes minimal and safe.
