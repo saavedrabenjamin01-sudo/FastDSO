@@ -1,0 +1,46 @@
+sku,product_name,store,quantity,date
+CONS-001,PlayStation 5 Slim,Tienda Centro,8,2025-12-01
+CONS-001,PlayStation 5 Slim,Tienda Norte,6,2025-12-01
+CONS-001,PlayStation 5 Slim,Tienda Sur,4,2025-12-01
+CONS-001,PlayStation 5 Slim,Tienda Centro,10,2025-12-08
+CONS-001,PlayStation 5 Slim,Tienda Norte,7,2025-12-08
+CONS-001,PlayStation 5 Slim,Tienda Sur,5,2025-12-08
+CONS-001,PlayStation 5 Slim,Tienda Centro,9,2025-12-15
+CONS-001,PlayStation 5 Slim,Tienda Norte,8,2025-12-15
+CONS-001,PlayStation 5 Slim,Tienda Sur,6,2025-12-15
+CONS-002,Xbox Series X,Tienda Centro,5,2025-12-01
+CONS-002,Xbox Series X,Tienda Norte,4,2025-12-01
+CONS-002,Xbox Series X,Tienda Sur,3,2025-12-01
+CONS-002,Xbox Series X,Tienda Centro,6,2025-12-08
+CONS-002,Xbox Series X,Tienda Norte,5,2025-12-08
+CONS-002,Xbox Series X,Tienda Sur,4,2025-12-08
+CONS-002,Xbox Series X,Tienda Centro,7,2025-12-15
+CONS-002,Xbox Series X,Tienda Norte,6,2025-12-15
+CONS-002,Xbox Series X,Tienda Sur,5,2025-12-15
+GAME-001,Spider-Man 2 PS5,Tienda Centro,15,2025-12-01
+GAME-001,Spider-Man 2 PS5,Tienda Norte,12,2025-12-01
+GAME-001,Spider-Man 2 PS5,Tienda Sur,10,2025-12-01
+GAME-001,Spider-Man 2 PS5,Tienda Centro,18,2025-12-08
+GAME-001,Spider-Man 2 PS5,Tienda Norte,14,2025-12-08
+GAME-001,Spider-Man 2 PS5,Tienda Sur,11,2025-12-08
+GAME-001,Spider-Man 2 PS5,Tienda Centro,20,2025-12-15
+GAME-001,Spider-Man 2 PS5,Tienda Norte,16,2025-12-15
+GAME-001,Spider-Man 2 PS5,Tienda Sur,12,2025-12-15
+GAME-002,Zelda Tears of Kingdom,Tienda Centro,10,2025-12-01
+GAME-002,Zelda Tears of Kingdom,Tienda Norte,8,2025-12-01
+GAME-002,Zelda Tears of Kingdom,Tienda Sur,6,2025-12-01
+GAME-002,Zelda Tears of Kingdom,Tienda Centro,12,2025-12-08
+GAME-002,Zelda Tears of Kingdom,Tienda Norte,9,2025-12-08
+GAME-002,Zelda Tears of Kingdom,Tienda Sur,7,2025-12-08
+GAME-002,Zelda Tears of Kingdom,Tienda Centro,11,2025-12-15
+GAME-002,Zelda Tears of Kingdom,Tienda Norte,10,2025-12-15
+GAME-002,Zelda Tears of Kingdom,Tienda Sur,8,2025-12-15
+ACC-001,Control DualSense Blanco,Tienda Centro,20,2025-12-01
+ACC-001,Control DualSense Blanco,Tienda Norte,15,2025-12-01
+ACC-001,Control DualSense Blanco,Tienda Sur,12,2025-12-01
+ACC-001,Control DualSense Blanco,Tienda Centro,22,2025-12-08
+ACC-001,Control DualSense Blanco,Tienda Norte,18,2025-12-08
+ACC-001,Control DualSense Blanco,Tienda Sur,14,2025-12-08
+ACC-001,Control DualSense Blanco,Tienda Centro,25,2025-12-15
+ACC-001,Control DualSense Blanco,Tienda Norte,20,2025-12-15
+ACC-001,Control DualSense Blanco,Tienda Sur,16,2025-12-15

@@ -14,3 +14,4 @@ pandas
 python-dotenv
 sqlalchemy
 Werkzeug
+requests
