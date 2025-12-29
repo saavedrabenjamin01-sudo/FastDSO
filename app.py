@@ -533,16 +533,19 @@ def dashboard():
     # --- Fechas / helpers ---
     today = date.today()
 
-    # --- Load available runs (limit 50, newest first) ---
+    # --- Load available runs (limit 50, newest first, ignore null run_id) ---
     runs = (
         PredictionRun.query
+        .filter(PredictionRun.run_id.isnot(None))
+        .filter(PredictionRun.run_id != "")
         .order_by(PredictionRun.created_at.desc())
         .limit(50)
         .all()
     )
 
-    # --- Determine selected_run_id ---
-    if run_id_filter:
+    # --- Determine selected_run_id (validate it exists) ---
+    valid_run_ids = {r.run_id for r in runs}
+    if run_id_filter and run_id_filter in valid_run_ids:
         selected_run_id = run_id_filter
     elif runs:
         selected_run_id = runs[0].run_id
@@ -771,7 +774,13 @@ def export_cd_remanente():
     
     run_id = request.args.get("run_id", "").strip()
     if not run_id:
-        latest_run = PredictionRun.query.order_by(PredictionRun.created_at.desc()).first()
+        latest_run = (
+            PredictionRun.query
+            .filter(PredictionRun.run_id.isnot(None))
+            .filter(PredictionRun.run_id != "")
+            .order_by(PredictionRun.created_at.desc())
+            .first()
+        )
         run_id = latest_run.run_id if latest_run else None
 
     if not run_id:
@@ -1433,7 +1442,13 @@ def export_predictions():
 
     run_id = request.args.get("run_id", "").strip()
     if not run_id:
-        latest_run = PredictionRun.query.order_by(PredictionRun.created_at.desc()).first()
+        latest_run = (
+            PredictionRun.query
+            .filter(PredictionRun.run_id.isnot(None))
+            .filter(PredictionRun.run_id != "")
+            .order_by(PredictionRun.created_at.desc())
+            .first()
+        )
         run_id = latest_run.run_id if latest_run else None
 
     if not run_id:

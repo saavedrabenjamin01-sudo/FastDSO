@@ -163,7 +163,11 @@
           Distribución sugerida
           {% if predictions %} — {{ predictions[0][0].model_name }}{% endif %}
         </span>
+        {% if selected_run_id %}
         <a class="btn btn-sm btn-outline-primary" href="{{ url_for('export_predictions', run_id=selected_run_id) }}">Exportar</a>
+        {% else %}
+        <button class="btn btn-sm btn-outline-secondary" disabled>Exportar</button>
+        {% endif %}
       </div>
 
       <div class="card-body p-0">
@@ -205,7 +209,11 @@
     <div class="card">
       <div class="card-header d-flex justify-content-between align-items-center">
         <span>Resumen remanente CD (solo SKUs de la última distribución)</span>
+        {% if selected_run_id %}
         <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('export_cd_remanente', run_id=selected_run_id) }}">Exportar remanente</a>
+        {% else %}
+        <button class="btn btn-sm btn-outline-secondary" disabled>Exportar remanente</button>
+        {% endif %}
       </div>
 
       <div class="card-body p-0">
