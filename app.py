@@ -97,6 +97,29 @@ class StockSnapshot(db.Model):
     store = db.relationship('Store')
 
 
+class PredictionRun(db.Model):
+    __tablename__ = 'prediction_run'
+    id = db.Column(db.Integer, primary_key=True)
+    run_id = db.Column(db.String(36), unique=True, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    folio = db.Column(db.String(100), nullable=True)
+    responsable = db.Column(db.String(100), nullable=True)
+    categoria = db.Column(db.String(100), nullable=True)
+    fecha_doc = db.Column(db.String(50), nullable=True)
+    mode = db.Column(db.String(50), nullable=True)
+
+    def label(self):
+        parts = []
+        if self.folio:
+            parts.append(f"Folio {self.folio}")
+        if self.responsable:
+            parts.append(f"Resp {self.responsable}")
+        date_str = self.created_at.strftime('%Y-%m-%d %H:%M') if self.created_at else ''
+        if parts:
+            return f"{' | '.join(parts)} — {date_str}"
+        return date_str or f"Run {self.run_id[:8]}"
+
+
 class Prediction(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     product_id = db.Column(db.Integer, db.ForeignKey(
