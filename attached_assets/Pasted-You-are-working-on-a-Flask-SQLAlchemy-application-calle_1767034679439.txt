@@ -1,0 +1,126 @@
+You are working on a Flask + SQLAlchemy application called FastDSO (Fast Distribution, Sales & Operations).
+The system already works correctly for:
+	•	Loading sales
+	•	Generating distributions
+	•	Discounting stock (CD and stores)
+	•	Dashboard filters
+
+However, predictions currently overlap across executions.
+Your task is to implement run-based versioning so each execution of generate_predictions() is isolated and queryable.
+
+⸻
+
+1️⃣ Create PredictionRun model
+
+Add a new SQLAlchemy model called PredictionRun with the following fields:
+	•	id → Integer, primary key
+	•	run_id → String(36), unique, not null, indexed
+	•	created_at → DateTime, default datetime.utcnow, not null
+	•	folio → String, nullable
+	•	responsable → String, nullable
+	•	categoria → String, nullable
+	•	fecha_doc → String, nullable
+	•	mode → String, nullable
+
+Add a helper method label() that returns a readable string like:
+“Folio X | Resp Y — 2024-09-01 14:30”
+
+Do NOT remove or rename existing models.
+
+⸻
+
+2️⃣ Store run_id on Prediction
+
+Ensure the existing Prediction model has:
+	•	run_id → String(36), not null, indexed
+
+If the database is SQLite and migrations are not used, assume this is a development environment and a DB reset is acceptable.
+
+⸻
+
+3️⃣ Modify generate_predictions()
+
+In generate_predictions():
+	•	Generate a new run_id = str(uuid.uuid4()) at the start
+	•	Create one PredictionRun record per execution using:
+	•	run_id
+	•	meta fields (folio, responsable, categoria, fecha_doc)
+	•	mode
+	•	Assign this same run_id to every Prediction created or updated in this execution
+
+❗ IMPORTANT:
+	•	Do NOT change prediction logic, math, stock behavior, or grouping logic
+	•	Only add what is strictly necessary for run versioning
+	•	Ensure predictions from different runs never overwrite or mix
+
+Return both:
+	•	run_id
+	•	total number of predictions processed
+
+⸻
+
+4️⃣ Dashboard: isolate runs
+
+Update /dashboard so predictions never mix across runs.
+
+Behavior:
+	•	Load available runs:
+PredictionRun ordered by created_at DESC (limit 50)
+	•	Determine selected_run_id:
+	•	from request.args.get("run_id")
+	•	fallback to latest run if not provided
+	•	Filter:
+	•	predictions
+	•	KPIs
+	•	stock remanente
+strictly by Prediction.run_id == selected_run_id
+
+Existing filters (store, folio, responsable) must continue working.
+
+Pass to template:
+	•	runs
+	•	selected_run_id
+
+⸻
+
+5️⃣ Dashboard UI
+
+In dashboard.html:
+	•	Add a Run selector dropdown in the filter bar
+	•	Each option uses PredictionRun.label()
+	•	Submitting the form reloads dashboard with run_id
+
+Styling and layout must remain unchanged.
+
+⸻
+
+6️⃣ Export endpoints
+
+Update export endpoints (export_predictions, export_cd_remanente, etc):
+	•	Accept run_id via querystring
+	•	Default to latest run if missing
+	•	Export only data belonging to that run
+
+Dashboard export buttons must include run_id.
+
+⸻
+
+7️⃣ Safety & backward compatibility
+	•	Dashboard must not crash if:
+	•	No runs exist
+	•	Legacy predictions have null run_id
+	•	Ignore null run_id when selecting latest run
+	•	Show “Sin predicciones” gracefully when needed
+
+⸻
+
+8️⃣ Output constraints
+	•	Do NOT introduce Flask-Migrate unless explicitly requested
+	•	Do NOT refactor unrelated code
+	•	Return only the modified code blocks for:
+	•	models
+	•	generate_predictions
+	•	dashboard route
+	•	dashboard.html (if needed)
+
+The goal is clean run isolation, no prediction overlap, and full traceability.
