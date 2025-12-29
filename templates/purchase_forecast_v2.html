@@ -1,0 +1,120 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <div>
+    <h5 class="mb-0">Proyeccion de compras V2</h5>
+    <small class="text-muted">
+      Lead time + Safety stock + Coverage. Snapshot CD: <strong>{{ cd_snapshot_date }}</strong>
+    </small>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <form class="row g-3" method="post" action="{{ url_for('purchase_forecast_v2') }}">
+      <div class="col-md-2">
+        <label class="form-label fw-semibold">Lead time (dias)</label>
+        <input type="number" name="lead_time_days" min="0" class="form-control form-control-sm" value="{{ lead_time_days }}">
+      </div>
+
+      <div class="col-md-2">
+        <label class="form-label fw-semibold">Cobertura (semanas)</label>
+        <input type="number" step="0.5" min="0.5" name="coverage_weeks" class="form-control form-control-sm" value="{{ coverage_weeks }}">
+      </div>
+
+      <div class="col-md-2">
+        <label class="form-label fw-semibold">Safety stock (semanas)</label>
+        <input type="number" step="0.5" min="0" name="safety_weeks" class="form-control form-control-sm" value="{{ safety_weeks }}">
+      </div>
+
+      <div class="col-md-2">
+        <label class="form-label fw-semibold">Metodo demanda</label>
+        <select name="demand_method" class="form-select form-select-sm">
+          <option value="sma3" {% if demand_method == 'sma3' %}selected{% endif %}>SMA 3 semanas</option>
+          <option value="sma2" {% if demand_method == 'sma2' %}selected{% endif %}>SMA 2 semanas</option>
+          <option value="last_week" {% if demand_method == 'last_week' %}selected{% endif %}>Ultima semana</option>
+        </select>
+      </div>
+
+      <div class="col-md-2">
+        <label class="form-label fw-semibold">Tienda (opcional)</label>
+        <select name="store_filter" class="form-select form-select-sm">
+          <option value="">Todas las tiendas</option>
+          {% for s in stores %}
+            <option value="{{ s.name }}" {% if store_filter == s.name %}selected{% endif %}>{{ s.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-2">
+        <label class="form-label fw-semibold">Min semanas hist.</label>
+        <input type="number" name="min_weeks_history" min="1" class="form-control form-control-sm" value="{{ min_weeks_history }}">
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label fw-semibold">Etiqueta campana (opcional)</label>
+        <input type="text" name="campaign_tag" class="form-control form-control-sm" value="{{ campaign_tag }}" placeholder="Ej: Verano 2025">
+      </div>
+
+      <div class="col-md-3 d-flex align-items-end">
+        <button type="submit" class="btn btn-primary btn-sm">Calcular proyeccion</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>Top 50 SKUs por compra sugerida</span>
+    {% if rows %}
+    <span class="badge-soft">{{ rows|length }} SKUs</span>
+    {% endif %}
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead>
+          <tr>
+            <th>SKU</th>
+            <th>Producto</th>
+            <th class="text-end">Demanda/sem</th>
+            <th class="text-end">Stock CD</th>
+            <th class="text-end">Requerido</th>
+            <th class="text-end">Sugerido compra</th>
+            <th>Campana</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if rows %}
+            {% for r in rows %}
+            <tr>
+              <td>{{ r.sku }}</td>
+              <td>{{ r.name }}</td>
+              <td class="text-end">{{ r.demand_per_week }}</td>
+              <td class="text-end">{{ r.available_cd }}</td>
+              <td class="text-end">{{ r.required_units }}</td>
+              <td class="text-end fw-semibold">
+                {% if r.suggested > 0 %}
+                  {{ r.suggested }}
+                {% else %}
+                  <span class="text-muted">0</span>
+                {% endif %}
+              </td>
+              <td>{{ r.campaign_tag or '-' }}</td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="7" class="text-muted p-3">
+                No se encontraron ventas en la ventana seleccionada, o no hay stock CD cargado.
+              </td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
