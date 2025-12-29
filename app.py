@@ -500,19 +500,23 @@ def dashboard():
     # --- Fechas / helpers ---
     today = date.today()
 
-    # --- Última semana de predicción ---
-    latest_week = db.session.query(func.max(Prediction.target_period_start)).scalar()
-
     # --- Último run_id (corrida más reciente) ---
-    # Regla:
-    # - Si NO hay folio/responsable => mostramos solo la última corrida (run_id)
-    # - Si hay folio o responsable => permitimos histórico (no forzamos run_id)
     latest_run_id = (
         db.session.query(Prediction.run_id)
         .order_by(Prediction.id.desc())
         .limit(1)
         .scalar()
     )
+
+    # --- Última semana de predicción (de la última corrida) ---
+    if latest_run_id:
+        latest_week = (
+            db.session.query(func.max(Prediction.target_period_start))
+            .filter(Prediction.run_id == latest_run_id)
+            .scalar()
+        )
+    else:
+        latest_week = None
 
     force_latest_run = (not folio_filter and not responsable_filter)
 
@@ -523,14 +527,7 @@ def dashboard():
         .join(Store, Prediction.store_id == Store.id)
     )
 
-    if latest_run_id:
-        pred_q = pred_q.filter(Prediction.run_id == latest_run_id)
-
-    # Filtrar por semana (si existe)
-    if latest_week:
-        pred_q = pred_q.filter(Prediction.target_period_start == latest_week)
-
-    # Filtrar por última corrida (solo si no estamos buscando histórico)
+    # Por defecto, mostrar solo la última corrida
     if force_latest_run and latest_run_id:
         pred_q = pred_q.filter(Prediction.run_id == latest_run_id)
 
