@@ -29,7 +29,7 @@ PredDist is a Flask-based web application for managing product distribution pred
 │   ├── upload_stock.html
 │   ├── upload_stock_cd.html
 │   ├── stock_query.html
-│   ├── purchase_forecast.html
+│   ├── purchase_forecast_v2.html
 │   └── purchase_projection.html
 ├── static/
 │   ├── css/style.css
@@ -53,11 +53,12 @@ PredDist is a Flask-based web application for managing product distribution pred
 2. **Sales Upload**: Import sales data from CSV/Excel
 3. **Stock Management**: Upload store and CD stock levels
 4. **Predictions**: Generate distribution suggestions using moving averages
-5. **Purchase Forecast**: Project purchase needs based on sales trends
-6. **Export**: Download predictions as Excel files
+5. **Forecast Compra (V2)**: Advanced purchase forecasting with lead time, safety stock, coverage, demand methods
+6. **Export**: Download predictions and forecasts as Excel files
 
 ## Running the Application
 The application runs on port 5000 with the "Start Flask App" workflow.
 
 ## Recent Changes
+- December 29, 2025: Removed legacy purchase_forecast module, consolidated to Forecast Compra V2
 - December 29, 2025: Initial Replit environment setup, configured to bind to 0.0.0.0:5000
