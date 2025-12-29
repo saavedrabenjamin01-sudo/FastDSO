@@ -1,0 +1,4 @@
+sku,product_name,store,quantity,date
+0123456789,Product A,Store 1,10,2025-12-22
+0987654321,Product B,Store 1,20,2025-12-22
+0000111222,Product C,Store 1,30,2025-12-22

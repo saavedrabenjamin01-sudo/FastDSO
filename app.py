@@ -825,9 +825,9 @@ def upload():
         filename = file.filename.lower()
         try:
             if filename.endswith('.csv'):
-                df = pd.read_csv(file, dtype={'sku': str})
+                df = pd.read_csv(file, dtype=str)
             elif filename.endswith('.xlsx') or filename.endswith('.xls'):
-                df = pd.read_excel(file, dtype={'sku': str})
+                df = pd.read_excel(file, dtype=str)
             else:
                 flash('Formato no soportado. Usa .csv o .xlsx', 'danger')
                 return redirect(url_for('upload'))
@@ -919,9 +919,9 @@ def upload_stock():
         filename = f.filename.lower()
         try:
             if filename.endswith('.csv'):
-                df = pd.read_csv(f, dtype={'SKU': 'string', 'sku': 'string'})
+                df = pd.read_csv(f, dtype=str)
             elif filename.endswith('.xlsx') or filename.endswith('.xls'):
-                df = pd.read_excel(f, dtype={'SKU': 'string', 'sku': 'string'})
+                df = pd.read_excel(f, dtype=str)
             else:
                 flash('Formato no soportado. Usa .csv o .xlsx', 'danger')
                 return redirect(url_for('upload_stock'))
@@ -1240,9 +1240,9 @@ def upload_stock_cd():
         filename = file.filename.lower()
         try:
             if filename.endswith('.csv'):
-                df = pd.read_csv(file, dtype={'sku': str})
+                df = pd.read_csv(file, dtype=str)
             elif filename.endswith('.xlsx') or filename.endswith('.xls'):
-                df = pd.read_excel(file, dtype={'sku': str})
+                df = pd.read_excel(file, dtype=str)
             else:
                 flash('Formato no soportado. Usa .csv o .xlsx', 'danger')
                 return redirect(url_for('upload_stock_cd'))
