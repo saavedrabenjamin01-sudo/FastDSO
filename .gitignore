@@ -2,10 +2,18 @@
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
 
 # Entornos virtuales
 .venv/
 venv/
+env/
+ENV/
 
 # Variables de entorno / secretos
 .env
@@ -15,5 +23,15 @@ instance/
 *.sqlite
 *.db
 
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
 # Otros
 .DS_Store
+Thumbs.db
+
+# Replit
+.pythonlibs/
