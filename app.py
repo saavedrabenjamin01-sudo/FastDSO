@@ -766,17 +766,20 @@ def purchase_forecast():
 @app.route('/export_cd_remanente', methods=['GET'])
 @login_required
 def export_cd_remanente():
-    """Exporta a Excel el remanente de CD solo de los SKUs usados en la última distribución."""
+    """Exporta a Excel el remanente de CD solo de los SKUs usados en una corrida específica."""
     today = date.today()
-    latest_week = db.session.query(func.max(Prediction.target_period_start)).scalar()
+    
+    run_id = request.args.get("run_id", "").strip()
+    if not run_id:
+        latest_run = PredictionRun.query.order_by(PredictionRun.created_at.desc()).first()
+        run_id = latest_run.run_id if latest_run else None
 
-    if not latest_week:
-        # no hay predicciones, devolvemos excel vacío
+    if not run_id:
         df_empty = pd.DataFrame([{
             "SKU": "",
             "Producto": "",
             "Stock CD disponible": "",
-            "Semana objetivo": "",
+            "Corrida": "",
             "Fecha": today.strftime("%Y-%m-%d"),
         }])
         output = io.BytesIO()
@@ -790,16 +793,14 @@ def export_cd_remanente():
             mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
-    # obtener los productos usados en la última predicción
     preds = (
         db.session.query(Prediction.product_id)
-        .filter(Prediction.target_period_start == latest_week)
+        .filter(Prediction.run_id == run_id)
         .distinct()
         .all()
     )
     product_ids = [p.product_id for p in preds]
 
-    # obtener el stock CD de esos productos
     cd_rows = (
         db.session.query(StockCD, Product)
         .join(Product, StockCD.product_id == Product.id)
@@ -817,7 +818,7 @@ def export_cd_remanente():
             "SKU": prod.sku,
             "Producto": prod.name,
             "Stock CD disponible": cd.quantity,
-            "Semana objetivo": latest_week,
+            "Corrida": run_id[:8],
             "Fecha": today.strftime("%Y-%m-%d"),
         })
 
@@ -826,7 +827,7 @@ def export_cd_remanente():
             "SKU": "",
             "Producto": "",
             "Stock CD disponible": "",
-            "Semana objetivo": latest_week,
+            "Corrida": run_id[:8] if run_id else "",
             "Fecha": today.strftime("%Y-%m-%d"),
         })
 
@@ -1430,8 +1431,12 @@ def export_predictions():
     from io import BytesIO
     import pandas as pd
 
-    latest_week = db.session.query(db.func.max(Prediction.target_period_start)).scalar()
-    if not latest_week:
+    run_id = request.args.get("run_id", "").strip()
+    if not run_id:
+        latest_run = PredictionRun.query.order_by(PredictionRun.created_at.desc()).first()
+        run_id = latest_run.run_id if latest_run else None
+
+    if not run_id:
         flash('No hay predicciones para exportar.', 'warning')
         return redirect(url_for('dashboard'))
 
@@ -1439,7 +1444,7 @@ def export_predictions():
         db.session.query(Prediction, Product, Store)
         .join(Product, Prediction.product_id == Product.id)
         .join(Store, Prediction.store_id == Store.id)
-        .filter(Prediction.target_period_start == latest_week)
+        .filter(Prediction.run_id == run_id)
         .order_by(Product.sku.asc(), Store.name.asc())
         .all()
     )
@@ -1478,7 +1483,7 @@ def export_predictions():
             "Responsable": responsable,
             "Categoría": categoria,
             "Fecha documento": fecha_doc,
-            "Semana objetivo": latest_week.strftime("%Y-%m-%d"),
+            "Corrida": run_id[:8],
         })
 
     if not rows:
@@ -1492,12 +1497,12 @@ def export_predictions():
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Distribucion")
         ws = writer.sheets["Distribucion"]
-        # Columna A (SKU) como texto
         for cell in ws["A"]:
             cell.number_format = "@"
 
     output.seek(0)
-    fname = f"distribucion_sugerida_{latest_week.strftime('%Y%m%d')}.xlsx"
+    today = date.today()
+    fname = f"distribucion_sugerida_{today.strftime('%Y%m%d')}_{run_id[:8]}.xlsx"
     return send_file(
         output,
         as_attachment=True,
