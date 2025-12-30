@@ -1472,6 +1472,141 @@ def api_forecast_v2_chart_data():
     })
 
 
+@app.route('/api/forecast_v2', methods=['GET'])
+@login_required
+@require_permission('forecast_v2:view')
+def api_forecast_v2():
+    """
+    Detailed forecast API for a specific SKU.
+    Query params:
+      - sku (required): SKU code
+      - store (optional): store name, empty = all stores
+      - horizon_weeks (default 8): forecast horizon
+      - history_weeks (default 12): weeks of history to return
+      - lead_time_weeks (default 4): lead time in weeks
+      - safety_pct (default 0.10): safety stock percentage
+    """
+    from flask import jsonify
+    today = date.today()
+
+    sku_param = request.args.get('sku', '').strip()
+    if not sku_param:
+        return jsonify({"error": "sku parameter is required"}), 400
+
+    store_param = request.args.get('store', '').strip()
+
+    try:
+        horizon_weeks = int(request.args.get('horizon_weeks', 8))
+    except ValueError:
+        horizon_weeks = 8
+    try:
+        history_weeks = int(request.args.get('history_weeks', 12))
+    except ValueError:
+        history_weeks = 12
+    try:
+        lead_time_weeks = float(request.args.get('lead_time_weeks', 4))
+    except ValueError:
+        lead_time_weeks = 4.0
+    try:
+        safety_pct = float(request.args.get('safety_pct', 0.10))
+    except ValueError:
+        safety_pct = 0.10
+
+    horizon_weeks = max(horizon_weeks, 1)
+    history_weeks = max(history_weeks, 1)
+    lead_time_weeks = max(lead_time_weeks, 0)
+    safety_pct = max(safety_pct, 0)
+
+    product = Product.query.filter_by(sku=sku_param).first()
+    if not product:
+        return jsonify({"error": f"SKU '{sku_param}' not found"}), 404
+
+    history_cutoff = today - timedelta(days=history_weeks * 7)
+
+    history_q = (
+        db.session.query(
+            db.func.date(DistributionRecord.event_date, 'weekday 0', '-6 days').label('week_start'),
+            db.func.sum(DistributionRecord.quantity).label('units')
+        )
+        .join(Store, DistributionRecord.store_id == Store.id)
+        .filter(DistributionRecord.product_id == product.id)
+        .filter(DistributionRecord.event_date >= history_cutoff)
+    )
+
+    if store_param:
+        history_q = history_q.filter(Store.name == store_param)
+
+    history_rows = (
+        history_q
+        .group_by(db.func.date(DistributionRecord.event_date, 'weekday 0', '-6 days'))
+        .order_by(db.text('week_start'))
+        .all()
+    )
+
+    history_data = [{"week": str(r.week_start), "units": int(r.units)} for r in history_rows]
+
+    if len(history_data) >= 4:
+        last4_units = [h['units'] for h in history_data[-4:]]
+        avg_last4 = sum(last4_units) / 4.0
+    elif history_data:
+        avg_last4 = sum(h['units'] for h in history_data) / len(history_data)
+    else:
+        avg_last4 = 0
+
+    forecast_data = []
+    current_week = today - timedelta(days=today.weekday())
+    for i in range(horizon_weeks):
+        week_start = current_week + timedelta(weeks=i)
+        forecast_units = round(avg_last4)
+        forecast_data.append({"week": week_start.strftime('%Y-%m-%d'), "units": forecast_units})
+
+    if len(history_data) >= 4:
+        last4_units = [h['units'] for h in history_data[-4:]]
+        std_dev = (sum((x - avg_last4) ** 2 for x in last4_units) / 4) ** 0.5
+    else:
+        std_dev = avg_last4 * 0.2
+
+    bands_lower = [max(0, round(avg_last4 - 1.5 * std_dev)) for _ in range(horizon_weeks)]
+    bands_upper = [round(avg_last4 + 1.5 * std_dev) for _ in range(horizon_weeks)]
+
+    latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar() or today
+    cd_stock_row = (
+        db.session.query(db.func.sum(StockCD.quantity).label('qty'))
+        .filter(StockCD.product_id == product.id)
+        .filter(StockCD.as_of_date == latest_cd_date)
+        .first()
+    )
+    stock_cd = int(cd_stock_row.qty) if cd_stock_row and cd_stock_row.qty else 0
+
+    forecast_total = sum(f['units'] for f in forecast_data)
+    total_demand = avg_last4 * (horizon_weeks + lead_time_weeks)
+    safety_units = total_demand * safety_pct
+    suggested_purchase = max(0, round(total_demand + safety_units - stock_cd))
+
+    if avg_last4 > 0:
+        weeks_of_cover = round(stock_cd / avg_last4, 1)
+    else:
+        weeks_of_cover = 0 if stock_cd == 0 else 999
+
+    return jsonify({
+        "sku": str(sku_param),
+        "store": store_param if store_param else "ALL",
+        "history": history_data,
+        "forecast": forecast_data,
+        "bands": {
+            "lower": bands_lower,
+            "upper": bands_upper
+        },
+        "kpis": {
+            "avg_last4": round(avg_last4, 2),
+            "forecast_total": forecast_total,
+            "stock_cd": stock_cd,
+            "suggested_purchase": suggested_purchase,
+            "weeks_of_cover": weeks_of_cover
+        }
+    })
+
+
 @app.route('/export_cd_remanente', methods=['GET'])
 @login_required
 @require_permission('distribution:export')
