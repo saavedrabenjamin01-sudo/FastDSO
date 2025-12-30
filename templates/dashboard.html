@@ -43,6 +43,27 @@
 </div>
 {% endmacro %}
 
+{% if active_simulations %}
+<div class="alert alert-warning mb-3">
+  <div class="d-flex justify-content-between align-items-center flex-wrap">
+    <div>
+      <i class="bi bi-lightning-charge me-2"></i>
+      <strong>Simulaciones activas:</strong>
+      {% for sim_type, sim_data in active_simulations.items() %}
+        <span class="badge bg-warning text-dark me-1">
+          {{ sim_type|capitalize }} ({{ sim_data.kpis.get('num_predictions', sim_data.kpis.get('num_moves', 0)) }} registros)
+        </span>
+      {% endfor %}
+    </div>
+    <div>
+      <a href="{{ url_for('clear_simulation_route', sim_type='all', redirect='dashboard') }}" class="btn btn-sm btn-outline-warning">
+        <i class="bi bi-x-circle me-1"></i>Limpiar todas
+      </a>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <form class="filters-bar mb-2" method="get" action="{{ url_for('dashboard') }}">
   <div class="filter-group">
     <label for="run_id">Corrida</label>

@@ -1101,6 +1101,12 @@ def dashboard():
         kpi_tiendas_alcanzadas=kpi_tiendas_alcanzadas,
         kpi_stock_cd_total=int(kpi_stock_cd_total or 0),
 
+        active_simulations={
+            sim_type: get_simulation_results(sim_type)
+            for sim_type in ['distribution', 'rebalancing', 'forecast']
+            if get_simulation_results(sim_type)
+        },
+
         # (opcional) por si después quieres mostrar “corrida actual”
         runs=runs,
         selected_run_id=selected_run_id,
@@ -3279,6 +3285,8 @@ def rebalancing():
     
     suggestions_limited = suggestions[:50]
     
+    is_simulation = run_info.get('is_simulation', False) if run_info else False
+    
     return render_template(
         'rebalancing.html',
         stores=stores,
@@ -3286,6 +3294,7 @@ def rebalancing():
         total_suggestions=len(suggestions),
         kpis=kpis,
         run_info=run_info,
+        is_simulation=is_simulation,
         params={
             'weeks_window': weeks_window,
             'target_woc_min': target_woc_min,
@@ -3447,9 +3456,13 @@ def export_simulation(sim_type):
 @login_required
 def clear_simulation_route(sim_type):
     """Clear simulation data and redirect."""
-    clear_simulation(sim_type)
+    if sim_type == 'all':
+        clear_simulation(None)
+        flash('Todas las simulaciones limpiadas.', 'info')
+    else:
+        clear_simulation(sim_type)
+        flash('Simulación limpiada.', 'info')
     redirect_to = request.args.get('redirect', 'dashboard')
-    flash('Simulación limpiada.', 'info')
     return redirect(url_for(redirect_to))
 
 
