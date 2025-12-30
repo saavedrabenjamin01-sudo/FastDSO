@@ -50,6 +50,8 @@ PredDist is a Flask-based web application for managing product distribution pred
 - **Prediction**: Generated distribution predictions (linked to run_id)
 - **ForecastResult**: Stored forecast V2 results (linked to run_id)
 - **AuditLog**: Audit trail (user_id, username_snapshot, role_snapshot, action, entity_type, entity_id, run_id, status, message, metadata_json, ip_address, user_agent)
+- **RebalanceRun**: Store-to-store rebalancing run metadata (run_id, created_at, created_by_user_id, params_json)
+- **RebalanceSuggestion**: Individual transfer suggestions (run_id, product_id, from_store_id, to_store_id, qty, sales_rate_to, woc_from, woc_to, score, reason)
 
 ### Key Features
 1. **Dashboard**: Overview of predictions, KPIs, and stock status
@@ -60,6 +62,7 @@ PredDist is a Flask-based web application for managing product distribution pred
 6. **Runs History**: View all runs (sales uploads, distribution, forecast) with versioning
 7. **Export**: Download predictions and forecasts as Excel files
 8. **Admin Users**: User management with RBAC (Admin only)
+9. **Store-to-Store Rebalancing**: Transfer stock between stores based on WOC (weeks of cover) and sales velocity
 
 ## Role-Based Access Control (RBAC)
 
@@ -86,6 +89,8 @@ PredDist is a Flask-based web application for managing product distribution pred
 - `admin:users` - Manage users
 - `admin:reset` - Reset data operations
 - `audit:view` - View audit trail (Admin, Management)
+- `rebalancing:view` - View rebalancing suggestions (Admin, Management, CategoryManager, WarehouseOps)
+- `rebalancing:run` - Generate rebalancing suggestions (Admin, CategoryManager, WarehouseOps)
 
 ### Test Users
 - `admin / admin` - Admin role
@@ -98,6 +103,10 @@ PredDist is a Flask-based web application for managing product distribution pred
 The application runs on port 5000 with the "Start Flask App" workflow.
 
 ## Recent Changes
+- December 30, 2025: Added Store-to-Store Rebalancing module (V1) with RebalanceRun and RebalanceSuggestion models
+- December 30, 2025: Added /rebalancing route with configurable WOC thresholds, KPI cards, and results table
+- December 30, 2025: Added /export_rebalancing Excel export for rebalancing suggestions
+- December 30, 2025: Added rebalancing:view and rebalancing:run permissions
 - December 30, 2025: Added GET /api/forecast_v2 endpoint with history, forecast, confidence bands, and KPIs (sku required, store/horizon_weeks/history_weeks/lead_time_weeks/safety_pct optional)
 - December 30, 2025: Added Plotly interactive charts to Forecast Compra V2 with line chart (sales history) and bar chart (demand vs stock vs suggested)
 - December 30, 2025: Added API endpoint /api/forecast_v2/chart_data for chart data with SKU filtering
