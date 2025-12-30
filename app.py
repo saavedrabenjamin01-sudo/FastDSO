@@ -3152,6 +3152,7 @@ def rebalancing():
             min_transfer_qty = 2
         
         store_filter = request.form.get('store_filter', '').strip()
+        simulate = request.form.get('simulate') == '1'
         
         suggestions = compute_rebalancing_suggestions(
             weeks_window=weeks_window,
@@ -3176,54 +3177,64 @@ def rebalancing():
             'store_filter': store_filter or None
         }
         
-        rebalance_run = RebalanceRun(
-            run_id=run_id,
-            created_by_user_id=current_user.id if current_user.is_authenticated else None,
-            params_json=json.dumps(params)
-        )
-        db.session.add(rebalance_run)
-        
-        for s in suggestions:
-            sugg = RebalanceSuggestion(
-                run_id=run_id,
-                product_id=s['product_id'],
-                from_store_id=s['from_store_id'],
-                to_store_id=s['to_store_id'],
-                qty=s['qty'],
-                sales_rate_to=s['sales_rate_to'],
-                woc_from=s['woc_from'],
-                woc_to=s['woc_to'],
-                score=s['score'],
-                reason=s['reason']
-            )
-            db.session.add(sugg)
-        
-        db.session.commit()
-        
-        log_audit(
-            action='rebalancing.run',
-            status='success',
-            message=f'Generated {len(suggestions)} rebalancing suggestions',
-            entity_type='RebalanceRun',
-            run_id=run_id,
-            metadata={
-                'params': params,
-                'num_suggestions': len(suggestions)
-            }
-        )
-        
-        run_info = {
-            'run_id': run_id,
-            'created_at': datetime.utcnow(),
-            'params': params
-        }
-        
         kpis['total_units'] = sum(s['qty'] for s in suggestions)
         kpis['num_moves'] = len(suggestions)
         kpis['num_skus'] = len(set(s['product_id'] for s in suggestions))
         kpis['num_receivers'] = len(set(s['to_store_id'] for s in suggestions))
         
-        flash(f'Se generaron {len(suggestions)} sugerencias de redistribución.', 'success')
+        if simulate:
+            store_simulation_results('rebalancing', suggestions, kpis, meta=params)
+            run_info = {
+                'run_id': 'SIMULATION',
+                'created_at': datetime.utcnow(),
+                'params': params,
+                'is_simulation': True
+            }
+            flash(f'SIMULACIÓN: {len(suggestions)} sugerencias calculadas (no guardadas).', 'info')
+        else:
+            rebalance_run = RebalanceRun(
+                run_id=run_id,
+                created_by_user_id=current_user.id if current_user.is_authenticated else None,
+                params_json=json.dumps(params)
+            )
+            db.session.add(rebalance_run)
+            
+            for s in suggestions:
+                sugg = RebalanceSuggestion(
+                    run_id=run_id,
+                    product_id=s['product_id'],
+                    from_store_id=s['from_store_id'],
+                    to_store_id=s['to_store_id'],
+                    qty=s['qty'],
+                    sales_rate_to=s['sales_rate_to'],
+                    woc_from=s['woc_from'],
+                    woc_to=s['woc_to'],
+                    score=s['score'],
+                    reason=s['reason']
+                )
+                db.session.add(sugg)
+            
+            db.session.commit()
+            
+            log_audit(
+                action='rebalancing.run',
+                status='success',
+                message=f'Generated {len(suggestions)} rebalancing suggestions',
+                entity_type='RebalanceRun',
+                run_id=run_id,
+                metadata={
+                    'params': params,
+                    'num_suggestions': len(suggestions)
+                }
+            )
+            
+            run_info = {
+                'run_id': run_id,
+                'created_at': datetime.utcnow(),
+                'params': params
+            }
+            
+            flash(f'Se generaron {len(suggestions)} sugerencias de redistribución.', 'success')
     
     else:
         latest_run = RebalanceRun.query.order_by(RebalanceRun.created_at.desc()).first()
@@ -3349,6 +3360,97 @@ def export_rebalancing():
         download_name=filename,
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
+
+
+@app.route('/export_simulation/<sim_type>', methods=['GET'])
+@login_required
+def export_simulation(sim_type):
+    """Export simulation results to Excel with watermark."""
+    sim_data = get_simulation_results(sim_type)
+    
+    if not sim_data:
+        flash('No hay simulación activa para exportar.', 'warning')
+        return redirect(url_for('dashboard'))
+    
+    results = sim_data.get('results', [])
+    kpis = sim_data.get('kpis', {})
+    meta = sim_data.get('meta', {})
+    
+    if sim_type == 'rebalancing':
+        rows = []
+        for s in results:
+            rows.append({
+                'SIMULACIÓN': 'SÍ - NO GUARDADO',
+                'SKU': s.get('sku', ''),
+                'Producto': s.get('name', ''),
+                'Tienda Origen': s.get('from_store', ''),
+                'Tienda Destino': s.get('to_store', ''),
+                'Cantidad': s.get('qty', 0),
+                'Venta/Sem Destino': round(s.get('sales_rate_to', 0), 2),
+                'WOC Origen': round(s.get('woc_from', 0), 2),
+                'WOC Destino': round(s.get('woc_to', 0), 2),
+                'Score': round(s.get('score', 0), 2),
+                'Razón': s.get('reason', '')
+            })
+        filename = f"SIMULACION_redistribucion_{date.today().isoformat()}.xlsx"
+    elif sim_type == 'distribution':
+        rows = []
+        for r in results:
+            rows.append({
+                'SIMULACIÓN': 'SÍ - NO GUARDADO',
+                'SKU': r.get('sku', ''),
+                'Producto': r.get('product_name', ''),
+                'Tienda': r.get('store', ''),
+                'Cantidad Sugerida': r.get('quantity', 0),
+                'Modelo': r.get('model_name', ''),
+                'Semana Objetivo': r.get('target_week', '')
+            })
+        filename = f"SIMULACION_distribucion_{date.today().isoformat()}.xlsx"
+    else:
+        flash('Tipo de simulación no reconocido.', 'warning')
+        return redirect(url_for('dashboard'))
+    
+    df = pd.DataFrame(rows)
+    
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Simulación')
+        
+        workbook = writer.book
+        worksheet = writer.sheets['Simulación']
+        
+        from openpyxl.styles import PatternFill, Font
+        yellow_fill = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
+        for row in worksheet.iter_rows(min_row=2, max_row=len(rows)+1, min_col=1, max_col=1):
+            for cell in row:
+                cell.fill = yellow_fill
+                cell.font = Font(bold=True, color='FF0000')
+    
+    output.seek(0)
+    
+    log_audit(
+        action=f'simulation.export.{sim_type}',
+        status='success',
+        message=f'Exported simulation with {len(rows)} rows',
+        metadata={'sim_type': sim_type, 'rows': len(rows)}
+    )
+    
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+
+
+@app.route('/clear_simulation/<sim_type>', methods=['GET'])
+@login_required
+def clear_simulation_route(sim_type):
+    """Clear simulation data and redirect."""
+    clear_simulation(sim_type)
+    redirect_to = request.args.get('redirect', 'dashboard')
+    flash('Simulación limpiada.', 'info')
+    return redirect(url_for(redirect_to))
 
 
 def init_database():

@@ -56,15 +56,25 @@
             <label class="form-label">Transf. mínima</label>
             <input type="number" name="min_transfer_qty" class="form-control" value="{{ params.min_transfer_qty }}">
           </div>
-          <div class="col-md-6 d-flex align-items-end">
+          <div class="col-md-6 d-flex align-items-end flex-wrap gap-2">
             {% if current_user.has_permission('rebalancing:run') %}
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="checkbox" name="simulate" value="1" id="simulateCheck">
+              <label class="form-check-label text-warning" for="simulateCheck">
+                <i class="bi bi-lightning me-1"></i>Simular (no guardar)
+              </label>
+            </div>
             <button type="submit" class="btn btn-primary">
               <i class="bi bi-play-circle me-1"></i> Generar sugerencias
             </button>
             {% endif %}
-            {% if run_info %}
-            <a href="{{ url_for('export_rebalancing', run_id=run_info.run_id) }}" class="btn btn-outline-secondary ms-2">
+            {% if run_info and not run_info.is_simulation %}
+            <a href="{{ url_for('export_rebalancing', run_id=run_info.run_id) }}" class="btn btn-outline-secondary">
               <i class="bi bi-download me-1"></i> Exportar Excel
+            </a>
+            {% elif run_info and run_info.is_simulation %}
+            <a href="{{ url_for('export_simulation', sim_type='rebalancing') }}" class="btn btn-outline-warning">
+              <i class="bi bi-download me-1"></i> Exportar Simulación
             </a>
             {% endif %}
           </div>
@@ -74,10 +84,21 @@
   </div>
 
   {% if run_info %}
+  {% if run_info.is_simulation %}
+  <div class="alert alert-warning mb-4">
+    <i class="bi bi-exclamation-triangle me-2"></i>
+    <strong>MODO SIMULACIÓN:</strong> Estos resultados no se guardaron en la base de datos. 
+    <span class="ms-3">Generado: {{ run_info.created_at.strftime('%Y-%m-%d %H:%M') if run_info.created_at else 'N/A' }}</span>
+    <a href="{{ url_for('clear_simulation', sim_type='rebalancing', redirect='rebalancing') }}" class="btn btn-sm btn-outline-warning ms-3">
+      <i class="bi bi-x-circle me-1"></i>Limpiar simulación
+    </a>
+  </div>
+  {% else %}
   <div class="alert alert-info mb-4">
     <strong>Última corrida:</strong> {{ run_info.created_at.strftime('%Y-%m-%d %H:%M') if run_info.created_at else 'N/A' }}
     <span class="ms-3 text-muted">ID: {{ run_info.run_id[:8] }}...</span>
   </div>
+  {% endif %}
   {% endif %}
 
   <div class="row g-3 mb-4">
