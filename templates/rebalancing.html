@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+
+{% block title %}Redistribución Tienda-Tienda{% endblock %}
+{% block page_title %}Redistribución Tienda-Tienda{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-0">
+
+  <div class="card mb-4">
+    <div class="card-header">
+      <h5 class="mb-0"><i class="bi bi-shuffle me-2"></i>Parámetros de Redistribución</h5>
+    </div>
+    <div class="card-body">
+      <form method="POST" action="{{ url_for('rebalancing') }}">
+        <div class="row g-3">
+          <div class="col-md-3">
+            <label class="form-label">Tienda destino (opcional)</label>
+            <select name="store_filter" class="form-select">
+              <option value="">-- Todas --</option>
+              {% for store in stores %}
+              <option value="{{ store.name }}" {% if params.store_filter == store.name %}selected{% endif %}>{{ store.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">Semanas historial</label>
+            <select name="weeks_window" class="form-select">
+              {% for w in [2,4,8,12] %}
+              <option value="{{ w }}" {% if params.weeks_window == w %}selected{% endif %}>{{ w }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">WOC Mín (riesgo)</label>
+            <input type="number" step="0.1" name="target_woc_min" class="form-control" value="{{ params.target_woc_min }}">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">WOC Objetivo</label>
+            <input type="number" step="0.1" name="target_woc_target" class="form-control" value="{{ params.target_woc_target }}">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">WOC Máx (exceso)</label>
+            <input type="number" step="0.1" name="target_woc_max" class="form-control" value="{{ params.target_woc_max }}">
+          </div>
+        </div>
+        <div class="row g-3 mt-2">
+          <div class="col-md-2">
+            <label class="form-label">Retener WOC</label>
+            <input type="number" step="0.1" name="retain_woc" class="form-control" value="{{ params.retain_woc }}">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">Stock mínimo</label>
+            <input type="number" name="stock_floor" class="form-control" value="{{ params.stock_floor }}">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">Transf. mínima</label>
+            <input type="number" name="min_transfer_qty" class="form-control" value="{{ params.min_transfer_qty }}">
+          </div>
+          <div class="col-md-6 d-flex align-items-end">
+            {% if current_user.has_permission('rebalancing:run') %}
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-play-circle me-1"></i> Generar sugerencias
+            </button>
+            {% endif %}
+            {% if run_info %}
+            <a href="{{ url_for('export_rebalancing', run_id=run_info.run_id) }}" class="btn btn-outline-secondary ms-2">
+              <i class="bi bi-download me-1"></i> Exportar Excel
+            </a>
+            {% endif %}
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {% if run_info %}
+  <div class="alert alert-info mb-4">
+    <strong>Última corrida:</strong> {{ run_info.created_at.strftime('%Y-%m-%d %H:%M') if run_info.created_at else 'N/A' }}
+    <span class="ms-3 text-muted">ID: {{ run_info.run_id[:8] }}...</span>
+  </div>
+  {% endif %}
+
+  <div class="row g-3 mb-4">
+    <div class="col-md-3">
+      <div class="card text-center border-primary">
+        <div class="card-body">
+          <div class="fs-2 fw-bold text-primary">{{ kpis.total_units | default(0) }}</div>
+          <div class="text-muted">Unidades a transferir</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card text-center border-success">
+        <div class="card-body">
+          <div class="fs-2 fw-bold text-success">{{ kpis.num_moves | default(0) }}</div>
+          <div class="text-muted">Movimientos sugeridos</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card text-center border-info">
+        <div class="card-body">
+          <div class="fs-2 fw-bold text-info">{{ kpis.num_skus | default(0) }}</div>
+          <div class="text-muted">SKUs afectados</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card text-center border-warning">
+        <div class="card-body">
+          <div class="fs-2 fw-bold text-warning">{{ kpis.num_receivers | default(0) }}</div>
+          <div class="text-muted">Tiendas destino</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <h5 class="mb-0"><i class="bi bi-list-ul me-2"></i>Sugerencias de Redistribución</h5>
+      <span class="badge bg-secondary">Top 50 de {{ total_suggestions | default(0) }}</span>
+    </div>
+    <div class="card-body p-0">
+      {% if suggestions %}
+      <div class="table-responsive">
+        <table class="table table-striped table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>SKU</th>
+              <th>Producto</th>
+              <th>Tienda Origen</th>
+              <th>Tienda Destino</th>
+              <th class="text-end">Cantidad</th>
+              <th class="text-end">Vta/Sem</th>
+              <th class="text-end">WOC Orig</th>
+              <th class="text-end">WOC Dest</th>
+              <th class="text-end">Score</th>
+              <th>Razón</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for s in suggestions %}
+            <tr>
+              <td><code>{{ s.sku }}</code></td>
+              <td>{{ s.name[:40] }}{% if s.name|length > 40 %}...{% endif %}</td>
+              <td>{{ s.from_store }}</td>
+              <td><strong>{{ s.to_store }}</strong></td>
+              <td class="text-end fw-bold">{{ s.qty }}</td>
+              <td class="text-end">{{ "%.1f"|format(s.sales_rate_to) }}</td>
+              <td class="text-end text-success">{{ "%.1f"|format(s.woc_from) }}</td>
+              <td class="text-end text-danger">{{ "%.1f"|format(s.woc_to) }}</td>
+              <td class="text-end">{{ "%.1f"|format(s.score) }}</td>
+              <td class="text-muted small">{{ s.reason[:50] }}{% if s.reason|length > 50 %}...{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-center py-5 text-muted">
+        <i class="bi bi-inbox fs-1"></i>
+        <p class="mt-2">No hay sugerencias disponibles. Ejecuta el proceso para generar redistribuciones.</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}
