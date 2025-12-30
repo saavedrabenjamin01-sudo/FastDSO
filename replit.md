@@ -98,6 +98,9 @@ PredDist is a Flask-based web application for managing product distribution pred
 The application runs on port 5000 with the "Start Flask App" workflow.
 
 ## Recent Changes
+- December 30, 2025: Added Plotly interactive charts to Forecast Compra V2 with line chart (sales history) and bar chart (demand vs stock vs suggested)
+- December 30, 2025: Added API endpoint /api/forecast_v2/chart_data for chart data with SKU filtering
+- December 30, 2025: Added KPI cards (total suggested, demand/week, stock CD, SKUs with purchase)
 - December 30, 2025: Implemented full Audit Trail system with AuditLog model, log_audit helper, and /audit UI page
 - December 30, 2025: Added audit logging to: sales upload, stock uploads, resets, distribution runs, exports
 - December 30, 2025: Extended Run model with user_id, rows_count, predictions_count tracking

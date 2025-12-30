@@ -1283,6 +1283,195 @@ def export_purchase_forecast_v2():
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
+
+@app.route('/api/forecast_v2/chart_data', methods=['GET'])
+@login_required
+@require_permission('forecast_v2:view')
+def api_forecast_v2_chart_data():
+    """
+    API endpoint returning forecast + sales history data as JSON for Plotly charts.
+    Query params: sku (optional), store_filter (optional), demand_method, lead_time_days, coverage_weeks, safety_weeks
+    """
+    from flask import jsonify
+    today = date.today()
+
+    sku_filter = request.args.get('sku', '').strip()
+    store_filter = request.args.get('store_filter', '').strip()
+    demand_method = request.args.get('demand_method', 'sma3').strip()
+
+    try:
+        lead_time_days = int(request.args.get('lead_time_days', 14))
+    except ValueError:
+        lead_time_days = 14
+    try:
+        coverage_weeks = float(request.args.get('coverage_weeks', 4))
+    except ValueError:
+        coverage_weeks = 4.0
+    try:
+        safety_weeks = float(request.args.get('safety_weeks', 1))
+    except ValueError:
+        safety_weeks = 1.0
+
+    lead_time_days = max(lead_time_days, 0)
+    coverage_weeks = max(coverage_weeks, 0.5)
+    safety_weeks = max(safety_weeks, 0)
+
+    if demand_method == 'sma3':
+        lookback_days = 21
+        weeks_divisor = 3.0
+    elif demand_method == 'sma2':
+        lookback_days = 14
+        weeks_divisor = 2.0
+    else:
+        lookback_days = 7
+        weeks_divisor = 1.0
+
+    lead_time_weeks = lead_time_days / 7.0
+    total_weeks_needed = coverage_weeks + safety_weeks + lead_time_weeks
+
+    history_weeks = 12
+    history_cutoff = today - timedelta(days=history_weeks * 7)
+
+    week_expr = db.func.strftime('%Y-%W', DistributionRecord.event_date)
+
+    history_q = (
+        db.session.query(
+            Product.sku.label('sku'),
+            Product.name.label('name'),
+            week_expr.label('week'),
+            db.func.sum(DistributionRecord.quantity).label('qty')
+        )
+        .join(Product, DistributionRecord.product_id == Product.id)
+        .join(Store, DistributionRecord.store_id == Store.id)
+        .filter(DistributionRecord.event_date >= history_cutoff)
+    )
+
+    if sku_filter:
+        history_q = history_q.filter(Product.sku == sku_filter)
+    if store_filter:
+        history_q = history_q.filter(Store.name == store_filter)
+
+    history_rows = (
+        history_q
+        .group_by(Product.sku, Product.name, week_expr)
+        .order_by(Product.sku, week_expr)
+        .all()
+    )
+
+    history_by_sku = {}
+    for r in history_rows:
+        sku_str = str(r.sku)
+        if sku_str not in history_by_sku:
+            history_by_sku[sku_str] = {'name': r.name, 'weeks': [], 'quantities': []}
+        history_by_sku[sku_str]['weeks'].append(r.week)
+        history_by_sku[sku_str]['quantities'].append(int(r.qty))
+
+    cutoff = today - timedelta(days=lookback_days)
+    sales_q = (
+        db.session.query(
+            Product.id.label('product_id'),
+            Product.sku.label('sku'),
+            Product.name.label('name'),
+            db.func.sum(DistributionRecord.quantity).label('qty_period'),
+        )
+        .join(Product, DistributionRecord.product_id == Product.id)
+        .join(Store, DistributionRecord.store_id == Store.id)
+        .filter(DistributionRecord.event_date >= cutoff)
+    )
+
+    if sku_filter:
+        sales_q = sales_q.filter(Product.sku == sku_filter)
+    if store_filter:
+        sales_q = sales_q.filter(Store.name == store_filter)
+
+    sales_rows = (
+        sales_q
+        .group_by(Product.id, Product.sku, Product.name)
+        .all()
+    )
+
+    latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar() or today
+    cd_rows = (
+        db.session.query(
+            StockCD.product_id,
+            db.func.sum(StockCD.quantity).label('cd_qty')
+        )
+        .filter(StockCD.as_of_date == latest_cd_date)
+        .group_by(StockCD.product_id)
+        .all()
+    )
+    cd_stock_map = {r.product_id: int(r.cd_qty) for r in cd_rows}
+
+    forecast_data = []
+    for r in sales_rows:
+        demand_per_week = float(r.qty_period) / weeks_divisor if weeks_divisor > 0 else 0.0
+        required_units = demand_per_week * total_weeks_needed
+        available_units = cd_stock_map.get(r.product_id, 0)
+        suggested = max(int(round(required_units)) - available_units, 0)
+
+        sku_str = str(r.sku)
+        hist = history_by_sku.get(sku_str, {'weeks': [], 'quantities': []})
+
+        forecast_data.append({
+            "sku": sku_str,
+            "name": r.name,
+            "demand_per_week": round(demand_per_week, 2),
+            "available_cd": available_units,
+            "required_units": round(required_units, 2),
+            "suggested": suggested,
+            "history_weeks": hist['weeks'],
+            "history_quantities": hist['quantities'],
+        })
+
+    forecast_data.sort(key=lambda x: x["suggested"], reverse=True)
+
+    all_skus = [{"sku": str(p.sku), "name": p.name} for p in Product.query.order_by(Product.sku).all()]
+
+    total_suggested = sum(f['suggested'] for f in forecast_data)
+    total_demand = sum(f['demand_per_week'] for f in forecast_data)
+    total_stock_cd = sum(f['available_cd'] for f in forecast_data)
+    skus_with_purchase = sum(1 for f in forecast_data if f['suggested'] > 0)
+
+    if sku_filter:
+        forecast_response = [f for f in forecast_data if f['sku'] == sku_filter]
+        if not forecast_response:
+            hist = history_by_sku.get(sku_filter, {'weeks': [], 'quantities': []})
+            product = Product.query.filter_by(sku=sku_filter).first()
+            if product:
+                forecast_response = [{
+                    "sku": sku_filter,
+                    "name": product.name,
+                    "demand_per_week": 0,
+                    "available_cd": cd_stock_map.get(product.id, 0),
+                    "required_units": 0,
+                    "suggested": 0,
+                    "history_weeks": hist['weeks'],
+                    "history_quantities": hist['quantities'],
+                }]
+    else:
+        forecast_response = forecast_data[:100]
+
+    return jsonify({
+        "forecast": forecast_response,
+        "all_skus": all_skus,
+        "kpis": {
+            "total_suggested": total_suggested,
+            "total_demand_per_week": round(total_demand, 2),
+            "total_stock_cd": total_stock_cd,
+            "skus_with_purchase": skus_with_purchase,
+            "total_skus": len(forecast_data),
+        },
+        "params": {
+            "demand_method": demand_method,
+            "lead_time_days": lead_time_days,
+            "coverage_weeks": coverage_weeks,
+            "safety_weeks": safety_weeks,
+            "store_filter": store_filter,
+            "sku_filter": sku_filter,
+        }
+    })
+
+
 @app.route('/export_cd_remanente', methods=['GET'])
 @login_required
 @require_permission('distribution:export')

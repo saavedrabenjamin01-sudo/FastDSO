@@ -1,4 +1,6 @@
 {% extends 'base.html' %}
+{% block title %}Forecast Compra V2{% endblock %}
+{% block page_title %}Proyeccion de Compras V2{% endblock %}
 {% block content %}
 
 <div class="d-flex justify-content-between align-items-center mb-2">
@@ -27,22 +29,22 @@
     <form id="forecastForm" class="row g-3" method="post" action="{{ url_for('purchase_forecast_v2') }}">
       <div class="col-md-2">
         <label class="form-label fw-semibold">Lead time (dias)</label>
-        <input type="number" name="lead_time_days" min="0" class="form-control form-control-sm" value="{{ lead_time_days }}">
+        <input type="number" name="lead_time_days" id="lead_time_days" min="0" class="form-control form-control-sm" value="{{ lead_time_days }}">
       </div>
 
       <div class="col-md-2">
         <label class="form-label fw-semibold">Cobertura (semanas)</label>
-        <input type="number" step="0.5" min="0.5" name="coverage_weeks" class="form-control form-control-sm" value="{{ coverage_weeks }}">
+        <input type="number" step="0.5" min="0.5" name="coverage_weeks" id="coverage_weeks" class="form-control form-control-sm" value="{{ coverage_weeks }}">
       </div>
 
       <div class="col-md-2">
         <label class="form-label fw-semibold">Safety stock (semanas)</label>
-        <input type="number" step="0.5" min="0" name="safety_weeks" class="form-control form-control-sm" value="{{ safety_weeks }}">
+        <input type="number" step="0.5" min="0" name="safety_weeks" id="safety_weeks" class="form-control form-control-sm" value="{{ safety_weeks }}">
       </div>
 
       <div class="col-md-2">
         <label class="form-label fw-semibold">Metodo demanda</label>
-        <select name="demand_method" class="form-select form-select-sm">
+        <select name="demand_method" id="demand_method" class="form-select form-select-sm">
           <option value="sma3" {% if demand_method == 'sma3' %}selected{% endif %}>SMA 3 semanas</option>
           <option value="sma2" {% if demand_method == 'sma2' %}selected{% endif %}>SMA 2 semanas</option>
           <option value="last_week" {% if demand_method == 'last_week' %}selected{% endif %}>Ultima semana</option>
@@ -51,7 +53,7 @@
 
       <div class="col-md-2">
         <label class="form-label fw-semibold">Tienda (opcional)</label>
-        <select name="store_filter" class="form-select form-select-sm">
+        <select name="store_filter" id="store_filter" class="form-select form-select-sm">
           <option value="">Todas las tiendas</option>
           {% for s in stores %}
             <option value="{{ s.name }}" {% if store_filter == s.name %}selected{% endif %}>{{ s.name }}</option>
@@ -74,6 +76,71 @@
         <button type="submit" formaction="{{ url_for('export_purchase_forecast_v2') }}" class="btn btn-outline-secondary btn-sm">Exportar Excel</button>
       </div>
     </form>
+  </div>
+</div>
+
+<div class="row mb-3" id="kpiCards">
+  <div class="col-md-3">
+    <div class="card text-center">
+      <div class="card-body py-3">
+        <div class="text-muted small">Compra Sugerida Total</div>
+        <div class="fs-4 fw-bold text-primary" id="kpiTotalSuggested">-</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card text-center">
+      <div class="card-body py-3">
+        <div class="text-muted small">Demanda / Semana</div>
+        <div class="fs-4 fw-bold text-info" id="kpiTotalDemand">-</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card text-center">
+      <div class="card-body py-3">
+        <div class="text-muted small">Stock CD Total</div>
+        <div class="fs-4 fw-bold text-success" id="kpiTotalStockCD">-</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card text-center">
+      <div class="card-body py-3">
+        <div class="text-muted small">SKUs con Compra</div>
+        <div class="fs-4 fw-bold text-warning" id="kpiSkusWithPurchase">-</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">
+    <div class="row align-items-center">
+      <div class="col-md-4">
+        <label class="form-label fw-semibold mb-1">Filtrar SKU para graficos</label>
+        <select id="skuSelect" class="form-select form-select-sm">
+          <option value="">Todos los SKUs (Top 10)</option>
+        </select>
+      </div>
+      <div class="col-md-8 text-end">
+        <button type="button" class="btn btn-sm btn-outline-primary" id="btnLoadCharts">
+          <i class="bi bi-graph-up"></i> Cargar graficos
+        </button>
+      </div>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="row">
+      <div class="col-md-6">
+        <h6 class="text-center mb-2">Historial de Ventas por Semana</h6>
+        <div id="chartHistory" style="height: 320px;"></div>
+      </div>
+      <div class="col-md-6">
+        <h6 class="text-center mb-2">Demanda vs Stock CD vs Compra Sugerida</h6>
+        <div id="chartComparison" style="height: 320px;"></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -129,5 +196,191 @@
     </div>
   </div>
 </div>
+
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  let chartData = null;
+
+  function getParams() {
+    return {
+      lead_time_days: document.getElementById('lead_time_days').value || 14,
+      coverage_weeks: document.getElementById('coverage_weeks').value || 4,
+      safety_weeks: document.getElementById('safety_weeks').value || 1,
+      demand_method: document.getElementById('demand_method').value || 'sma3',
+      store_filter: document.getElementById('store_filter').value || '',
+      sku: document.getElementById('skuSelect').value || ''
+    };
+  }
+
+  function fetchChartData() {
+    const params = getParams();
+    const qs = new URLSearchParams(params).toString();
+
+    fetch('/api/forecast_v2/chart_data?' + qs)
+      .then(res => res.json())
+      .then(data => {
+        chartData = data;
+        populateSkuDropdown(data.all_skus);
+        updateKPIs(data.kpis);
+        renderCharts(data.forecast, params.sku);
+      })
+      .catch(err => {
+        console.error('Error fetching chart data:', err);
+      });
+  }
+
+  function populateSkuDropdown(skus) {
+    const select = document.getElementById('skuSelect');
+    const currentVal = select.value;
+    select.innerHTML = '<option value="">Todos los SKUs (Top 10)</option>';
+    skus.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.sku;
+      opt.textContent = s.sku + ' - ' + s.name;
+      select.appendChild(opt);
+    });
+    if (currentVal) {
+      select.value = currentVal;
+    }
+  }
+
+  function updateKPIs(kpis) {
+    document.getElementById('kpiTotalSuggested').textContent = kpis.total_suggested.toLocaleString();
+    document.getElementById('kpiTotalDemand').textContent = kpis.total_demand_per_week.toLocaleString();
+    document.getElementById('kpiTotalStockCD').textContent = kpis.total_stock_cd.toLocaleString();
+    document.getElementById('kpiSkusWithPurchase').textContent = kpis.skus_with_purchase + ' / ' + kpis.total_skus;
+  }
+
+  function renderCharts(forecast, skuFilter) {
+    renderHistoryChart(forecast, skuFilter);
+    renderComparisonChart(forecast, skuFilter);
+  }
+
+  function renderHistoryChart(forecast, skuFilter) {
+    const container = document.getElementById('chartHistory');
+    let dataToPlot = [];
+
+    if (skuFilter) {
+      const item = forecast.find(f => f.sku === skuFilter);
+      if (item && item.history_weeks.length > 0) {
+        dataToPlot.push({
+          x: item.history_weeks,
+          y: item.history_quantities,
+          type: 'scatter',
+          mode: 'lines+markers',
+          name: item.sku,
+          line: { width: 2 }
+        });
+
+        const avgDemand = item.demand_per_week;
+        dataToPlot.push({
+          x: item.history_weeks,
+          y: item.history_weeks.map(() => avgDemand),
+          type: 'scatter',
+          mode: 'lines',
+          name: 'Demanda promedio',
+          line: { dash: 'dash', width: 1, color: '#ff7f0e' }
+        });
+      }
+    } else {
+      const top10 = forecast.slice(0, 10);
+      top10.forEach((item, idx) => {
+        if (item.history_weeks.length > 0) {
+          dataToPlot.push({
+            x: item.history_weeks,
+            y: item.history_quantities,
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: item.sku
+          });
+        }
+      });
+    }
+
+    if (dataToPlot.length === 0) {
+      container.innerHTML = '<div class="text-center text-muted py-5">Sin datos de historial</div>';
+      return;
+    }
+
+    const layout = {
+      margin: { t: 20, b: 50, l: 50, r: 20 },
+      xaxis: { title: 'Semana' },
+      yaxis: { title: 'Unidades vendidas' },
+      legend: { orientation: 'h', y: -0.2 },
+      hovermode: 'closest'
+    };
+
+    Plotly.newPlot(container, dataToPlot, layout, { responsive: true });
+  }
+
+  function renderComparisonChart(forecast, skuFilter) {
+    const container = document.getElementById('chartComparison');
+    let items = [];
+
+    if (skuFilter) {
+      const item = forecast.find(f => f.sku === skuFilter);
+      if (item) items = [item];
+    } else {
+      items = forecast.slice(0, 10);
+    }
+
+    if (items.length === 0) {
+      container.innerHTML = '<div class="text-center text-muted py-5">Sin datos</div>';
+      return;
+    }
+
+    const skus = items.map(i => i.sku);
+    const demandData = items.map(i => i.demand_per_week);
+    const stockData = items.map(i => i.available_cd);
+    const suggestedData = items.map(i => i.suggested);
+
+    const traces = [
+      {
+        x: skus,
+        y: demandData,
+        type: 'bar',
+        name: 'Demanda/sem',
+        marker: { color: '#17a2b8' }
+      },
+      {
+        x: skus,
+        y: stockData,
+        type: 'bar',
+        name: 'Stock CD',
+        marker: { color: '#28a745' }
+      },
+      {
+        x: skus,
+        y: suggestedData,
+        type: 'bar',
+        name: 'Compra Sugerida',
+        marker: { color: '#fd7e14' }
+      }
+    ];
+
+    const layout = {
+      margin: { t: 20, b: 80, l: 50, r: 20 },
+      barmode: 'group',
+      xaxis: { title: 'SKU', tickangle: -45 },
+      yaxis: { title: 'Unidades' },
+      legend: { orientation: 'h', y: -0.35 },
+      hovermode: 'closest'
+    };
+
+    Plotly.newPlot(container, traces, layout, { responsive: true });
+  }
+
+  document.getElementById('btnLoadCharts').addEventListener('click', fetchChartData);
+
+  document.getElementById('skuSelect').addEventListener('change', function() {
+    if (chartData) {
+      renderCharts(chartData.forecast, this.value);
+    }
+  });
+
+  fetchChartData();
+});
+</script>
 
 {% endblock %}
