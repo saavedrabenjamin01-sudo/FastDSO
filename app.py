@@ -1486,6 +1486,7 @@ def api_forecast_v2():
       - lead_time_weeks (default 4): lead time in weeks
       - safety_pct (default 0.10): safety stock percentage
     """
+    import math
     from flask import jsonify
     today = date.today()
 
@@ -1519,15 +1520,23 @@ def api_forecast_v2():
 
     product = Product.query.filter_by(sku=sku_param).first()
     if not product:
+        log_audit(
+            action='forecast_v2.run',
+            status='fail',
+            message=f"SKU not found: {sku_param}",
+            metadata={'sku': sku_param, 'store': store_param or 'ALL'}
+        )
         return jsonify({"error": f"SKU '{sku_param}' not found"}), 404
 
     history_cutoff = today - timedelta(days=history_weeks * 7)
 
+    monday_expr = db.func.date(DistributionRecord.event_date, 'weekday 0', '-6 days')
     history_q = (
         db.session.query(
-            db.func.date(DistributionRecord.event_date, 'weekday 0', '-6 days').label('week_start'),
+            monday_expr.label('week_start'),
             db.func.sum(DistributionRecord.quantity).label('units')
         )
+        .join(Product, DistributionRecord.product_id == Product.id)
         .join(Store, DistributionRecord.store_id == Store.id)
         .filter(DistributionRecord.product_id == product.id)
         .filter(DistributionRecord.event_date >= history_cutoff)
@@ -1538,7 +1547,7 @@ def api_forecast_v2():
 
     history_rows = (
         history_q
-        .group_by(db.func.date(DistributionRecord.event_date, 'weekday 0', '-6 days'))
+        .group_by(monday_expr)
         .order_by(db.text('week_start'))
         .all()
     )
@@ -1552,6 +1561,35 @@ def api_forecast_v2():
         avg_last4 = sum(h['units'] for h in history_data) / len(history_data)
     else:
         avg_last4 = 0
+
+    if not history_data:
+        log_audit(
+            action='forecast_v2.run',
+            status='success',
+            message=f"No history data for SKU {sku_param}",
+            metadata={
+                'sku': sku_param,
+                'store': store_param or 'ALL',
+                'horizon_weeks': horizon_weeks,
+                'lead_time_weeks': lead_time_weeks,
+                'safety_pct': safety_pct,
+                'kpis': {'avg_last4': 0, 'forecast_total': 0, 'stock_cd': 0, 'suggested_purchase': 0, 'weeks_of_cover': 0}
+            }
+        )
+        return jsonify({
+            "sku": str(sku_param),
+            "store": store_param if store_param else "ALL",
+            "history": [],
+            "forecast": [],
+            "bands": {"lower": [], "upper": []},
+            "kpis": {
+                "avg_last4": 0,
+                "forecast_total": 0,
+                "stock_cd": 0,
+                "suggested_purchase": 0,
+                "weeks_of_cover": 0
+            }
+        })
 
     forecast_data = []
     current_week = today - timedelta(days=today.weekday())
@@ -1579,14 +1617,33 @@ def api_forecast_v2():
     stock_cd = int(cd_stock_row.qty) if cd_stock_row and cd_stock_row.qty else 0
 
     forecast_total = sum(f['units'] for f in forecast_data)
-    total_demand = avg_last4 * (horizon_weeks + lead_time_weeks)
-    safety_units = total_demand * safety_pct
-    suggested_purchase = max(0, round(total_demand + safety_units - stock_cd))
+    demand_over_lead_time = avg_last4 * lead_time_weeks
+    safety_units = math.ceil(demand_over_lead_time * safety_pct)
+    suggested_purchase = max(0, math.ceil(demand_over_lead_time + safety_units - stock_cd))
 
-    if avg_last4 > 0:
-        weeks_of_cover = round(stock_cd / avg_last4, 1)
-    else:
-        weeks_of_cover = 0 if stock_cd == 0 else 999
+    weeks_of_cover = round(stock_cd / max(avg_last4, 1), 1)
+
+    kpis = {
+        "avg_last4": round(avg_last4, 2),
+        "forecast_total": forecast_total,
+        "stock_cd": stock_cd,
+        "suggested_purchase": suggested_purchase,
+        "weeks_of_cover": weeks_of_cover
+    }
+
+    log_audit(
+        action='forecast_v2.run',
+        status='success',
+        message=f"Forecast for SKU {sku_param}",
+        metadata={
+            'sku': sku_param,
+            'store': store_param or 'ALL',
+            'horizon_weeks': horizon_weeks,
+            'lead_time_weeks': lead_time_weeks,
+            'safety_pct': safety_pct,
+            'kpis': kpis
+        }
+    )
 
     return jsonify({
         "sku": str(sku_param),
@@ -1597,13 +1654,7 @@ def api_forecast_v2():
             "lower": bands_lower,
             "upper": bands_upper
         },
-        "kpis": {
-            "avg_last4": round(avg_last4, 2),
-            "forecast_total": forecast_total,
-            "stock_cd": stock_cd,
-            "suggested_purchase": suggested_purchase,
-            "weeks_of_cover": weeks_of_cover
-        }
+        "kpis": kpis
     })
 
 
