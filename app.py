@@ -964,12 +964,30 @@ def purchase_forecast():
     """Legacy route - redirect to V2."""
     return redirect(url_for('purchase_forecast_v2'))
 
-@app.route('/purchase_forecast_v2', methods=['GET', 'POST'])
+@app.route('/purchase_forecast_v2', methods=['GET'])
 @login_required
 @require_permission('forecast_v2:view')
 def purchase_forecast_v2():
     """
-    Purchase Forecast V2:
+    Purchase Forecast V2 - Interactive forecast page with Plotly charts.
+    Uses /api/forecast_v2 for data.
+    """
+    stores = Store.query.order_by(Store.name.asc()).all()
+    products = Product.query.order_by(Product.sku.asc()).limit(500).all()
+
+    return render_template(
+        'purchase_forecast_v2.html',
+        stores=stores,
+        products=products,
+    )
+
+
+@app.route('/purchase_forecast_v2_legacy', methods=['GET', 'POST'])
+@login_required
+@require_permission('forecast_v2:view')
+def purchase_forecast_v2_legacy():
+    """
+    Legacy Purchase Forecast V2 (batch mode):
     - Lead time (days)
     - Safety stock (weeks)
     - Coverage horizon (weeks)
