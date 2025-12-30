@@ -63,6 +63,26 @@ PredDist is a Flask-based web application for managing product distribution pred
 7. **Export**: Download predictions and forecasts as Excel files
 8. **Admin Users**: User management with RBAC (Admin only)
 9. **Store-to-Store Rebalancing**: Transfer stock between stores based on WOC (weeks of cover) and sales velocity
+10. **Simulation Mode**: Run calculations without saving to database for what-if analysis
+
+## Simulation Mode
+
+The simulation mode allows users to run distribution and rebalancing calculations without saving results to the database. This is useful for:
+- Testing different parameters before committing
+- What-if analysis scenarios
+- Previewing impacts without affecting actual data
+
+### How to Use
+1. Check the "Simular (no guardar)" checkbox before generating predictions or rebalancing
+2. Results are displayed with a yellow warning banner indicating simulation mode
+3. Simulated results can be exported with a watermark column
+4. Use "Limpiar simulación" to clear simulation data
+5. Active simulations are shown on the dashboard
+
+### Technical Details
+- Results are stored in Flask session with 30-minute expiry
+- Session-based storage means results are per-user and temporary
+- Exports include "SIMULACIÓN: SÍ - NO GUARDADO" column with yellow highlight
 
 ## Role-Based Access Control (RBAC)
 
