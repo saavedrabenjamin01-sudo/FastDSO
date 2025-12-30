@@ -123,6 +123,8 @@ The simulation mode allows users to run distribution and rebalancing calculation
 The application runs on port 5000 with the "Start Flask App" workflow.
 
 ## Recent Changes
+- December 30, 2025: Refreshed login page with corporate branding (rounded card, logo, blue gradient button, no sidebar)
+- December 30, 2025: Created base_auth.html for auth pages (minimal layout without sidebar)
 - December 30, 2025: Added Store-to-Store Rebalancing module (V1) with RebalanceRun and RebalanceSuggestion models
 - December 30, 2025: Added /rebalancing route with configurable WOC thresholds, KPI cards, and results table
 - December 30, 2025: Added /export_rebalancing Excel export for rebalancing suggestions

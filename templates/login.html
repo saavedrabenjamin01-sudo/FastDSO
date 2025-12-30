@@ -1,20 +1,30 @@
-{% extends 'base.html' %}
+{% extends 'base_auth.html' %}
+{% block title %}Iniciar sesión - FastDSO{% endblock %}
 {% block content %}
-<div class="row justify-content-center">
-  <div class="col-md-4">
-    <h3>Iniciar sesión</h3>
-    <form method="post">
-      <div class="mb-3">
-        <label class="form-label">Usuario</label>
-        <input type="text" class="form-control" name="username" required>
-      </div>
-      <div class="mb-3">
-        <label class="form-label">Contraseña</label>
-        <input type="password" class="form-control" name="password" required>
-      </div>
-      <button class="btn btn-primary w-100" type="submit">Entrar</button>
-    </form>
-    <p class="text-muted mt-3">Usuario demo: <code>admin / admin</code></p>
+<div class="auth-card">
+  <div class="auth-brand">
+    <img src="{{ url_for('static', filename='img/logo/fastdso_logo_full_256.png') }}" alt="FastDSO Logo" class="auth-logo">
+    <h1 class="auth-title">FastDSO</h1>
+    <p class="auth-subtitle">Fast Distribution, Sales &amp; Operations</p>
+  </div>
+  <form method="post" class="auth-form">
+    <div class="form-group">
+      <label class="form-label" for="username">Usuario</label>
+      <input type="text" class="form-control auth-input" id="username" name="username" placeholder="Ingresa tu usuario" autocomplete="username" required>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="password">Contraseña</label>
+      <input type="password" class="form-control auth-input" id="password" name="password" placeholder="Ingresa tu contraseña" autocomplete="current-password" required>
+    </div>
+    <button class="btn btn-auth-primary w-100" type="submit">
+      <i class="bi bi-box-arrow-in-right me-2"></i>Entrar
+    </button>
+  </form>
+  <div class="auth-footer">
+    <p class="auth-demo-hint">
+      <i class="bi bi-info-circle me-1"></i>
+      Usuario demo: <code>admin / admin</code>
+    </p>
   </div>
 </div>
 {% endblock %}

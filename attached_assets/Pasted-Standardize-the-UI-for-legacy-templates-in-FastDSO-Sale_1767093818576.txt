@@ -1,0 +1,70 @@
+Standardize the UI for legacy templates in FastDSO:
+- Sales upload (Carga Ventas)
+- Store stock upload (Stock Tiendas)
+- CD stock upload (Stock CD)
+- Stock query (Consulta de stock)
+
+Goal:
+- All these pages should use a consistent layout: title header, compact description, card-based form, clear CTA buttons, and consistent spacing.
+- Add a “processing overlay popup” (loading screen) for any form that uploads a file or triggers heavy processing:
+  - Sales upload (file + prediction generation)
+  - Store stock upload
+  - CD stock upload
+  - Any recalculation action (forecast, rebalance, exports if needed)
+
+Requirements:
+1) Base components:
+- Create a reusable Jinja partial: templates/partials/_upload_card.html
+  - Parameters: title, subtitle, icon_svg, form_action, file_accept, extra_fields_block, primary_cta_text
+- Create another reusable partial: templates/partials/_processing_overlay.html
+  - A full-screen translucent overlay with a centered modal card
+  - Shows:
+    - an icon (SVG) related to action
+    - a message: “Processing… Please wait”
+    - a spinner animation
+  - Overlay is hidden by default.
+
+2) Loader behavior:
+- When the user submits a form, show the overlay immediately:
+  - Use JS: onsubmit handler OR addEventListener('submit')
+  - Disable submit button and show progress state.
+- Add a timeout fallback message after 10 seconds: “Still working…”
+- The overlay must be accessible (aria-live) and not block server response.
+
+3) Visual design:
+- Keep your current blue/white scheme + elegant sidebar gradient.
+- Improve spacing:
+  - Add consistent padding on main content
+  - Tables should have breathing room and not touch sidebar
+  - Cards should have consistent radius and shadows
+- Add nicer empty-states:
+  - If no data, show a small illustration/icon + message.
+
+4) Icons:
+- Use inline SVG icons (not external libs) for:
+  - Upload sales
+  - Upload store stock
+  - Upload CD stock
+  - Stock query
+  - Processing overlay (animated spinner)
+- Place icons in the card header area.
+
+5) Standardized forms:
+- For uploads:
+  - Show accepted columns/format in a collapsible “File requirements” section
+  - Show the last upload timestamp if available (from backend)
+- For stock query:
+  - Provide tabs or segmented control: “CD Stock” vs “Store Stock”
+  - Make filters consistent with dashboard filters.
+
+6) Files:
+- Put global CSS additions in static/css/style.css
+- Put JS in static/js/app_ui.js
+- Ensure base.html loads app_ui.js once and only once.
+- Do not break existing routes.
+
+Deliverables:
+- Updated templates for the 4 pages using the new partials
+- New partials
+- CSS + JS additions
+- Confirm loaders appear on submit and disappear after page load (naturally, since navigation happens).
