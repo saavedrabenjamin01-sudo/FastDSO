@@ -1,0 +1,70 @@
+You are working on the FastDSO Flask app (SQLAlchemy + Jinja templates). Implement a “Simulation Mode” for every operation that currently writes results to the database or discounts stock.
+
+Goal:
+- Users can run Distribution / Purchase Forecast / Store Rebalance in a “Simulation mode” that computes results but does NOT:
+  - insert/update Prediction rows
+  - insert/update transfer/rebalance rows
+  - discount StockCD quantities
+  - modify store stock snapshots
+- The UI must clearly show when results are simulated (badge + banner + export watermark).
+- The existing “normal” mode must remain unchanged.
+
+Requirements:
+1) Data model / persistence:
+- Do NOT change existing DB schema for this step.
+- No new columns required.
+- Simulation results must be kept in server-side session (Flask session) or in-memory cache keyed by user id, with an expiry (e.g. 30 minutes). Use a safe approach that works on Replit (session preferred).
+- Store simulated outputs for:
+  a) distribution suggested table (same structure as current predictions view)
+  b) remaining CD stock summary table
+  c) KPI values derived from the simulated results
+  d) optional: a small “run meta” label: timestamp, user, method
+
+2) Backend changes:
+- Add a boolean parameter `simulate: bool = False` to the core “compute” functions:
+  - generate_predictions(...)
+  - purchase_forecast_v2(...) (or equivalent endpoint you have)
+  - store_rebalance(...) (redistribution module)
+- In these functions:
+  - If simulate=True: skip any db.session.add/add_all, skip updates, skip commit. Also skip StockCD discount section.
+  - Return the computed list of results (not just count). Keep the return signature consistent by adding a second return value or creating a new helper that returns results. Choose the least invasive refactor.
+- Update routes:
+  - /upload (sales upload -> distribution generation)
+  - /purchase_forecast_v2
+  - /store_rebalance
+  to read a form checkbox or query param: simulate=1
+  and call the compute functions in simulation mode accordingly.
+
+3) Dashboard integration:
+- On dashboard, show ONLY the latest “real” predictions by default (current behavior).
+- If the user runs a simulation, redirect to dashboard with `?sim=1` and display the simulated tables instead of DB tables:
+  - distribution suggested: from session simulated data
+  - remanent CD: from session simulated data
+  - KPIs: from simulated data
+  - top sales stays as-is (based on sales upload filtering)
+- Add a “Clear simulation” button that clears session simulated payloads.
+- Add a clear visual indicator: a banner at top “SIMULATION MODE — no stock was discounted and nothing was saved”.
+
+4) Export:
+- Keep existing exports for real results unchanged.
+- Add separate export endpoints for simulated results:
+  - /export_predictions_sim
+  - /export_cd_remanente_sim
+- Watermark the Excel filename and sheet title with “SIMULATED”.
+
+5) UI:
+- Add a checkbox “Simulation mode (no save, no discount)” to:
+  - sales upload form
+  - forecast v2 form
+  - store rebalance form
+- In the results tables, show a small badge next to the section title when simulated.
+
+6) Testing:
+- Add 2-3 minimal tests or debug scripts (even simple assertions) demonstrating:
+  - In simulate mode, StockCD quantities remain unchanged after running.
+  - In simulate mode, Prediction row count remains unchanged.
+  - Simulated results still appear on dashboard.
+
+Deliverables:
+- Provide the exact code edits (routes + helper functions + template updates) and ensure the app runs without breaking existing flows.
+- Keep changes minimal and well isolated (prefer wrapper helper compute functions).

@@ -408,37 +408,100 @@ def has_any_stock_loaded() -> bool:
     """True si existe al menos un snapshot de stock en la tabla."""
     return db.session.query(StockSnapshot.id).first() is not None
 
+
+# ------------------ Simulation Mode Helpers ------------------
+from flask import session
+
+SIMULATION_EXPIRY_MINUTES = 30
+
+def store_simulation_results(sim_type, results, kpis=None, cd_remaining=None, meta=None):
+    """
+    Store simulation results in Flask session.
+    sim_type: 'distribution', 'forecast', 'rebalancing'
+    """
+    if 'simulations' not in session:
+        session['simulations'] = {}
+    
+    session['simulations'][sim_type] = {
+        'results': results,
+        'kpis': kpis or {},
+        'cd_remaining': cd_remaining or [],
+        'meta': meta or {},
+        'timestamp': datetime.utcnow().isoformat(),
+        'user_id': current_user.id if current_user.is_authenticated else None
+    }
+    session.modified = True
+
+
+def get_simulation_results(sim_type):
+    """
+    Retrieve simulation results from Flask session.
+    Returns None if expired or not found.
+    """
+    if 'simulations' not in session:
+        return None
+    
+    sim_data = session['simulations'].get(sim_type)
+    if not sim_data:
+        return None
+    
+    timestamp = datetime.fromisoformat(sim_data['timestamp'])
+    if datetime.utcnow() - timestamp > timedelta(minutes=SIMULATION_EXPIRY_MINUTES):
+        clear_simulation(sim_type)
+        return None
+    
+    return sim_data
+
+
+def clear_simulation(sim_type=None):
+    """Clear simulation data from session."""
+    if 'simulations' not in session:
+        return
+    
+    if sim_type:
+        session['simulations'].pop(sim_type, None)
+    else:
+        session['simulations'] = {}
+    session.modified = True
+
+
+def has_active_simulation(sim_type=None):
+    """Check if there's an active simulation."""
+    if sim_type:
+        return get_simulation_results(sim_type) is not None
+    return bool(session.get('simulations', {}))
+
+
 # Predicción: promedio móvil 3 semanas por SKU-Tienda
 
-
 from datetime import date
 from collections import defaultdict
-
-from collections import defaultdict
-from datetime import date
 
 def generate_predictions(
     mode: str = "sma3_min3",
     meta: dict | None = None,
     df: pd.DataFrame | None = None,
-    sales_run_id: str | None = None
+    sales_run_id: str | None = None,
+    simulate: bool = False
 ):
     from uuid import uuid4
     run_id = str(uuid4())
     
     meta = meta or {}
-    prediction_run = Run(
-        run_id=run_id,
-        run_type='distribution',
-        folio=meta.get("folio"),
-        responsable=meta.get("responsable"),
-        categoria=meta.get("categoria"),
-        notes=meta.get("fecha_doc"),
-        mode=mode,
-        status='completed'
-    )
-    db.session.add(prediction_run)
-    db.session.flush()
+    
+    if not simulate:
+        prediction_run = Run(
+            run_id=run_id,
+            run_type='distribution',
+            folio=meta.get("folio"),
+            responsable=meta.get("responsable"),
+            categoria=meta.get("categoria"),
+            notes=meta.get("fecha_doc"),
+            mode=mode,
+            status='completed'
+        )
+        db.session.add(prediction_run)
+        db.session.flush()
 
     # 1) Origen de datos: df pasado o histórico completo
     if df is None:
@@ -613,6 +676,49 @@ def generate_predictions(
         assigned_qty = int(it["suggested"])
         assigned_by_product[it["product_id"]] += assigned_qty
 
+    if simulate:
+        sim_results = []
+        product_cache = {p.id: p for p in Product.query.all()}
+        store_cache = {s.id: s for s in Store.query.all()}
+        
+        for it in final_preds:
+            prod = product_cache.get(it["product_id"])
+            store_obj = store_cache.get(it["store_id"])
+            sim_results.append({
+                'sku': it['sku'],
+                'product_name': prod.name if prod else '',
+                'store': it['store'],
+                'quantity': int(it['suggested']),
+                'model_name': it.get('model_name', ''),
+                'target_week': target_week.isoformat()
+            })
+        
+        cd_remaining = []
+        if snapshot_date:
+            for cd_row in cd_stock_rows:
+                assigned = assigned_by_product.get(cd_row.product_id, 0)
+                remaining = max(cd_row.quantity - assigned, 0)
+                prod = product_cache.get(cd_row.product_id)
+                cd_remaining.append({
+                    'sku': prod.sku if prod else '',
+                    'product_name': prod.name if prod else '',
+                    'original': cd_row.quantity,
+                    'assigned': assigned,
+                    'remaining': remaining
+                })
+        
+        kpis = {
+            'total_units': sum(r['quantity'] for r in sim_results),
+            'num_skus': len(set(r['sku'] for r in sim_results)),
+            'num_stores': len(set(r['store'] for r in sim_results)),
+            'num_predictions': len(sim_results)
+        }
+        
+        return run_id, len(final_preds), sim_results, cd_remaining, kpis
+
+    for it in final_preds:
+        assigned_qty = int(it["suggested"])
+
         existing = Prediction.query.filter_by(
             product_id=it["product_id"],
             store_id=it["store_id"],
@@ -630,7 +736,7 @@ def generate_predictions(
                 target_period_start=target_week,
                 quantity=assigned_qty,
                 model_name=it["model_name"],
-                run_id=run_id  # NEW
+                run_id=run_id
             ))
 
     if preds_bulk:
@@ -650,7 +756,7 @@ def generate_predictions(
     except Exception:
         pass
 
-    return run_id, len(final_preds)
+    return run_id, len(final_preds), None, None, None
 
 from flask import g
 from datetime import date
