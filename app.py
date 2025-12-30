@@ -23,19 +23,20 @@ ROLE_PERMISSIONS = {
     'Admin': [
         'dashboard:view', 'sales:upload', 'stock_store:upload', 'stock_cd:upload',
         'stock:query', 'distribution:generate', 'distribution:export',
-        'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'admin:users', 'admin:reset', 'audit:view'
+        'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'admin:users', 'admin:reset', 'audit:view',
+        'rebalancing:view', 'rebalancing:run'
     ],
     'Management': [
         'dashboard:view', 'stock:query', 'distribution:export',
-        'forecast_v2:view', 'runs:view', 'audit:view'
+        'forecast_v2:view', 'runs:view', 'audit:view', 'rebalancing:view'
     ],
     'CategoryManager': [
         'dashboard:view', 'sales:upload', 'distribution:generate', 'distribution:export',
-        'forecast_v2:view', 'forecast_v2:run', 'runs:view'
+        'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'rebalancing:view', 'rebalancing:run'
     ],
     'WarehouseOps': [
         'dashboard:view', 'stock_store:upload', 'stock_cd:upload', 'stock:query',
-        'distribution:export'
+        'distribution:export', 'rebalancing:view', 'rebalancing:run'
     ],
     'Viewer': [
         'dashboard:view', 'stock:query'
@@ -254,6 +255,48 @@ class AuditLog(db.Model):
     user_agent = db.Column(db.String(500), nullable=True)
 
     user = db.relationship('User', backref='audit_logs')
+
+
+class RebalanceRun(db.Model):
+    """Run metadata for store-to-store rebalancing suggestions."""
+    __tablename__ = 'rebalance_run'
+    id = db.Column(db.Integer, primary_key=True)
+    run_id = db.Column(db.String(36), unique=True, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    params_json = db.Column(db.Text, nullable=True)
+
+    user = db.relationship('User', backref='rebalance_runs')
+
+    def get_params(self):
+        if self.params_json:
+            try:
+                return json.loads(self.params_json)
+            except:
+                return {}
+        return {}
+
+
+class RebalanceSuggestion(db.Model):
+    """Individual rebalancing suggestion (transfer from one store to another)."""
+    __tablename__ = 'rebalance_suggestion'
+    id = db.Column(db.Integer, primary_key=True)
+    run_id = db.Column(db.String(36), db.ForeignKey('rebalance_run.run_id'), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    from_store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False)
+    to_store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False)
+    qty = db.Column(db.Integer, nullable=False)
+    sales_rate_to = db.Column(db.Float, nullable=True)
+    woc_from = db.Column(db.Float, nullable=True)
+    woc_to = db.Column(db.Float, nullable=True)
+    score = db.Column(db.Float, nullable=True)
+    reason = db.Column(db.String(255), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    product = db.relationship('Product')
+    from_store = db.relationship('Store', foreign_keys=[from_store_id])
+    to_store = db.relationship('Store', foreign_keys=[to_store_id])
+    run = db.relationship('RebalanceRun', backref='suggestions')
 
 
 # ------------------ Login loader ------------------
@@ -2785,6 +2828,421 @@ def audit_view():
                                'date_from': date_from,
                                'date_to': date_to
                            })
+
+
+# ======================================================
+# REBALANCING (Store-to-Store) ROUTES
+# ======================================================
+import uuid
+import math
+
+def compute_rebalancing_suggestions(
+    weeks_window=4,
+    target_woc_min=1.5,
+    target_woc_target=2.5,
+    target_woc_max=6.0,
+    retain_woc=4.0,
+    stock_floor=1,
+    min_transfer_qty=2,
+    store_filter=None
+):
+    """
+    Compute store-to-store rebalancing suggestions.
+    Returns list of dicts: {product_id, sku, name, from_store_id, from_store, to_store_id, to_store, qty, sales_rate_to, woc_from, woc_to, score, reason}
+    """
+    today = date.today()
+    cutoff = today - timedelta(days=weeks_window * 7)
+    
+    latest_stock_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
+    if not latest_stock_date:
+        return []
+    
+    stock_map = {}
+    stock_q = (
+        db.session.query(
+            StockSnapshot.product_id,
+            StockSnapshot.store_id,
+            StockSnapshot.quantity
+        )
+        .filter(StockSnapshot.as_of_date == latest_stock_date)
+        .all()
+    )
+    for pid, sid, qty in stock_q:
+        stock_map[(pid, sid)] = qty
+    
+    week_expr = db.func.strftime('%Y-%W', DistributionRecord.event_date)
+    sales_q = (
+        db.session.query(
+            DistributionRecord.product_id,
+            DistributionRecord.store_id,
+            week_expr.label('week'),
+            db.func.sum(DistributionRecord.quantity).label('weekly_qty')
+        )
+        .filter(DistributionRecord.event_date >= cutoff)
+        .group_by(DistributionRecord.product_id, DistributionRecord.store_id, week_expr)
+        .all()
+    )
+    
+    weekly_sales = defaultdict(lambda: defaultdict(list))
+    for pid, sid, week, qty in sales_q:
+        weekly_sales[pid][(pid, sid)].append(qty)
+    
+    sales_rate_map = {}
+    for pid in weekly_sales:
+        for key, weeks_list in weekly_sales[pid].items():
+            avg_rate = sum(weeks_list) / max(len(weeks_list), 1)
+            sales_rate_map[key] = avg_rate
+    
+    product_info = {p.id: (p.sku, p.name) for p in Product.query.all()}
+    store_info = {s.id: s.name for s in Store.query.all()}
+    
+    all_products = set(pid for (pid, sid) in stock_map.keys()) | set(pid for (pid, sid) in sales_rate_map.keys())
+    
+    suggestions = []
+    
+    for pid in all_products:
+        stores_for_pid = set()
+        for (p, s) in stock_map.keys():
+            if p == pid:
+                stores_for_pid.add(s)
+        for (p, s) in sales_rate_map.keys():
+            if p == pid:
+                stores_for_pid.add(s)
+        
+        store_data = []
+        for sid in stores_for_pid:
+            stock = stock_map.get((pid, sid), 0)
+            rate = sales_rate_map.get((pid, sid), 0)
+            woc = stock / max(rate, 0.01)
+            store_data.append({
+                'store_id': sid,
+                'stock': stock,
+                'rate': rate,
+                'woc': woc
+            })
+        
+        receivers = []
+        for sd in store_data:
+            if sd['rate'] > 0 and sd['woc'] < target_woc_min:
+                need = max(math.ceil(target_woc_target * sd['rate']) - sd['stock'], 0)
+                if need > 0:
+                    receivers.append({
+                        **sd,
+                        'need': need,
+                        'priority': (sd['rate'], -sd['woc'])
+                    })
+        receivers.sort(key=lambda x: x['priority'], reverse=True)
+        
+        donors = []
+        for sd in store_data:
+            if sd['woc'] > target_woc_max:
+                keep_units = max(math.ceil(retain_woc * sd['rate']), stock_floor)
+                give_units = max(sd['stock'] - keep_units, 0)
+                if give_units > 0:
+                    donors.append({
+                        **sd,
+                        'give': give_units
+                    })
+        donors.sort(key=lambda x: x['give'], reverse=True)
+        
+        for receiver in receivers:
+            if store_filter and store_info.get(receiver['store_id']) != store_filter:
+                continue
+            
+            remaining_need = receiver['need']
+            for donor in donors:
+                if remaining_need <= 0:
+                    break
+                if donor['give'] <= 0:
+                    continue
+                if donor['store_id'] == receiver['store_id']:
+                    continue
+                
+                transfer = min(remaining_need, donor['give'])
+                
+                is_extreme = receiver['woc'] < 0.5
+                if transfer < min_transfer_qty and not is_extreme:
+                    continue
+                
+                score = receiver['rate'] * 10 + (target_woc_min - receiver['woc']) * 5
+                
+                reason = f"WOC {receiver['woc']:.1f} < {target_woc_min}, rate {receiver['rate']:.1f}/wk"
+                
+                suggestions.append({
+                    'product_id': pid,
+                    'sku': product_info.get(pid, ('?', '?'))[0],
+                    'name': product_info.get(pid, ('?', '?'))[1],
+                    'from_store_id': donor['store_id'],
+                    'from_store': store_info.get(donor['store_id'], '?'),
+                    'to_store_id': receiver['store_id'],
+                    'to_store': store_info.get(receiver['store_id'], '?'),
+                    'qty': transfer,
+                    'sales_rate_to': receiver['rate'],
+                    'woc_from': donor['woc'],
+                    'woc_to': receiver['woc'],
+                    'score': score,
+                    'reason': reason
+                })
+                
+                remaining_need -= transfer
+                donor['give'] -= transfer
+    
+    suggestions.sort(key=lambda x: x['score'], reverse=True)
+    return suggestions
+
+
+@app.route('/rebalancing', methods=['GET', 'POST'])
+@login_required
+@require_permission('rebalancing:view')
+def rebalancing():
+    """Store-to-store rebalancing suggestions."""
+    stores = Store.query.order_by(Store.name.asc()).all()
+    
+    weeks_window = 4
+    target_woc_min = 1.5
+    target_woc_target = 2.5
+    target_woc_max = 6.0
+    retain_woc = 4.0
+    stock_floor = 1
+    min_transfer_qty = 2
+    store_filter = ''
+    
+    suggestions = []
+    run_info = None
+    kpis = {'total_units': 0, 'num_moves': 0, 'num_skus': 0, 'num_receivers': 0}
+    
+    if request.method == 'POST':
+        if not current_user.has_permission('rebalancing:run'):
+            flash('No tienes permiso para ejecutar rebalanceos.', 'warning')
+            return redirect(url_for('rebalancing'))
+        
+        try:
+            weeks_window = int(request.form.get('weeks_window', 4))
+        except:
+            weeks_window = 4
+        try:
+            target_woc_min = float(request.form.get('target_woc_min', 1.5))
+        except:
+            target_woc_min = 1.5
+        try:
+            target_woc_target = float(request.form.get('target_woc_target', 2.5))
+        except:
+            target_woc_target = 2.5
+        try:
+            target_woc_max = float(request.form.get('target_woc_max', 6.0))
+        except:
+            target_woc_max = 6.0
+        try:
+            retain_woc = float(request.form.get('retain_woc', 4.0))
+        except:
+            retain_woc = 4.0
+        try:
+            stock_floor = int(request.form.get('stock_floor', 1))
+        except:
+            stock_floor = 1
+        try:
+            min_transfer_qty = int(request.form.get('min_transfer_qty', 2))
+        except:
+            min_transfer_qty = 2
+        
+        store_filter = request.form.get('store_filter', '').strip()
+        
+        suggestions = compute_rebalancing_suggestions(
+            weeks_window=weeks_window,
+            target_woc_min=target_woc_min,
+            target_woc_target=target_woc_target,
+            target_woc_max=target_woc_max,
+            retain_woc=retain_woc,
+            stock_floor=stock_floor,
+            min_transfer_qty=min_transfer_qty,
+            store_filter=store_filter or None
+        )
+        
+        run_id = str(uuid.uuid4())
+        params = {
+            'weeks_window': weeks_window,
+            'target_woc_min': target_woc_min,
+            'target_woc_target': target_woc_target,
+            'target_woc_max': target_woc_max,
+            'retain_woc': retain_woc,
+            'stock_floor': stock_floor,
+            'min_transfer_qty': min_transfer_qty,
+            'store_filter': store_filter or None
+        }
+        
+        rebalance_run = RebalanceRun(
+            run_id=run_id,
+            created_by_user_id=current_user.id if current_user.is_authenticated else None,
+            params_json=json.dumps(params)
+        )
+        db.session.add(rebalance_run)
+        
+        for s in suggestions:
+            sugg = RebalanceSuggestion(
+                run_id=run_id,
+                product_id=s['product_id'],
+                from_store_id=s['from_store_id'],
+                to_store_id=s['to_store_id'],
+                qty=s['qty'],
+                sales_rate_to=s['sales_rate_to'],
+                woc_from=s['woc_from'],
+                woc_to=s['woc_to'],
+                score=s['score'],
+                reason=s['reason']
+            )
+            db.session.add(sugg)
+        
+        db.session.commit()
+        
+        log_audit(
+            action='rebalancing.run',
+            status='success',
+            message=f'Generated {len(suggestions)} rebalancing suggestions',
+            entity_type='RebalanceRun',
+            run_id=run_id,
+            metadata={
+                'params': params,
+                'num_suggestions': len(suggestions)
+            }
+        )
+        
+        run_info = {
+            'run_id': run_id,
+            'created_at': datetime.utcnow(),
+            'params': params
+        }
+        
+        kpis['total_units'] = sum(s['qty'] for s in suggestions)
+        kpis['num_moves'] = len(suggestions)
+        kpis['num_skus'] = len(set(s['product_id'] for s in suggestions))
+        kpis['num_receivers'] = len(set(s['to_store_id'] for s in suggestions))
+        
+        flash(f'Se generaron {len(suggestions)} sugerencias de redistribución.', 'success')
+    
+    else:
+        latest_run = RebalanceRun.query.order_by(RebalanceRun.created_at.desc()).first()
+        if latest_run:
+            run_info = {
+                'run_id': latest_run.run_id,
+                'created_at': latest_run.created_at,
+                'params': latest_run.get_params()
+            }
+            params = run_info['params']
+            weeks_window = params.get('weeks_window', 4)
+            target_woc_min = params.get('target_woc_min', 1.5)
+            target_woc_target = params.get('target_woc_target', 2.5)
+            target_woc_max = params.get('target_woc_max', 6.0)
+            retain_woc = params.get('retain_woc', 4.0)
+            stock_floor = params.get('stock_floor', 1)
+            min_transfer_qty = params.get('min_transfer_qty', 2)
+            store_filter = params.get('store_filter', '') or ''
+            
+            db_suggestions = RebalanceSuggestion.query.filter_by(run_id=latest_run.run_id).all()
+            for s in db_suggestions:
+                suggestions.append({
+                    'product_id': s.product_id,
+                    'sku': s.product.sku if s.product else '?',
+                    'name': s.product.name if s.product else '?',
+                    'from_store_id': s.from_store_id,
+                    'from_store': s.from_store.name if s.from_store else '?',
+                    'to_store_id': s.to_store_id,
+                    'to_store': s.to_store.name if s.to_store else '?',
+                    'qty': s.qty,
+                    'sales_rate_to': s.sales_rate_to,
+                    'woc_from': s.woc_from,
+                    'woc_to': s.woc_to,
+                    'score': s.score,
+                    'reason': s.reason
+                })
+            
+            kpis['total_units'] = sum(s['qty'] for s in suggestions)
+            kpis['num_moves'] = len(suggestions)
+            kpis['num_skus'] = len(set(s['product_id'] for s in suggestions))
+            kpis['num_receivers'] = len(set(s['to_store_id'] for s in suggestions))
+    
+    suggestions_limited = suggestions[:50]
+    
+    return render_template(
+        'rebalancing.html',
+        stores=stores,
+        suggestions=suggestions_limited,
+        total_suggestions=len(suggestions),
+        kpis=kpis,
+        run_info=run_info,
+        params={
+            'weeks_window': weeks_window,
+            'target_woc_min': target_woc_min,
+            'target_woc_target': target_woc_target,
+            'target_woc_max': target_woc_max,
+            'retain_woc': retain_woc,
+            'stock_floor': stock_floor,
+            'min_transfer_qty': min_transfer_qty,
+            'store_filter': store_filter
+        }
+    )
+
+
+@app.route('/export_rebalancing', methods=['GET'])
+@login_required
+@require_permission('rebalancing:view')
+def export_rebalancing():
+    """Export rebalancing suggestions to Excel."""
+    run_id = request.args.get('run_id', '').strip()
+    
+    if not run_id:
+        latest_run = RebalanceRun.query.order_by(RebalanceRun.created_at.desc()).first()
+        if latest_run:
+            run_id = latest_run.run_id
+        else:
+            flash('No hay corridas de redistribución disponibles.', 'warning')
+            return redirect(url_for('rebalancing'))
+    
+    run = RebalanceRun.query.filter_by(run_id=run_id).first()
+    if not run:
+        flash('Corrida no encontrada.', 'danger')
+        return redirect(url_for('rebalancing'))
+    
+    suggestions = RebalanceSuggestion.query.filter_by(run_id=run_id).order_by(RebalanceSuggestion.score.desc()).all()
+    
+    rows = []
+    for s in suggestions:
+        rows.append({
+            'SKU': s.product.sku if s.product else '',
+            'Producto': s.product.name if s.product else '',
+            'Tienda Origen': s.from_store.name if s.from_store else '',
+            'Tienda Destino': s.to_store.name if s.to_store else '',
+            'Cantidad': s.qty,
+            'Venta/Sem Destino': round(s.sales_rate_to, 2) if s.sales_rate_to else 0,
+            'WOC Origen': round(s.woc_from, 2) if s.woc_from else 0,
+            'WOC Destino': round(s.woc_to, 2) if s.woc_to else 0,
+            'Score': round(s.score, 2) if s.score else 0,
+            'Razón': s.reason or ''
+        })
+    
+    df = pd.DataFrame(rows)
+    
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Redistribución')
+    output.seek(0)
+    
+    filename = f"redistribucion_{run_id[:8]}_{date.today().isoformat()}.xlsx"
+    
+    log_audit(
+        action='rebalancing.export',
+        status='success',
+        message=f'Exported {len(rows)} rebalancing suggestions',
+        entity_type='RebalanceRun',
+        run_id=run_id,
+        metadata={'rows': len(rows)}
+    )
+    
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
 
 
 def init_database():

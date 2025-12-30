@@ -1,0 +1,103 @@
+You are working on a Flask + SQLAlchemy app called FastDSO. Add a new module: “Store-to-Store Rebalancing (V1)” that suggests transferring stock between stores based on sales velocity and weeks of cover (WOC). This must respect store hierarchy by sales (higher-selling stores have priority as receivers). Do NOT introduce zones/cities yet (leave for V2). Keep existing modules working and do not break current routes/templates.
+
+GOALS (V1)
+1) Compute rebalancing suggestions per SKU: move units from “donor” stores (excess WOC) to “receiver” stores (risk of stockout) prioritizing receivers by sales hierarchy.
+2) Provide a new page in the sidebar under “Stock General” named “Rebalancing” (or “Redistribution”) with filters and a “Generate suggestions” button.
+3) Show results in a table + KPI cards, and allow export to Excel.
+4) Log runs with run_id and link to current_user for audit/tracing.
+
+DATA SOURCES
+- StockSnapshot: store stock (SKU/product_id + store_id + quantity + as_of_date).
+- DistributionRecord: sales/units history (product_id + store_id + quantity + event_date).
+- Product, Store models already exist.
+
+BUSINESS RULES (no zones)
+- Sales window: configurable (default 4 weeks). Use weekly aggregation (week_start Monday).
+- Sales_rate: use mean of last N weekly totals (or median if easier). If sales_rate == 0 => skip for “receiver” (do not transfer to dead movers).
+- WOC = stock / max(sales_rate, 1) (avoid division by 0).
+- Receiver condition: WOC < target_woc_min (default 1.5) AND sales_rate > 0.
+- Donor condition: WOC > target_woc_max (default 6.0).
+- Minimum keep (floor): donor must keep at least stock_floor units (default 1) AND also keep enough to retain retain_woc (default 4.0) coverage: keep_units = max(ceil(retain_woc * sales_rate), stock_floor).
+- Receiver need: need_units = max(ceil(target_woc_target * sales_rate) - stock, 0). target_woc_target default 2.5.
+- Matching algorithm (per SKU):
+  a) Build receivers sorted by priority: higher sales_rate DESC, then lower WOC ASC.
+  b) Build donors sorted by give_units DESC.
+  c) Allocate transfers greedily: transfer = min(need_units, give_units). Stop when receiver fulfilled or donors depleted.
+- Do not create circular transfers; per-SKU greedy allocation avoids most cases.
+- Limit tiny moves: ignore transfer < min_transfer_qty (default 2) unless receiver is extreme (WOC < 0.5). Implement simply: if transfer < min_transfer_qty then skip and continue.
+
+UI REQUIREMENTS
+Create a new route, template, and export route:
+- GET/POST /rebalancing (login_required)
+  * Filters form:
+    - Store filter (optional, receiver store only OR show all)
+    - Weeks window (default 4; options 2,4,8,12)
+    - target_woc_min (default 1.5)
+    - target_woc_target (default 2.5)
+    - target_woc_max (default 6.0)
+    - retain_woc (default 4.0)
+    - stock_floor (default 1)
+    - min_transfer_qty (default 2)
+    - “Generate suggestions” submit
+  * On POST: compute suggestions and persist run + suggestions.
+  * On GET: show latest run for current filters if possible; otherwise show most recent run overall.
+- Show KPI cards at top:
+  * Total transfer units suggested
+  * # of suggested moves
+  * # of SKUs affected
+  * # of receiver stores affected
+- Show results table (top 50 by score):
+  SKU | Product | From Store | To Store | Qty | Sales_rate_to | WOC_from | WOC_to | Reason | Score
+- Add export route /export_rebalancing?run_id=... returning Excel with full results.
+
+PERSISTENCE (new models)
+Add two new tables:
+1) RebalanceRun
+   - id (pk)
+   - run_id (uuid str, indexed, unique)
+   - created_at (utc)
+   - created_by_user_id (fk to User)
+   - params_json (text/json string: store filter + all numeric params)
+2) RebalanceSuggestion
+   - id (pk)
+   - run_id (indexed, fk to RebalanceRun.run_id or store run_id string)
+   - product_id, from_store_id, to_store_id
+   - qty (int)
+   - sales_rate_to (float)
+   - woc_from (float), woc_to (float)
+   - score (float)
+   - reason (string)
+   - created_at
+
+Add relationships if consistent with existing style.
+
+AUDIT
+- Link run to current_user (user id, username).
+- Add entries into existing audit log if you already have one; if not, at minimum store user_id in RebalanceRun.
+
+INTEGRATION
+- Sidebar: under “Stock General” collapsible group, add “Rebalancing” item with icon (svg inline like existing).
+- Keep style consistent with current base.html + style.css.
+- Ensure all templates render even when no data (avoid Jinja undefined errors).
+- Ensure db schema is updated safely. If using SQLite and no migration tool, provide a simple “reset DB” note OR implement a lightweight migration approach. Prefer: if in development, allow dropping and recreating tables (but DO NOT delete existing tables automatically). Provide explicit steps.
+
+DELIVERABLES
+- Code changes in app.py (routes + computation functions)
+- New models
+- New template templates/rebalancing.html
+- Export to Excel function
+- Sidebar link in base.html
+- Minimal unit of testing: show sample run in UI.
+
+IMPLEMENTATION HINTS
+- Use latest StockSnapshot.as_of_date per store+product (or global latest date if that’s how the app stores snapshots).
+- Sales aggregation: compute week_start and groupby product_id+store_id+week_start.
+- Join to Product and Store for display.
+- Use uuid.uuid4() for run_id.
+- Make sure this module does not alter StockSnapshot quantities automatically (suggestions only). We will later add “apply transfers” with confirmations.
+
+After implementing, summarize:
+- Routes added
+- New tables created
+- How to run locally and on Replit
+- How to generate a run and export results
