@@ -1,0 +1,92 @@
+We already implemented the “Store-to-Store Rebalancing (V1)” module in FastDSO (Flask + SQLAlchemy). Now we need validation with 2–3 deterministic test scenarios. Goal: confirm the algorithm respects store hierarchy by sales, WOC thresholds, donor floor/retain_woc, min_transfer_qty, and does NOT suggest transfers to zero-sales stores.
+
+PLEASE DO NOT CHANGE BUSINESS LOGIC unless a bug is found. Add tests and a small “seed/validate” utility.
+
+TASKS
+1) Create a lightweight test harness that can run inside Replit for SQLite:
+   - A command or script (e.g., `python validate_rebalancing.py`) OR a Flask CLI command if configured.
+   - It should create a fresh test database (separate from production, e.g. `instance/test.sqlite`) so we do not overwrite real data.
+   - It should create minimal required tables (db.create_all()) and then insert controlled seed data for scenarios.
+
+2) Implement 3 scenarios (each scenario should print results and assert expected behaviors):
+
+SCENARIO A — “Basic donor → receiver with hierarchy”
+- One SKU (Product P1, SKU “000123”), 3 stores: A, B, C
+- Stock today:
+  A=40, B=20, C=1
+- Sales last 4 weeks (weekly totals):
+  Store C sells 10/week (high), Store B sells 4/week (mid), Store A sells 1/week (low)
+- Params:
+  window_weeks=4
+  target_woc_min=1.5
+  target_woc_target=2.5
+  target_woc_max=6.0
+  retain_woc=4.0
+  stock_floor=1
+  min_transfer_qty=2
+- Expected:
+  * Receiver should be Store C (highest sales and low WOC).
+  * Store A should be donor (excess WOC), Store B maybe donor depending on WOC.
+  * Transfers should prioritize C first (only receiver anyway).
+  * No transfer should reduce donor below keep_units = max(ceil(retain_woc*sales_rate), stock_floor).
+  * Print all suggested moves and assert at least one move exists.
+
+SCENARIO B — “Zero-sales store must not receive”
+- Same SKU P1, 2 stores: Donor D, Receiver Z
+- Stock:
+  D=30, Z=0
+- Sales:
+  Z sells 0/week (all weeks 0)
+  D sells 1/week
+- Same params as above
+- Expected:
+  * There should be NO transfer to Z because sales_rate_to == 0.
+  * Assert zero suggestions OR assert Z never appears as “to_store”.
+
+SCENARIO C — “Min transfer qty + extreme WOC exception”
+- One SKU P2 “009999”, stores: Donor X, Receiver Y
+- Stock:
+  X=10, Y=0
+- Sales:
+  Y sells 1/week (so sales_rate=1)
+  X sells 1/week
+- Params:
+  target_woc_min=1.5
+  target_woc_target=2.0 (so receiver need is small)
+  retain_woc=4.0
+  stock_floor=1
+  min_transfer_qty=3
+- Compute expected:
+  Receiver need_units = ceil(2.0*1) - 0 = 2 units (below min_transfer_qty=3)
+  But we allow transfer < min_transfer_qty ONLY if receiver WOC < 0.5
+  Here receiver WOC is 0/max(1,1)=0, which is <0.5, so transfer of 2 should be allowed.
+- Expected:
+  * Exactly 1 suggestion with qty=2 from X→Y (as long as donor keep_units respected).
+  * Assert qty == 2 and transfer exists.
+
+3) Assertions / validation:
+- Use simple `assert` statements and clear printed logs.
+- Validate invariants for every suggestion:
+  * qty > 0
+  * product_id not null; from_store != to_store
+  * receiver sales_rate_to > 0
+  * donor remaining stock >= keep_units (based on donor’s sales_rate and params)
+- If any assertion fails, print a helpful error message.
+
+4) Non-invasive:
+- Don’t add heavy test frameworks unless already installed. Plain Python is fine.
+- Do not alter production db. Use a separate test db path.
+- Do not modify existing templates/routes except if needed to fix a bug found by tests.
+
+DELIVERABLES
+- Add `validate_rebalancing.py` (preferred) with:
+  * function to create app context + bind test DB
+  * seed helpers: create stores/products/sales/stock
+  * run algorithm and capture suggestions for each scenario
+  * asserts + summary prints “ALL TESTS PASSED”
+- Provide a short README snippet:
+  * how to run `python validate_rebalancing.py`
+  * what output to expect
+
+IMPORTANT
+If you find a bug in the rebalancing logic during validation, propose the minimal patch and explain why it’s necessary, then update tests accordingly.
