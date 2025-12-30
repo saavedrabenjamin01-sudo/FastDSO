@@ -1472,6 +1472,25 @@ def upload():
             created += 1
 
         db.session.commit()
+        
+        distinct_skus = df['sku'].nunique() if 'sku' in df.columns else 0
+        distinct_stores = df['store'].nunique() if 'store' in df.columns else 0
+        log_audit(
+            action="sales.upload",
+            message=f"Cargados {created} registros de ventas",
+            entity_type="DistributionRecord",
+            run_id=sales_run_id,
+            metadata={
+                "filename": filename,
+                "rows_count": created,
+                "distinct_skus": distinct_skus,
+                "distinct_stores": distinct_stores,
+                "mode": analysis_mode,
+                "folio": meta.get("folio"),
+                "responsable": meta.get("responsable"),
+                "categoria": meta.get("categoria")
+            }
+        )
 
         run_id, n_preds = generate_predictions(mode=analysis_mode, meta=meta, df=df, sales_run_id=sales_run_id)
 
@@ -1613,6 +1632,19 @@ def upload_stock():
                     created += 1
 
         db.session.commit()
+        log_audit(
+            action="stock_store.upload",
+            message=f"Stock tiendas cargado: {created} nuevos, {updated} actualizados",
+            entity_type="StockSnapshot",
+            metadata={
+                "filename": filename,
+                "created": created,
+                "updated": updated,
+                "distinct_skus": len(df),
+                "store_count": len(store_cols),
+                "as_of_date": str(today)
+            }
+        )
         flash(f'Stock cargado. Nuevos: {created}. Actualizados: {updated}.', 'success')
         return redirect(url_for('dashboard'))
 
@@ -1934,6 +1966,19 @@ def upload_stock_cd():
                 created += 1
 
         db.session.commit()
+        log_audit(
+            action="stock_cd.upload",
+            message=f"Stock CD cargado: {created} nuevos, {updated} actualizados",
+            entity_type="StockCD",
+            metadata={
+                "filename": filename,
+                "created": created,
+                "updated": updated,
+                "distinct_skus": len(df),
+                "mode": modo,
+                "snapshot_date": str(snapshot_date)
+            }
+        )
         flash(f'Stock CD cargado. Nuevos: {created}, Actualizados: {updated}', 'success')
         return redirect(url_for('dashboard'))
 
@@ -2287,6 +2332,66 @@ def admin_reset_password(user_id):
     
     flash(f'Contraseña de "{user.username}" actualizada.', 'success')
     return redirect(url_for('admin_users'))
+
+
+# ======================================================
+# AUDIT TRAIL
+# ======================================================
+
+@app.route('/audit', methods=['GET'])
+@login_required
+@require_permission('audit:view')
+def audit_view():
+    """View audit trail with filters and pagination."""
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 25, type=int)
+    
+    action_filter = request.args.get('action', '').strip()
+    user_filter = request.args.get('user', '').strip()
+    status_filter = request.args.get('status', '').strip()
+    date_from = request.args.get('date_from', '').strip()
+    date_to = request.args.get('date_to', '').strip()
+    
+    query = AuditLog.query
+    
+    if action_filter:
+        query = query.filter(AuditLog.action.ilike(f'%{action_filter}%'))
+    if user_filter:
+        query = query.filter(AuditLog.username_snapshot.ilike(f'%{user_filter}%'))
+    if status_filter:
+        query = query.filter(AuditLog.status == status_filter)
+    if date_from:
+        try:
+            from_date = datetime.strptime(date_from, '%Y-%m-%d')
+            query = query.filter(AuditLog.created_at >= from_date)
+        except:
+            pass
+    if date_to:
+        try:
+            to_date = datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1)
+            query = query.filter(AuditLog.created_at < to_date)
+        except:
+            pass
+    
+    total = query.count()
+    logs = query.order_by(AuditLog.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
+    
+    pagination = Pagination(page, per_page, total, logs)
+    
+    unique_actions = db.session.query(AuditLog.action).distinct().order_by(AuditLog.action).all()
+    unique_actions = [a[0] for a in unique_actions]
+    
+    return render_template('audit.html', 
+                           logs=logs, 
+                           pagination=pagination,
+                           unique_actions=unique_actions,
+                           filters={
+                               'action': action_filter,
+                               'user': user_filter,
+                               'status': status_filter,
+                               'date_from': date_from,
+                               'date_to': date_to
+                           })
 
 
 def init_database():

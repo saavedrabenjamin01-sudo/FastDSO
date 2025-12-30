@@ -43,12 +43,13 @@ PredDist is a Flask-based web application for managing product distribution pred
 - **User**: Authentication (username, password_hash, role, is_active)
 - **Product**: SKU and product name
 - **Store**: Store names
-- **Run**: Versioned run history (run_id, run_type, folio, responsable, categoria, store_filter, notes, status)
+- **Run**: Versioned run history (run_id, run_type, user_id, folio, responsable, categoria, store_filter, notes, status, rows_count, predictions_count)
 - **DistributionRecord**: Sales history (product, store, quantity, date, run_id)
 - **StockCD**: Distribution center stock snapshots
 - **StockSnapshot**: Store stock snapshots
 - **Prediction**: Generated distribution predictions (linked to run_id)
 - **ForecastResult**: Stored forecast V2 results (linked to run_id)
+- **AuditLog**: Audit trail (user_id, username_snapshot, role_snapshot, action, entity_type, entity_id, run_id, status, message, metadata_json, ip_address, user_agent)
 
 ### Key Features
 1. **Dashboard**: Overview of predictions, KPIs, and stock status
@@ -84,6 +85,7 @@ PredDist is a Flask-based web application for managing product distribution pred
 - `runs:view` - View runs history
 - `admin:users` - Manage users
 - `admin:reset` - Reset data operations
+- `audit:view` - View audit trail (Admin, Management)
 
 ### Test Users
 - `admin / admin` - Admin role
@@ -96,6 +98,10 @@ PredDist is a Flask-based web application for managing product distribution pred
 The application runs on port 5000 with the "Start Flask App" workflow.
 
 ## Recent Changes
+- December 30, 2025: Implemented full Audit Trail system with AuditLog model, log_audit helper, and /audit UI page
+- December 30, 2025: Added audit logging to: sales upload, stock uploads, resets, distribution runs, exports
+- December 30, 2025: Extended Run model with user_id, rows_count, predictions_count tracking
+- December 30, 2025: Added audit:view permission for Admin and Management roles
 - December 29, 2025: Implemented Role-Based Access Control (RBAC) with 5 roles and 12 permissions
 - December 29, 2025: Added Admin Users management page with role/password management
 - December 29, 2025: Updated sidebar to hide menu items based on user permissions

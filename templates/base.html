@@ -123,7 +123,7 @@
     {% endif %}
 
     <!-- ===== Administración ===== -->
-    {% if current_user.is_authenticated and current_user.has_permission('admin:users') %}
+    {% if current_user.is_authenticated and (current_user.has_permission('admin:users') or current_user.has_permission('audit:view')) %}
     <div class="nav-group">
       <button class="nav-group-toggle" aria-expanded="true">
         <span class="nav-icon"><i class="bi bi-gear"></i></span>
@@ -132,10 +132,18 @@
       </button>
 
       <div class="sidebar-nav" style="display:flex;">
+        {% if current_user.has_permission('admin:users') %}
         <a class="nav-link" href="{{ url_for('admin_users') }}">
           <span class="nav-icon"><i class="bi bi-people"></i></span>
           <span class="nav-text">Gestión usuarios</span>
         </a>
+        {% endif %}
+        {% if current_user.has_permission('audit:view') %}
+        <a class="nav-link" href="{{ url_for('audit_view') }}">
+          <span class="nav-icon"><i class="bi bi-journal-text"></i></span>
+          <span class="nav-text">Audit trail</span>
+        </a>
+        {% endif %}
       </div>
     </div>
     {% endif %}
