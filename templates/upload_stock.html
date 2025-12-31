@@ -1,6 +1,13 @@
 {% extends 'base.html' %}
 {% block content %}
 
+<div id="loadingOverlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(255,255,255,0.9);z-index:9999;justify-content:center;align-items:center;flex-direction:column;">
+  <div class="spinner-border text-primary" style="width:3rem;height:3rem;" role="status">
+    <span class="visually-hidden">Cargando...</span>
+  </div>
+  <p class="mt-3 text-primary fw-semibold" id="loadingText">Procesando archivo...</p>
+</div>
+
 <div class="d-flex justify-content-between align-items-center mb-2">
   <div>
     <h5 class="mb-0">Carga de stock tiendas</h5>
@@ -26,7 +33,7 @@
 
 <div class="card">
   <div class="card-body">
-    <form method="post" enctype="multipart/form-data" class="row g-3">
+    <form method="post" enctype="multipart/form-data" class="row g-3" id="uploadForm">
 
       <div class="col-md-6">
         <label class="form-label fw-semibold">Archivo de stock tiendas</label>
@@ -40,7 +47,6 @@
         </small>
       </div>
 
-      <!-- opcional: metadatos, si tu ruta los ignora no pasa nada -->
       <div class="col-md-3">
         <label class="form-label fw-semibold">Fecha snapshot</label>
         <input type="date"
@@ -57,12 +63,30 @@
       </div>
 
       <div class="col-12 d-flex justify-content-end mt-2">
-        <button type="submit" class="btn btn-primary">
+        <button type="submit" class="btn btn-primary" id="submitBtn">
           Cargar stock tiendas
         </button>
       </div>
     </form>
   </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  var form = document.getElementById('uploadForm');
+  var overlay = document.getElementById('loadingOverlay');
+  var submitBtn = document.getElementById('submitBtn');
+  
+  if (document.querySelector('.alert-danger')) {
+    overlay.style.display = 'none';
+  }
+  
+  form.addEventListener('submit', function() {
+    overlay.style.display = 'flex';
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Procesando...';
+  });
+});
+</script>
 
 {% endblock %}
