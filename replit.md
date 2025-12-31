@@ -52,11 +52,12 @@ PredDist is a Flask-based web application for managing product distribution pred
 - **AuditLog**: Audit trail (user_id, username_snapshot, role_snapshot, action, entity_type, entity_id, run_id, status, message, metadata_json, ip_address, user_agent)
 - **RebalanceRun**: Store-to-store rebalancing run metadata (run_id, created_at, created_by_user_id, params_json)
 - **RebalanceSuggestion**: Individual transfer suggestions (run_id, product_id, from_store_id, to_store_id, qty, sales_rate_to, woc_from, woc_to, score, reason)
+- **Job**: Background job tracking (id, job_type, status, progress, message, payload_json, result_json, user_id, created_at, updated_at)
 
 ### Key Features
 1. **Dashboard**: Overview of predictions, KPIs, and stock status
-2. **Sales Upload**: Import sales data from CSV/Excel
-3. **Stock Management**: Upload store and CD stock levels
+2. **Sales Upload**: Import sales data from CSV/Excel (background processing)
+3. **Stock Management**: Upload store and CD stock levels (background processing)
 4. **Predictions**: Generate distribution suggestions using moving averages
 5. **Forecast Compra (V2)**: Advanced purchase forecasting with lead time, safety stock, coverage, demand methods
 6. **Runs History**: View all runs (sales uploads, distribution, forecast) with versioning
@@ -64,6 +65,7 @@ PredDist is a Flask-based web application for managing product distribution pred
 8. **Admin Users**: User management with RBAC (Admin only)
 9. **Store-to-Store Rebalancing**: Transfer stock between stores based on WOC (weeks of cover) and sales velocity
 10. **Simulation Mode**: Run calculations without saving to database for what-if analysis
+11. **Background Job Processing**: Large file uploads processed asynchronously with progress tracking
 
 ## Simulation Mode
 
@@ -122,7 +124,39 @@ The simulation mode allows users to run distribution and rebalancing calculation
 ## Running the Application
 The application runs on port 5000 with the "Start Flask App" workflow.
 
+## Background Job System
+
+The application uses a background job system (ThreadPoolExecutor) to process large file uploads asynchronously, preventing Cloudflare 524 timeouts.
+
+### How It Works
+1. When user uploads a file, the app saves it immediately and creates a Job record
+2. User is redirected to job status page with real-time progress updates (1.5s polling)
+3. Background thread processes the file with progress updates
+4. When complete, user can continue to their destination
+
+### Job Types
+- `upload_stock_cd`: Stock CD file upload
+- `upload_sales`: Sales data upload with automatic prediction generation
+
+### Technical Details
+- ThreadPoolExecutor with 4 workers
+- Isolated SQLAlchemy sessions for thread safety (scoped_session)
+- Batch insert operations (1000 rows per batch)
+- Progress tracking: 0-100%
+- Status: queued → running → done/error
+- Files stored in `instance/uploads/` and deleted after processing
+
+### Routes
+- `/jobs/<id>`: JSON API for polling job status
+- `/jobs/<id>/view`: HTML page with auto-polling progress bar
+
 ## Recent Changes
+- December 31, 2025: Implemented Background Job System with ThreadPoolExecutor (4 workers)
+- December 31, 2025: Added Job model for tracking background tasks
+- December 31, 2025: Refactored Stock CD upload to use background jobs with bulk operations
+- December 31, 2025: Refactored Sales upload to use background jobs with bulk operations
+- December 31, 2025: Created job status page template with auto-polling progress bar
+- December 31, 2025: Added isolated session handling for thread-safe database operations
 - December 30, 2025: Refreshed login page with corporate branding (rounded card, logo, blue gradient button, no sidebar)
 - December 30, 2025: Created base_auth.html for auth pages (minimal layout without sidebar)
 - December 30, 2025: Added Store-to-Store Rebalancing module (V1) with RebalanceRun and RebalanceSuggestion models

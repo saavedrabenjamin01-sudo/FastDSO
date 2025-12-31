@@ -345,13 +345,22 @@ class Job(db.Model):
 # ------------------ Background Job Infrastructure ------------------
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4 as uuid4_gen
+from sqlalchemy.orm import scoped_session, sessionmaker
 
 job_executor = ThreadPoolExecutor(max_workers=4)
 
+def get_isolated_session():
+    """Create an isolated session for thread-safe database operations."""
+    Session = scoped_session(sessionmaker(bind=db.engine))
+    return Session()
+
+
 def update_job_status(job_id, status=None, progress=None, message=None, result=None):
-    """Update job status from within a background thread. Uses its own session."""
-    with app.app_context():
-        job = db.session.get(Job, job_id)
+    """Update job status from within a background thread. Uses isolated session for thread safety."""
+    session = None
+    try:
+        session = get_isolated_session()
+        job = session.get(Job, job_id)
         if job:
             if status is not None:
                 job.status = status
@@ -360,9 +369,17 @@ def update_job_status(job_id, status=None, progress=None, message=None, result=N
             if message is not None:
                 job.message = message
             if result is not None:
-                job.set_result(result)
+                import json
+                job.result_json = json.dumps(result, default=str, ensure_ascii=False)
             job.updated_at = datetime.utcnow()
-            db.session.commit()
+            session.commit()
+    except Exception as e:
+        if session:
+            session.rollback()
+        app.logger.error(f"Failed to update job status {job_id}: {e}")
+    finally:
+        if session:
+            session.close()
 
 
 def create_and_run_job(job_type, task_func, payload=None, user_id=None):
@@ -382,9 +399,11 @@ def create_and_run_job(job_type, task_func, payload=None, user_id=None):
         job.set_payload(payload)
     db.session.add(job)
     db.session.commit()
+    db.session.expire_all()
 
     def wrapped_task():
         with app.app_context():
+            task_session = None
             try:
                 update_job_status(job_id, status='running', progress=5, message='Iniciando...')
                 task_func(job_id, payload or {})
@@ -2069,7 +2088,7 @@ def export_cd_remanente():
     )
 
 def process_sales_upload(job_id, payload):
-    """Background task to process Sales upload with bulk operations and prediction generation."""
+    """Background task to process Sales upload with bulk operations and prediction generation. Uses isolated session."""
     import os
     from uuid import uuid4
     
@@ -2079,6 +2098,7 @@ def process_sales_upload(job_id, payload):
     user_id = payload.get('user_id')
     original_filename = payload.get('original_filename', 'unknown')
     
+    session = get_isolated_session()
     try:
         update_job_status(job_id, progress=10, message='Leyendo archivo...')
         
@@ -2115,36 +2135,54 @@ def process_sales_upload(job_id, payload):
             status='completed',
             rows_count=total_rows
         )
-        db.session.add(sales_run)
-        db.session.commit()
+        session.add(sales_run)
+        session.commit()
         
         update_job_status(job_id, progress=25, message='Cargando productos y tiendas existentes...')
         
-        existing_products = {p.sku: p.id for p in Product.query.all()}
-        existing_stores = {s.name: s.id for s in Store.query.all()}
+        unique_skus = list(df['sku'].unique())
+        unique_store_names = list(df['store'].unique())
         
-        unique_skus = df[['sku', 'product_name']].drop_duplicates('sku')
+        existing_products = {}
+        batch_size = 500
+        for i in range(0, len(unique_skus), batch_size):
+            sku_batch = unique_skus[i:i + batch_size]
+            for p in session.query(Product).filter(Product.sku.in_(sku_batch)).all():
+                existing_products[p.sku] = p.id
+        
+        existing_stores = {}
+        for i in range(0, len(unique_store_names), batch_size):
+            store_batch = unique_store_names[i:i + batch_size]
+            for s in session.query(Store).filter(Store.name.in_(store_batch)).all():
+                existing_stores[s.name] = s.id
+        
+        unique_sku_df = df[['sku', 'product_name']].drop_duplicates('sku')
         new_products = []
-        for _, row in unique_skus.iterrows():
+        for _, row in unique_sku_df.iterrows():
             if row['sku'] not in existing_products:
                 new_products.append({'sku': row['sku'], 'name': row['product_name']})
         
         if new_products:
             update_job_status(job_id, progress=30, message=f'Creando {len(new_products)} productos nuevos...')
-            db.session.execute(Product.__table__.insert(), new_products)
-            db.session.commit()
-            for p in Product.query.filter(Product.sku.in_([np['sku'] for np in new_products])).all():
-                existing_products[p.sku] = p.id
+            session.execute(Product.__table__.insert(), new_products)
+            session.commit()
+            new_skus = [np['sku'] for np in new_products]
+            for i in range(0, len(new_skus), batch_size):
+                sku_batch = new_skus[i:i + batch_size]
+                for p in session.query(Product).filter(Product.sku.in_(sku_batch)).all():
+                    existing_products[p.sku] = p.id
         
-        unique_stores = df['store'].unique()
-        new_stores = [{'name': s} for s in unique_stores if s not in existing_stores]
+        new_stores = [{'name': s} for s in unique_store_names if s not in existing_stores]
         
         if new_stores:
             update_job_status(job_id, progress=35, message=f'Creando {len(new_stores)} tiendas nuevas...')
-            db.session.execute(Store.__table__.insert(), new_stores)
-            db.session.commit()
-            for s in Store.query.filter(Store.name.in_([ns['name'] for ns in new_stores])).all():
-                existing_stores[s.name] = s.id
+            session.execute(Store.__table__.insert(), new_stores)
+            session.commit()
+            new_names = [ns['name'] for ns in new_stores]
+            for i in range(0, len(new_names), batch_size):
+                name_batch = new_names[i:i + batch_size]
+                for s in session.query(Store).filter(Store.name.in_(name_batch)).all():
+                    existing_stores[s.name] = s.id
         
         update_job_status(job_id, progress=45, message='Preparando registros de ventas...')
         
@@ -2163,14 +2201,15 @@ def process_sales_upload(job_id, payload):
         
         update_job_status(job_id, progress=55, message=f'Insertando {len(dist_records)} registros...')
         
-        batch_size = 1000
-        for i in range(0, len(dist_records), batch_size):
-            batch = dist_records[i:i + batch_size]
-            db.session.execute(DistributionRecord.__table__.insert(), batch)
+        insert_batch = 1000
+        for i in range(0, len(dist_records), insert_batch):
+            batch = dist_records[i:i + insert_batch]
+            session.execute(DistributionRecord.__table__.insert(), batch)
             progress = 55 + int(20 * (i + len(batch)) / len(dist_records))
             update_job_status(job_id, progress=progress, message=f'Insertando {i + len(batch)}/{len(dist_records)}...')
         
-        db.session.commit()
+        session.commit()
+        session.close()
         
         update_job_status(job_id, progress=80, message='Generando predicciones...')
         
@@ -2199,7 +2238,8 @@ def process_sales_upload(job_id, payload):
         )
         
     except Exception as e:
-        db.session.rollback()
+        session.rollback()
+        session.close()
         update_job_status(job_id, status='error', progress=100, message=f'Error: {str(e)[:400]}')
         raise
 
@@ -2628,7 +2668,7 @@ def reset_stock_cd():
     return redirect(url_for('dashboard'))
 
 def process_stock_cd_upload(job_id, payload):
-    """Background task to process Stock CD upload with bulk operations."""
+    """Background task to process Stock CD upload with bulk operations. Uses isolated session."""
     from datetime import date
     import os
     
@@ -2640,6 +2680,7 @@ def process_stock_cd_upload(job_id, payload):
     
     snapshot_date = date.fromisoformat(snapshot_date_str) if snapshot_date_str else date.today()
     
+    session = get_isolated_session()
     try:
         update_job_status(job_id, progress=10, message='Leyendo archivo...')
         
@@ -2665,19 +2706,22 @@ def process_stock_cd_upload(job_id, payload):
                 name_col = col
                 break
         
-        update_job_status(job_id, progress=30, message='Cargando productos existentes...')
+        update_job_status(job_id, progress=30, message='Verificando productos...')
         
-        existing_products = {p.sku: p for p in Product.query.all()}
+        unique_skus = list(df['sku'].unique())
+        sku_to_product_id = {}
+        
+        batch_size = 500
+        for i in range(0, len(unique_skus), batch_size):
+            sku_batch = unique_skus[i:i + batch_size]
+            for p in session.query(Product).filter(Product.sku.in_(sku_batch)).all():
+                sku_to_product_id[p.sku] = p.id
         
         update_job_status(job_id, progress=40, message='Procesando SKUs...')
         
         new_products = []
-        sku_to_product_id = {}
-        
-        for sku in df['sku'].unique():
-            if sku in existing_products:
-                sku_to_product_id[sku] = existing_products[sku].id
-            else:
+        for sku in unique_skus:
+            if sku not in sku_to_product_id:
                 pname = None
                 if name_col:
                     match = df[df['sku'] == sku]
@@ -2687,26 +2731,28 @@ def process_stock_cd_upload(job_id, payload):
         
         if new_products:
             update_job_status(job_id, progress=50, message=f'Creando {len(new_products)} productos nuevos...')
-            db.session.execute(Product.__table__.insert(), new_products)
-            db.session.commit()
-            for p in Product.query.filter(Product.sku.in_([np['sku'] for np in new_products])).all():
-                sku_to_product_id[p.sku] = p.id
+            session.execute(Product.__table__.insert(), new_products)
+            session.commit()
+            new_skus = [np['sku'] for np in new_products]
+            for i in range(0, len(new_skus), batch_size):
+                sku_batch = new_skus[i:i + batch_size]
+                for p in session.query(Product).filter(Product.sku.in_(sku_batch)).all():
+                    sku_to_product_id[p.sku] = p.id
         
         update_job_status(job_id, progress=60, message='Preparando stock...')
         
         if modo == 'replace':
-            StockCD.query.filter_by(as_of_date=snapshot_date).delete()
-            db.session.commit()
+            session.query(StockCD).filter_by(as_of_date=snapshot_date).delete()
+            session.commit()
         
         existing_stock = {}
         if modo == 'add':
-            for sc in StockCD.query.filter_by(as_of_date=snapshot_date).all():
+            for sc in session.query(StockCD).filter_by(as_of_date=snapshot_date).all():
                 existing_stock[sc.product_id] = sc
         
         update_job_status(job_id, progress=70, message='Insertando stock...')
         
         stock_inserts = []
-        stock_updates = []
         created = 0
         updated = 0
         
@@ -2720,13 +2766,6 @@ def process_stock_cd_upload(job_id, payload):
             if modo == 'add' and pid in existing_stock:
                 existing_stock[pid].quantity += qty
                 updated += 1
-            elif modo == 'replace':
-                stock_inserts.append({
-                    'as_of_date': snapshot_date,
-                    'product_id': pid,
-                    'quantity': qty
-                })
-                created += 1
             else:
                 stock_inserts.append({
                     'as_of_date': snapshot_date,
@@ -2736,14 +2775,14 @@ def process_stock_cd_upload(job_id, payload):
                 created += 1
         
         if stock_inserts:
-            batch_size = 1000
-            for i in range(0, len(stock_inserts), batch_size):
-                batch = stock_inserts[i:i + batch_size]
-                db.session.execute(StockCD.__table__.insert(), batch)
+            insert_batch = 1000
+            for i in range(0, len(stock_inserts), insert_batch):
+                batch = stock_inserts[i:i + insert_batch]
+                session.execute(StockCD.__table__.insert(), batch)
                 progress = 70 + int(20 * (i + len(batch)) / len(stock_inserts))
                 update_job_status(job_id, progress=progress, message=f'Insertando {i + len(batch)}/{len(stock_inserts)}...')
         
-        db.session.commit()
+        session.commit()
         
         update_job_status(job_id, progress=95, message='Finalizando...')
         
@@ -2761,9 +2800,11 @@ def process_stock_cd_upload(job_id, payload):
         )
         
     except Exception as e:
-        db.session.rollback()
+        session.rollback()
         update_job_status(job_id, status='error', progress=100, message=f'Error: {str(e)[:400]}')
         raise
+    finally:
+        session.close()
 
 
 @app.route('/stock_cd', methods=['GET', 'POST'])
