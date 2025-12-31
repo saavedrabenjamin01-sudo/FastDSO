@@ -2068,16 +2068,152 @@ def export_cd_remanente():
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
+def process_sales_upload(job_id, payload):
+    """Background task to process Sales upload with bulk operations and prediction generation."""
+    import os
+    from uuid import uuid4
+    
+    filepath = payload.get('filepath')
+    analysis_mode = payload.get('analysis_mode', 'sma3_min3')
+    meta = payload.get('meta', {})
+    user_id = payload.get('user_id')
+    original_filename = payload.get('original_filename', 'unknown')
+    
+    try:
+        update_job_status(job_id, progress=10, message='Leyendo archivo...')
+        
+        if filepath.endswith('.csv'):
+            df = pd.read_csv(filepath, dtype=str)
+        else:
+            df = pd.read_excel(filepath, dtype=str)
+        
+        total_rows = len(df)
+        update_job_status(job_id, progress=15, message=f'Procesando {total_rows} filas...')
+        
+        df.columns = [str(c).strip().lower() for c in df.columns]
+        needed = {'sku', 'product_name', 'store', 'quantity', 'date'}
+        if not needed.issubset(set(df.columns)):
+            update_job_status(job_id, status='error', progress=100, 
+                            message='Archivo debe tener columnas: sku, product_name, store, quantity, date')
+            return
+        
+        df['sku'] = df['sku'].astype(str).str.strip()
+        df['product_name'] = df['product_name'].astype(str).str.strip()
+        df['store'] = df['store'].astype(str).str.strip()
+        df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0).astype(int)
+        df['date'] = pd.to_datetime(df['date'], errors='coerce')
+        
+        sales_run_id = str(uuid4())
+        sales_run = Run(
+            run_id=sales_run_id,
+            run_type='sales_upload',
+            user_id=user_id,
+            folio=meta.get("folio"),
+            responsable=meta.get("responsable"),
+            categoria=meta.get("categoria"),
+            notes=meta.get("fecha_doc"),
+            status='completed',
+            rows_count=total_rows
+        )
+        db.session.add(sales_run)
+        db.session.commit()
+        
+        update_job_status(job_id, progress=25, message='Cargando productos y tiendas existentes...')
+        
+        existing_products = {p.sku: p.id for p in Product.query.all()}
+        existing_stores = {s.name: s.id for s in Store.query.all()}
+        
+        unique_skus = df[['sku', 'product_name']].drop_duplicates('sku')
+        new_products = []
+        for _, row in unique_skus.iterrows():
+            if row['sku'] not in existing_products:
+                new_products.append({'sku': row['sku'], 'name': row['product_name']})
+        
+        if new_products:
+            update_job_status(job_id, progress=30, message=f'Creando {len(new_products)} productos nuevos...')
+            db.session.execute(Product.__table__.insert(), new_products)
+            db.session.commit()
+            for p in Product.query.filter(Product.sku.in_([np['sku'] for np in new_products])).all():
+                existing_products[p.sku] = p.id
+        
+        unique_stores = df['store'].unique()
+        new_stores = [{'name': s} for s in unique_stores if s not in existing_stores]
+        
+        if new_stores:
+            update_job_status(job_id, progress=35, message=f'Creando {len(new_stores)} tiendas nuevas...')
+            db.session.execute(Store.__table__.insert(), new_stores)
+            db.session.commit()
+            for s in Store.query.filter(Store.name.in_([ns['name'] for ns in new_stores])).all():
+                existing_stores[s.name] = s.id
+        
+        update_job_status(job_id, progress=45, message='Preparando registros de ventas...')
+        
+        dist_records = []
+        for _, row in df.iterrows():
+            pid = existing_products.get(row['sku'])
+            sid = existing_stores.get(row['store'])
+            if pid and sid and pd.notna(row['date']):
+                dist_records.append({
+                    'product_id': pid,
+                    'store_id': sid,
+                    'quantity': int(row['quantity']),
+                    'event_date': row['date'].date(),
+                    'run_id': sales_run_id
+                })
+        
+        update_job_status(job_id, progress=55, message=f'Insertando {len(dist_records)} registros...')
+        
+        batch_size = 1000
+        for i in range(0, len(dist_records), batch_size):
+            batch = dist_records[i:i + batch_size]
+            db.session.execute(DistributionRecord.__table__.insert(), batch)
+            progress = 55 + int(20 * (i + len(batch)) / len(dist_records))
+            update_job_status(job_id, progress=progress, message=f'Insertando {i + len(batch)}/{len(dist_records)}...')
+        
+        db.session.commit()
+        
+        update_job_status(job_id, progress=80, message='Generando predicciones...')
+        
+        run_id, n_preds = generate_predictions(mode=analysis_mode, meta=meta, df=df, sales_run_id=sales_run_id)
+        
+        update_job_status(job_id, progress=95, message='Finalizando...')
+        
+        try:
+            os.remove(filepath)
+        except:
+            pass
+        
+        msg = f'Ventas cargadas: {len(dist_records)} registros. Predicciones: {n_preds}'
+        update_job_status(
+            job_id,
+            status='done',
+            progress=100,
+            message=msg,
+            result={
+                'records_created': len(dist_records),
+                'predictions': n_preds,
+                'total_rows': total_rows,
+                'sales_run_id': sales_run_id,
+                'prediction_run_id': run_id
+            }
+        )
+        
+    except Exception as e:
+        db.session.rollback()
+        update_job_status(job_id, status='error', progress=100, message=f'Error: {str(e)[:400]}')
+        raise
+
+
 @app.route('/upload', methods=['GET', 'POST'])
 @login_required
 @require_permission('sales:upload')
 def upload():
-    # ¿hay stock de tienda cargado?
+    import os
+    
     has_stock = db.session.query(StockSnapshot.id).first() is not None
-    require_stock_confirm = not has_stock  # si NO hay stock, pedimos confirmación
+    require_stock_confirm = not has_stock
 
     if request.method == 'POST':
-        # si no hay stock previo, exigir el checkbox
         if require_stock_confirm and not request.form.get('confirm_no_stock'):
             flash('No hay stock de tienda cargado. Confirma que quieres continuar.', 'warning')
             return redirect(url_for('upload'))
@@ -2088,26 +2224,17 @@ def upload():
             return redirect(url_for('upload'))
 
         filename = file.filename.lower()
-        try:
-            if filename.endswith('.csv'):
-                df = pd.read_csv(file, dtype=str)
-            elif filename.endswith('.xlsx') or filename.endswith('.xls'):
-                df = pd.read_excel(file, dtype=str)
-            else:
-                flash('Formato no soportado. Usa .csv o .xlsx', 'danger')
-                return redirect(url_for('upload'))
-        except Exception as e:
-            flash(f'Error leyendo archivo: {e}', 'danger')
+        if not (filename.endswith('.csv') or filename.endswith('.xlsx') or filename.endswith('.xls')):
+            flash('Formato no soportado. Usa .csv o .xlsx', 'danger')
             return redirect(url_for('upload'))
-
-        # normalizar columnas
-        df.columns = [str(c).strip().lower() for c in df.columns]
-        needed = {'sku', 'product_name', 'store', 'quantity', 'date'}
-        if not needed.issubset(set(df.columns)):
-            flash('El archivo debe tener las columnas: sku, product_name, store, quantity, date', 'danger')
-            return redirect(url_for('upload'))
-
-        # leer parámetros del formulario primero
+        
+        upload_dir = os.path.join(BASE_DIR, 'instance', 'uploads')
+        os.makedirs(upload_dir, exist_ok=True)
+        
+        saved_filename = f"sales_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
+        filepath = os.path.join(upload_dir, saved_filename)
+        file.save(filepath)
+        
         analysis_mode = request.form.get('analysis_mode', 'sma3_min3')
         meta = {
             "folio": request.form.get('folio', '').strip() or None,
@@ -2115,98 +2242,25 @@ def upload():
             "categoria": request.form.get('categoria', '').strip() or None,
             "fecha_doc": request.form.get('fecha_doc', '').strip() or None,
         }
-
-        # Create sales_upload run
-        from uuid import uuid4
-        sales_run_id = str(uuid4())
         user_id = current_user.id if current_user.is_authenticated else None
-        sales_run = Run(
-            run_id=sales_run_id,
-            run_type='sales_upload',
-            user_id=user_id,
-            folio=meta.get("folio"),
-            responsable=meta.get("responsable"),
-            categoria=meta.get("categoria"),
-            notes=meta.get("fecha_doc"),
-            status='completed',
-            rows_count=len(df)
-        )
-        db.session.add(sales_run)
-        db.session.flush()
-
-        created = 0
-        for _, row in df.iterrows():
-            sku = str(row['sku']).strip()
-            pname = str(row['product_name']).strip()
-            store_name = str(row['store']).strip()
-            qty = int(row['quantity'])
-            event_date = pd.to_datetime(row['date']).date()
-
-            # upsert product
-            product = Product.query.filter_by(sku=sku).first()
-            if not product:
-                product = Product(sku=sku, name=pname)
-                db.session.add(product)
-                db.session.flush()
-
-            # upsert store
-            store = Store.query.filter_by(name=store_name).first()
-            if not store:
-                store = Store(name=store_name)
-                db.session.add(store)
-                db.session.flush()
-
-            # guardar distribución histórica con run_id
-            dist = DistributionRecord(
-                product_id=product.id,
-                store_id=store.id,
-                quantity=qty,
-                event_date=event_date,
-                run_id=sales_run_id
-            )
-            db.session.add(dist)
-            created += 1
-
-        db.session.commit()
         
-        distinct_skus = df['sku'].nunique() if 'sku' in df.columns else 0
-        distinct_stores = df['store'].nunique() if 'store' in df.columns else 0
-        log_audit(
-            action="sales.upload",
-            message=f"Cargados {created} registros de ventas",
-            entity_type="DistributionRecord",
-            run_id=sales_run_id,
-            metadata={
-                "filename": filename,
-                "rows_count": created,
-                "distinct_skus": distinct_skus,
-                "distinct_stores": distinct_stores,
-                "mode": analysis_mode,
-                "folio": meta.get("folio"),
-                "responsable": meta.get("responsable"),
-                "categoria": meta.get("categoria")
-            }
+        payload = {
+            'filepath': filepath,
+            'analysis_mode': analysis_mode,
+            'meta': meta,
+            'user_id': user_id,
+            'original_filename': file.filename
+        }
+        
+        job_id = create_and_run_job(
+            job_type='upload_sales',
+            task_func=process_sales_upload,
+            payload=payload,
+            user_id=user_id
         )
+        
+        return redirect(url_for('job_status_view', job_id=job_id))
 
-        run_id, n_preds = generate_predictions(mode=analysis_mode, meta=meta, df=df, sales_run_id=sales_run_id)
-
-        if n_preds == 0:
-            flash(
-                'Carga exitosa de ventas, pero no se generaron predicciones. '
-                'Revisa que cada SKU/Tienda tenga al menos el número mínimo de semanas '
-                'de venta requerido por el método seleccionado.',
-                'warning'
-            )
-        else:
-            flash(
-                f'Carga exitosa: {created} registros. '
-                f'Predicciones generadas / actualizadas: {n_preds}',
-                'success'
-            )
-
-        return redirect(url_for('dashboard'))
-
-    # GET
     return render_template('upload.html', require_stock_confirm=require_stock_confirm)
 
 @app.route('/stock', methods=['GET', 'POST'])
@@ -2573,11 +2627,151 @@ def reset_stock_cd():
     flash('Stock CD completamente reiniciado.', 'success')
     return redirect(url_for('dashboard'))
 
+def process_stock_cd_upload(job_id, payload):
+    """Background task to process Stock CD upload with bulk operations."""
+    from datetime import date
+    import os
+    
+    filepath = payload.get('filepath')
+    modo = payload.get('modo', 'replace')
+    snapshot_date_str = payload.get('snapshot_date')
+    user_id = payload.get('user_id')
+    original_filename = payload.get('original_filename', 'unknown')
+    
+    snapshot_date = date.fromisoformat(snapshot_date_str) if snapshot_date_str else date.today()
+    
+    try:
+        update_job_status(job_id, progress=10, message='Leyendo archivo...')
+        
+        if filepath.endswith('.csv'):
+            df = pd.read_csv(filepath, dtype=str)
+        else:
+            df = pd.read_excel(filepath, dtype=str)
+        
+        total_rows = len(df)
+        update_job_status(job_id, progress=20, message=f'Procesando {total_rows} filas...')
+        
+        df.columns = [str(c).strip().lower() for c in df.columns]
+        if 'sku' not in df.columns or 'quantity' not in df.columns:
+            update_job_status(job_id, status='error', progress=100, message='Archivo debe tener columnas sku y quantity')
+            return
+        
+        df['sku'] = df['sku'].astype(str).str.strip()
+        df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0).astype(int)
+        
+        name_col = None
+        for col in ['product_name', 'producto', 'name', 'nombre']:
+            if col in df.columns:
+                name_col = col
+                break
+        
+        update_job_status(job_id, progress=30, message='Cargando productos existentes...')
+        
+        existing_products = {p.sku: p for p in Product.query.all()}
+        
+        update_job_status(job_id, progress=40, message='Procesando SKUs...')
+        
+        new_products = []
+        sku_to_product_id = {}
+        
+        for sku in df['sku'].unique():
+            if sku in existing_products:
+                sku_to_product_id[sku] = existing_products[sku].id
+            else:
+                pname = None
+                if name_col:
+                    match = df[df['sku'] == sku]
+                    if not match.empty and pd.notna(match.iloc[0].get(name_col)):
+                        pname = str(match.iloc[0][name_col]).strip()
+                new_products.append({'sku': sku, 'name': pname if pname else f"SKU {sku}"})
+        
+        if new_products:
+            update_job_status(job_id, progress=50, message=f'Creando {len(new_products)} productos nuevos...')
+            db.session.execute(Product.__table__.insert(), new_products)
+            db.session.commit()
+            for p in Product.query.filter(Product.sku.in_([np['sku'] for np in new_products])).all():
+                sku_to_product_id[p.sku] = p.id
+        
+        update_job_status(job_id, progress=60, message='Preparando stock...')
+        
+        if modo == 'replace':
+            StockCD.query.filter_by(as_of_date=snapshot_date).delete()
+            db.session.commit()
+        
+        existing_stock = {}
+        if modo == 'add':
+            for sc in StockCD.query.filter_by(as_of_date=snapshot_date).all():
+                existing_stock[sc.product_id] = sc
+        
+        update_job_status(job_id, progress=70, message='Insertando stock...')
+        
+        stock_inserts = []
+        stock_updates = []
+        created = 0
+        updated = 0
+        
+        for _, row in df.iterrows():
+            sku = row['sku']
+            qty = int(row['quantity'])
+            pid = sku_to_product_id.get(sku)
+            if not pid:
+                continue
+            
+            if modo == 'add' and pid in existing_stock:
+                existing_stock[pid].quantity += qty
+                updated += 1
+            elif modo == 'replace':
+                stock_inserts.append({
+                    'as_of_date': snapshot_date,
+                    'product_id': pid,
+                    'quantity': qty
+                })
+                created += 1
+            else:
+                stock_inserts.append({
+                    'as_of_date': snapshot_date,
+                    'product_id': pid,
+                    'quantity': qty
+                })
+                created += 1
+        
+        if stock_inserts:
+            batch_size = 1000
+            for i in range(0, len(stock_inserts), batch_size):
+                batch = stock_inserts[i:i + batch_size]
+                db.session.execute(StockCD.__table__.insert(), batch)
+                progress = 70 + int(20 * (i + len(batch)) / len(stock_inserts))
+                update_job_status(job_id, progress=progress, message=f'Insertando {i + len(batch)}/{len(stock_inserts)}...')
+        
+        db.session.commit()
+        
+        update_job_status(job_id, progress=95, message='Finalizando...')
+        
+        try:
+            os.remove(filepath)
+        except:
+            pass
+        
+        update_job_status(
+            job_id,
+            status='done',
+            progress=100,
+            message=f'Stock CD cargado. Nuevos: {created}, Actualizados: {updated}',
+            result={'created': created, 'updated': updated, 'total_rows': total_rows}
+        )
+        
+    except Exception as e:
+        db.session.rollback()
+        update_job_status(job_id, status='error', progress=100, message=f'Error: {str(e)[:400]}')
+        raise
+
+
 @app.route('/stock_cd', methods=['GET', 'POST'])
 @login_required
 @require_permission('stock_cd:upload')
 def upload_stock_cd():
     from datetime import date
+    import os
 
     if request.method == 'POST':
         file = request.files.get('file')
@@ -2585,98 +2779,38 @@ def upload_stock_cd():
             flash('Sube un archivo CSV o Excel.', 'warning')
             return redirect(url_for('upload_stock_cd'))
 
-        modo = request.form.get('modo', 'replace')  # 'replace' o 'add'
-        snapshot_date = date.today()
-
         filename = file.filename.lower()
-        try:
-            if filename.endswith('.csv'):
-                df = pd.read_csv(file, dtype=str)
-            elif filename.endswith('.xlsx') or filename.endswith('.xls'):
-                df = pd.read_excel(file, dtype=str)
-            else:
-                flash('Formato no soportado. Usa .csv o .xlsx', 'danger')
-                return redirect(url_for('upload_stock_cd'))
-        except Exception as e:
-            flash(f'Error leyendo archivo: {e}', 'danger')
+        if not (filename.endswith('.csv') or filename.endswith('.xlsx') or filename.endswith('.xls')):
+            flash('Formato no soportado. Usa .csv o .xlsx', 'danger')
             return redirect(url_for('upload_stock_cd'))
-
-        df.columns = [str(c).strip().lower() for c in df.columns]
-        if 'sku' not in df.columns or 'quantity' not in df.columns:
-            flash('El archivo debe tener columnas sku y quantity.', 'danger')
-            return redirect(url_for('upload_stock_cd'))
-
-        df['sku'] = df['sku'].astype(str).str.strip()
-        df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0).astype(int)
-
-        # Detectar columna de nombre del producto si existe
-        name_col = None
-        for col in ['product_name', 'producto', 'name', 'nombre']:
-            if col in df.columns:
-                name_col = col
-                break
-
-        # modo replace → borrar snapshot de ESA fecha antes de cargar
-        if modo == 'replace':
-            StockCD.query.filter_by(as_of_date=snapshot_date).delete()
-
-        created = 0
-        updated = 0
-
-        for _, row in df.iterrows():
-            sku = row['sku']
-            qty = int(row['quantity'])
-
-            # Obtener nombre del producto si está disponible
-            pname = None
-            if name_col and pd.notna(row.get(name_col)):
-                pname = str(row[name_col]).strip()
-
-            product = Product.query.filter_by(sku=sku).first()
-            if not product:
-                # Crear producto con nombre real si está disponible
-                product = Product(sku=sku, name=pname if pname else f"SKU {sku}")
-                db.session.add(product)
-                db.session.flush()
-            elif pname and product.name.startswith("SKU "):
-                # Actualizar nombre si teníamos un placeholder
-                product.name = pname
-
-            stock_row = StockCD.query.filter_by(
-                as_of_date=snapshot_date,
-                product_id=product.id
-            ).first()
-
-            if stock_row:
-                if modo == 'add':
-                    stock_row.quantity += qty
-                else:  # replace
-                    stock_row.quantity = qty
-                updated += 1
-            else:
-                db.session.add(StockCD(
-                    as_of_date=snapshot_date,
-                    product_id=product.id,
-                    quantity=qty
-                ))
-                created += 1
-
-        db.session.commit()
-        log_audit(
-            action="stock_cd.upload",
-            message=f"Stock CD cargado: {created} nuevos, {updated} actualizados",
-            entity_type="StockCD",
-            metadata={
-                "filename": filename,
-                "created": created,
-                "updated": updated,
-                "distinct_skus": len(df),
-                "mode": modo,
-                "snapshot_date": str(snapshot_date)
-            }
+        
+        upload_dir = os.path.join(BASE_DIR, 'instance', 'uploads')
+        os.makedirs(upload_dir, exist_ok=True)
+        
+        saved_filename = f"stockcd_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
+        filepath = os.path.join(upload_dir, saved_filename)
+        file.save(filepath)
+        
+        modo = request.form.get('modo', 'replace')
+        snapshot_date = date.today()
+        user_id = current_user.id if current_user.is_authenticated else None
+        
+        payload = {
+            'filepath': filepath,
+            'modo': modo,
+            'snapshot_date': str(snapshot_date),
+            'user_id': user_id,
+            'original_filename': file.filename
+        }
+        
+        job_id = create_and_run_job(
+            job_type='upload_stock_cd',
+            task_func=process_stock_cd_upload,
+            payload=payload,
+            user_id=user_id
         )
-        flash(f'Stock CD cargado. Nuevos: {created}, Actualizados: {updated}', 'success')
-        return redirect(url_for('dashboard'))
+        
+        return redirect(url_for('job_status_view', job_id=job_id))
 
     return render_template('upload_stock_cd.html')
 
