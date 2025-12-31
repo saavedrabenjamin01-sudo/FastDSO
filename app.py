@@ -2213,7 +2213,7 @@ def process_sales_upload(job_id, payload):
         
         update_job_status(job_id, progress=80, message='Generando predicciones...')
         
-        run_id, n_preds = generate_predictions(mode=analysis_mode, meta=meta, df=df, sales_run_id=sales_run_id)
+        run_id, n_preds, _, _, _ = generate_predictions(mode=analysis_mode, meta=meta, df=df, sales_run_id=sales_run_id)
         
         update_job_status(job_id, progress=95, message='Finalizando...')
         
