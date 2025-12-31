@@ -299,6 +299,105 @@ class RebalanceSuggestion(db.Model):
     run = db.relationship('RebalanceRun', backref='suggestions')
 
 
+class Job(db.Model):
+    """Background job tracking for long-running operations."""
+    __tablename__ = 'job'
+    id = db.Column(db.String(36), primary_key=True)
+    job_type = db.Column(db.String(50), nullable=False, index=True)
+    status = db.Column(db.String(20), nullable=False, default='queued', index=True)
+    progress = db.Column(db.Integer, nullable=False, default=0)
+    message = db.Column(db.String(500), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    payload_json = db.Column(db.Text, nullable=True)
+    result_json = db.Column(db.Text, nullable=True)
+
+    user = db.relationship('User', backref='jobs')
+
+    def set_payload(self, data):
+        import json
+        self.payload_json = json.dumps(data)
+
+    def get_payload(self):
+        import json
+        if self.payload_json:
+            try:
+                return json.loads(self.payload_json)
+            except:
+                return {}
+        return {}
+
+    def set_result(self, data):
+        import json
+        self.result_json = json.dumps(data)
+
+    def get_result(self):
+        import json
+        if self.result_json:
+            try:
+                return json.loads(self.result_json)
+            except:
+                return {}
+        return {}
+
+
+# ------------------ Background Job Infrastructure ------------------
+from concurrent.futures import ThreadPoolExecutor
+from uuid import uuid4 as uuid4_gen
+
+job_executor = ThreadPoolExecutor(max_workers=4)
+
+def update_job_status(job_id, status=None, progress=None, message=None, result=None):
+    """Update job status from within a background thread. Uses its own session."""
+    with app.app_context():
+        job = db.session.get(Job, job_id)
+        if job:
+            if status is not None:
+                job.status = status
+            if progress is not None:
+                job.progress = progress
+            if message is not None:
+                job.message = message
+            if result is not None:
+                job.set_result(result)
+            job.updated_at = datetime.utcnow()
+            db.session.commit()
+
+
+def create_and_run_job(job_type, task_func, payload=None, user_id=None):
+    """Create a job record and run task_func in background thread.
+    Returns job_id immediately so caller can redirect to status page.
+    """
+    job_id = str(uuid4_gen())
+    job = Job(
+        id=job_id,
+        job_type=job_type,
+        status='queued',
+        progress=0,
+        user_id=user_id,
+        message='En cola...'
+    )
+    if payload:
+        job.set_payload(payload)
+    db.session.add(job)
+    db.session.commit()
+
+    def wrapped_task():
+        with app.app_context():
+            try:
+                update_job_status(job_id, status='running', progress=5, message='Iniciando...')
+                task_func(job_id, payload or {})
+            except Exception as e:
+                import traceback
+                tb = traceback.format_exc()
+                update_job_status(job_id, status='error', progress=100, message=f'Error: {str(e)[:400]}')
+                app.logger.error(f"Job {job_id} failed: {e}\n{tb}")
+
+    job_executor.submit(wrapped_task)
+    return job_id
+
+
 # ------------------ Login loader ------------------
 
 
@@ -393,6 +492,55 @@ def log_audit(action, status="success", message="", entity_type=None, entity_id=
     except Exception as e:
         db.session.rollback()
         app.logger.error(f"Failed to write audit log: {e}")
+
+
+# ------------------ Job Status Routes ------------------
+
+@app.route('/jobs/<job_id>')
+@login_required
+def job_status_json(job_id):
+    """Return job status as JSON for polling."""
+    from flask import jsonify
+    job = db.session.get(Job, job_id)
+    if not job:
+        return jsonify({'error': 'Job not found'}), 404
+    return jsonify({
+        'id': job.id,
+        'job_type': job.job_type,
+        'status': job.status,
+        'progress': job.progress,
+        'message': job.message,
+        'created_at': job.created_at.isoformat() if job.created_at else None,
+        'updated_at': job.updated_at.isoformat() if job.updated_at else None,
+        'result': job.get_result() if job.status == 'done' else None
+    })
+
+
+@app.route('/jobs/<job_id>/view')
+@login_required
+def job_status_view(job_id):
+    """Render job status page with auto-polling."""
+    job = db.session.get(Job, job_id)
+    if not job:
+        flash('Trabajo no encontrado.', 'warning')
+        return redirect(url_for('dashboard'))
+    
+    job_type_labels = {
+        'upload_stock_cd': 'Carga de Stock CD',
+        'upload_sales': 'Carga de Ventas',
+        'redistribution': 'Redistribución entre Tiendas'
+    }
+    
+    redirect_urls = {
+        'upload_stock_cd': url_for('upload_stock_cd'),
+        'upload_sales': url_for('dashboard'),
+        'redistribution': url_for('rebalancing')
+    }
+    
+    return render_template('job_status.html',
+                           job=job,
+                           job_label=job_type_labels.get(job.job_type, job.job_type),
+                           redirect_url=redirect_urls.get(job.job_type, url_for('dashboard')))
 
 
 # ------------------ Utilidades ------------------

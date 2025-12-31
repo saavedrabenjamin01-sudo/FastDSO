@@ -1,0 +1,57 @@
+We are getting Cloudflare Tunnel 524 timeouts when uploading large files (Stock CD ~35k rows), running Sales upload + prediction generation, and the Store-to-Store redistribution module. Fix it WITHOUT breaking existing functionality.
+
+Goal: Any HTTP request must return quickly (<10s). Heavy processing must run in the background with progress/status.
+
+Implement the following:
+
+1) Create a small background job system (no external paid services).
+   - Add a SQLAlchemy model Job with fields:
+     id (uuid string), job_type (string), status (queued/running/done/error),
+     progress (int 0-100), message (string nullable),
+     created_at, updated_at,
+     user_id (optional FK to User if available),
+     payload_json (optional text/json), result_json (optional text/json).
+   - Add helper to create a job and run it in a background thread using ThreadPoolExecutor.
+   - Ensure background functions run inside app.app_context() and use their own db.session lifecycle.
+   - Provide routes:
+     GET /jobs/<job_id> -> returns JSON {status, progress, message}
+     GET /jobs/<job_id>/view -> renders a simple status page with auto-refresh/polling.
+
+2) Stock CD upload route:
+   - On POST: save uploaded file to a temp folder (e.g., instance/uploads/), create Job("upload_stock_cd"), return redirect to /jobs/<id>/view.
+   - In the background task:
+     * read file with pandas efficiently (dtype for sku as string),
+     * normalize sku preserving leading zeros (string),
+     * validate quantity numeric,
+     * set as_of_date = date.today() (or the form date if used).
+     * If 'replace stock of the day' is enabled: delete existing StockCD rows for that as_of_date BEFORE inserting new.
+     * Insert using bulk operations (bulk_insert_mappings or session.execute with executemany), commit in batches if needed.
+     * Update job.progress in steps (10/30/60/90/100) and final message.
+
+3) Sales upload route:
+   - Same pattern: save file quickly, create Job("upload_sales_and_predict"), redirect to job status.
+   - Background:
+     * bulk insert DistributionRecord rows (and upsert Product/Store efficiently; avoid per-row queries; prefetch existing skus/stores into dicts).
+     * after sales insert, call generate_predictions(mode, meta, df=loaded_df) inside background.
+     * Ensure generate_predictions assigns a unique run_id for this run and uses it when saving predictions.
+
+4) Store-to-Store redistribution module:
+   - Convert to background job too:
+     POST creates Job("redistribution"), background calculates transfers and writes results, then user can view results page.
+   - Provide a “Processing…” modal/spinner on submit and then redirect to results.
+
+5) UI improvements:
+   - Add a reusable processing modal / overlay (Bootstrap) for any form that triggers heavy processing.
+   - Use polling to update status until done; then redirect to the appropriate page (dashboard or module page).
+
+6) Performance requirements:
+   - Remove row-by-row db commits. Use bulk operations.
+   - Preserve SKU leading zeros everywhere (store as string and never cast to int).
+   - Always assign as_of_date for StockCD snapshots (no null dates).
+   - Keep all existing routes and templates working; only refactor the heavy ones to job-based.
+
+Deliver:
+- Updated models (Job + any needed columns/indexes).
+- Updated routes for Stock CD, Sales upload, Redistribution to use jobs.
+- Minimal templates for job status view + overlay.
+- Any necessary migrations strategy (we are OK recreating sqlite db for tests).
