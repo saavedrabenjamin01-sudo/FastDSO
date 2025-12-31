@@ -3284,6 +3284,7 @@ def compute_rebalancing_suggestions(
     """
     Compute store-to-store rebalancing suggestions.
     Returns list of dicts: {product_id, sku, name, from_store_id, from_store, to_store_id, to_store, qty, sales_rate_to, woc_from, woc_to, score, reason}
+    Optimized: Uses indexed lookups instead of O(n*m) scans.
     """
     today = date.today()
     cutoff = today - timedelta(days=weeks_window * 7)
@@ -3293,6 +3294,7 @@ def compute_rebalancing_suggestions(
         return []
     
     stock_map = {}
+    stores_per_product_stock = defaultdict(set)
     stock_q = (
         db.session.query(
             StockSnapshot.product_id,
@@ -3304,6 +3306,7 @@ def compute_rebalancing_suggestions(
     )
     for pid, sid, qty in stock_q:
         stock_map[(pid, sid)] = qty
+        stores_per_product_stock[pid].add(sid)
     
     week_expr = db.func.strftime('%Y-%W', DistributionRecord.event_date)
     sales_q = (
@@ -3319,8 +3322,10 @@ def compute_rebalancing_suggestions(
     )
     
     weekly_sales = defaultdict(lambda: defaultdict(list))
+    stores_per_product_sales = defaultdict(set)
     for pid, sid, week, qty in sales_q:
         weekly_sales[pid][(pid, sid)].append(qty)
+        stores_per_product_sales[pid].add(sid)
     
     sales_rate_map = {}
     for pid in weekly_sales:
@@ -3331,18 +3336,12 @@ def compute_rebalancing_suggestions(
     product_info = {p.id: (p.sku, p.name) for p in Product.query.all()}
     store_info = {s.id: s.name for s in Store.query.all()}
     
-    all_products = set(pid for (pid, sid) in stock_map.keys()) | set(pid for (pid, sid) in sales_rate_map.keys())
+    all_products = set(stores_per_product_stock.keys()) | set(stores_per_product_sales.keys())
     
     suggestions = []
     
     for pid in all_products:
-        stores_for_pid = set()
-        for (p, s) in stock_map.keys():
-            if p == pid:
-                stores_for_pid.add(s)
-        for (p, s) in sales_rate_map.keys():
-            if p == pid:
-                stores_for_pid.add(s)
+        stores_for_pid = stores_per_product_stock.get(pid, set()) | stores_per_product_sales.get(pid, set())
         
         store_data = []
         for sid in stores_for_pid:
@@ -3527,21 +3526,28 @@ def rebalancing():
                 params_json=json.dumps(params)
             )
             db.session.add(rebalance_run)
+            db.session.flush()
             
-            for s in suggestions:
-                sugg = RebalanceSuggestion(
-                    run_id=run_id,
-                    product_id=s['product_id'],
-                    from_store_id=s['from_store_id'],
-                    to_store_id=s['to_store_id'],
-                    qty=s['qty'],
-                    sales_rate_to=s['sales_rate_to'],
-                    woc_from=s['woc_from'],
-                    woc_to=s['woc_to'],
-                    score=s['score'],
-                    reason=s['reason']
-                )
-                db.session.add(sugg)
+            if suggestions:
+                suggestion_records = [
+                    {
+                        'run_id': run_id,
+                        'product_id': s['product_id'],
+                        'from_store_id': s['from_store_id'],
+                        'to_store_id': s['to_store_id'],
+                        'qty': s['qty'],
+                        'sales_rate_to': s['sales_rate_to'],
+                        'woc_from': s['woc_from'],
+                        'woc_to': s['woc_to'],
+                        'score': s['score'],
+                        'reason': s['reason']
+                    }
+                    for s in suggestions
+                ]
+                batch_size = 1000
+                for i in range(0, len(suggestion_records), batch_size):
+                    batch = suggestion_records[i:i + batch_size]
+                    db.session.execute(RebalanceSuggestion.__table__.insert(), batch)
             
             db.session.commit()
             
