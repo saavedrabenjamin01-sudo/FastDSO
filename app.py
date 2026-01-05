@@ -1226,11 +1226,12 @@ def dashboard():
     # --- Fechas / helpers ---
     today = date.today()
 
-    # --- Load available runs (limit 50, newest first, all run types) ---
+    # --- Load available distribution runs (limit 50, newest first) ---
     runs = (
         PredictionRun.query
         .filter(PredictionRun.run_id.isnot(None))
         .filter(PredictionRun.run_id != "")
+        .filter(PredictionRun.run_type == 'distribution')
         .order_by(PredictionRun.created_at.desc())
         .limit(50)
         .all()
@@ -2165,6 +2166,7 @@ def export_cd_remanente():
             PredictionRun.query
             .filter(PredictionRun.run_id.isnot(None))
             .filter(PredictionRun.run_id != "")
+            .filter(PredictionRun.run_type == 'distribution')
             .order_by(PredictionRun.created_at.desc())
             .first()
         )
@@ -3092,6 +3094,7 @@ def export_predictions():
             PredictionRun.query
             .filter(PredictionRun.run_id.isnot(None))
             .filter(PredictionRun.run_id != "")
+            .filter(PredictionRun.run_type == 'distribution')
             .order_by(PredictionRun.created_at.desc())
             .first()
         )

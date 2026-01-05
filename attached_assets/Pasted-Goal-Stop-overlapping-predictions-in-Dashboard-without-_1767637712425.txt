@@ -1,0 +1,29 @@
+Goal: Stop overlapping predictions in Dashboard without deleting sales history (needed for purchase forecast). Show only the latest prediction “run” by default, while keeping older runs accessible via filters.
+
+Instructions (must-do):
+	1.	Search the codebase for all places where dashboard/export/remanent queries Predictions. Identify how “latest predictions” are selected (usually max(target_period_start)).
+	2.	Implement run-based versioning using Prediction.run_id:
+	•	Ensure every call to generate_predictions() creates a NEW run_id (UUID4) per generation.
+	•	Assign that run_id to all predictions produced in that run, both:
+	•	newly inserted Predictions
+	•	and existing Predictions that get updated (IMPORTANT: update must also overwrite run_id and created_at/updated_at so they belong to the current run).
+	3.	Change Dashboard default behavior:
+	•	Instead of using latest_week, compute latest_run_id from Predictions, e.g. the run_id of the most recent Predictions by created_at (or by max(id) if you prefer).
+	•	Filter dashboard predictions by Prediction.run_id == latest_run_id by default.
+	•	Keep existing filters (store/folio/responsable) working, but they should filter within the selected run by default.
+	•	Add an optional query param run_id to allow viewing older runs when needed (no fancy UI required yet; just support it).
+	4.	Update related features so they match the dashboard run:
+	•	Export predictions route must export the same run shown (use latest_run_id or requested run_id).
+	•	“CD remanent” table must compute product_ids from that run only.
+	•	KPI cards and top tables that are prediction-based must use that run only.
+	5.	Do NOT delete or truncate DistributionRecord sales history. Forecast must remain accurate.
+	6.	Add safety:
+	•	If there are no Predictions yet, dashboard should not crash; show empty state.
+	7.	If the DB schema already existed before run_id, implement a safe approach for SQLite:
+	•	If migrations are not used, provide a one-time utility command or script to recreate DB (dev only), OR add a lightweight migration step.
+	•	Since this is a test environment, it’s acceptable to drop/recreate Predictions table if needed, but do not wipe sales tables unless explicitly asked.
+
+Deliverables:
+	•	Patch the code with minimal changes outside this scope.
+	•	Show me exactly which files were changed and what was changed (diff summary).
+	•	Confirm: After two separate uploads/generations on the same week, Dashboard shows only the latest distribution by default, and older runs can be viewed using ?run_id=....
