@@ -848,6 +848,16 @@ def generate_predictions(
         if it["suggested"] > 0
     }
     
+    base_assigned_by_product = defaultdict(int)
+    for it in final_preds:
+        base_assigned_by_product[it["product_id"]] += int(it["suggested"])
+    
+    cd_remaining_after_base = {}
+    for product_id in cd_stock:
+        original = cd_stock[product_id]
+        assigned = base_assigned_by_product.get(product_id, 0)
+        cd_remaining_after_base[product_id] = max(original - assigned, 0)
+    
     today = date.today()
     recent_cutoff = today - timedelta(days=STOCKOUT_RECENT_WEEKS * 7)
     hist_cutoff = today - timedelta(days=STOCKOUT_HIST_WEEKS * 7)
@@ -920,8 +930,8 @@ def generate_predictions(
             if hist_total <= 0:
                 continue
             
-            cd_available = cd_stock.get(pid, 0)
-            if cd_available <= 0:
+            cd_avail_for_replen = cd_remaining_after_base.get(pid, 0)
+            if cd_avail_for_replen <= 0:
                 continue
             
             hist_avg = hist_total / max(len(hist_weeks_list), 1)
@@ -950,9 +960,7 @@ def generate_predictions(
         cd_constrained = 0
         
         for product_id, cands in replenish_per_product.items():
-            base_assigned = sum(it["suggested"] for it in final_preds if it["product_id"] == product_id)
-            original_cd = cd_stock.get(product_id, 0)
-            remaining_cd = original_cd - base_assigned
+            remaining_cd = cd_remaining_after_base.get(product_id, 0)
             
             if remaining_cd <= 0:
                 for c in cands:
@@ -972,6 +980,8 @@ def generate_predictions(
                     replenish_added += 1
                 if give < want:
                     cd_constrained += 1
+            
+            cd_remaining_after_base[product_id] = remaining_cd
         
         if STOCKOUT_DEBUG:
             print(f"[STOCKOUT] Candidates found: {len(stockout_candidates)}")

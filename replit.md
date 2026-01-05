@@ -66,6 +66,7 @@ PredDist is a Flask-based web application for managing product distribution pred
 9. **Store-to-Store Rebalancing**: Transfer stock between stores based on WOC (weeks of cover) and sales velocity
 10. **Simulation Mode**: Run calculations without saving to database for what-if analysis
 11. **Background Job Processing**: Large file uploads processed asynchronously with progress tracking
+12. **Stock-out Replenishment (BREAK_REPLENISH)**: Automatic suggestions for out-of-stock SKU-Store pairs with historical demand
 
 ## Simulation Mode
 
@@ -150,7 +151,38 @@ The application uses a background job system (ThreadPoolExecutor) to process lar
 - `/jobs/<id>`: JSON API for polling job status
 - `/jobs/<id>/view`: HTML page with auto-polling progress bar
 
+## Stock-out Replenishment (BREAK_REPLENISH)
+
+The stock-out replenishment layer is a post-processing step that automatically identifies SKU-Store pairs that are out of stock but have historical demand, and suggests replenishment quantities.
+
+### Qualification Criteria
+A SKU-Store pair qualifies for BREAK_REPLENISH if ALL of these are true:
+- Store stock snapshot <= 0 (out of stock)
+- Recent sales (last 1 week) = 0 (confirms stock-out)
+- Historical sales (last 8 weeks) > 0 (proves there was demand)
+- CD stock exists for that SKU
+- The pair did NOT already receive a base forecast suggestion
+
+### Configuration Constants
+```python
+STOCKOUT_RECENT_WEEKS = 1      # Weeks to check for "no recent sales"
+STOCKOUT_HIST_WEEKS = 8        # Weeks of historical data to compute average
+STOCKOUT_TARGET_WOC = 1.0      # Target weeks of cover for replenishment
+STOCKOUT_MAX_QTY = 3           # Maximum qty per store for stock-out replenishment
+STOCKOUT_DEBUG = False         # Enable debug logging
+```
+
+### How It Works
+1. Runs as post-processing after base distribution predictions
+2. Identifies stock-out candidates using store stock and sales history
+3. Computes replenishment qty: `min(round(hist_avg * target_woc), max_qty)`
+4. Prioritizes stores with higher historical demand
+5. Applies CD stock limiting (base forecast gets priority)
+6. Marks predictions with "| BREAK_REPLENISH" in model_name
+
 ## Recent Changes
+- January 5, 2026: Added Stock-out Replenishment layer (BREAK_REPLENISH) for out-of-stock SKU-Store pairs
+- January 5, 2026: Optimized rebalancing module with indexed lookups and bulk inserts
 - December 31, 2025: Implemented Background Job System with ThreadPoolExecutor (4 workers)
 - December 31, 2025: Added Job model for tracking background tasks
 - December 31, 2025: Refactored Stock CD upload to use background jobs with bulk operations
