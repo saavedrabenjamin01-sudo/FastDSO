@@ -1,0 +1,70 @@
+You are working on the FastDSO Flask + SQLAlchemy app.
+
+Goal:
+Implement a “Stock-out Replenishment” layer as a CLEAN post-processing step AFTER the current forecast logic, without changing the existing forecast algorithm behavior. This layer should add suggestions for SKU–Store pairs that have zero recent sales due to being out-of-stock, but still have demand historically AND there is available CD stock.
+
+Constraints (must follow):
+1) Do NOT break existing modules and routes.
+2) Do NOT modify the existing forecast logic results for SKUs that already receive a base suggestion.
+3) Add ONLY what is necessary.
+4) Keep current data model stable unless a minimal change is needed (prefer no migrations).
+5) Ensure export, dashboard, filters, and CD stock discount logic still work.
+6) All new suggestions must be traceable: mark them clearly as “BREAK_REPLENISH”.
+
+Definition of “stock-out candidate” (V1):
+A SKU–Store pair qualifies if ALL are true:
+- Store stock snapshot (latest) for that SKU–Store is <= 0 (or <= threshold 0 for V1)
+- Recent sales in the last N weeks (N=1 by default) for that SKU–Store are 0
+- Historical sales exist in the last H weeks (H=8 default): sum > 0
+- CD stock exists for that SKU (from the same CD snapshot_date already used)
+- The pair did NOT already receive a base forecast suggestion (quantity > 0) in this run
+
+How to compute replenishment qty (V1 simple):
+- Compute historical weekly average over last H weeks for that SKU–Store: hist_avg = mean(weekly_units)
+- Target weeks of cover for stock-out replenishment: target_woc = 1.0 (one week of cover)
+- Suggested replenish qty = clamp(round(hist_avg * target_woc), min=1, max=max_qty_per_store)
+- max_qty_per_store default = 3 (hard cap V1)
+- Then apply CD stock availability constraints just like the base forecast (prioritize higher demand)
+
+Prioritization:
+When CD stock is insufficient, allocate to stores in descending order of hist_avg (or hist_total). This enforces store hierarchy by historical sales for that SKU.
+
+Implementation plan:
+A) Identify the “current forecast function” used in /upload (likely generate_predictions) and extend it carefully:
+   - Keep existing steps 1..6 intact.
+   - After computing `final_preds` (the base suggestions already CD-limited) and before writing to Prediction table, run a new post-processing step:
+     - Build a set of existing predicted keys (product_id, store_id) where suggested > 0
+     - For all SKU–Store combinations present in the uploaded sales df OR in store stock table (prefer store stock snapshot to include stock-out stores):
+       * Determine if stock-out candidate using latest StockSnapshot and DistributionRecord history (or df history if passed)
+       * Compute replenishment qty
+       * Append new items to `final_preds` with:
+           suggested = replen_qty (will be CD-limited in the post-processing allocation)
+           model_name = original model_tag + " | BREAK_REPLENISH"
+           keep sku/store/product_id/store_id populated
+B) Apply CD stock limiting for these new replenishment items too:
+   - You must not double-discount CD stock.
+   - The allocation step must treat base forecast first, then distribute remaining CD stock to BREAK_REPLENISH items per SKU.
+   - If CD stock is 0, replenishment becomes 0.
+C) Ensure CD stock discount logic remains correct:
+   - CD stock should be reduced by (base assigned + replenishment assigned) for that snapshot_date.
+D) Ensure dashboard only shows the latest run (already versioned) and keeps working.
+E) Add minimal constants at top (safe defaults):
+   STOCKOUT_RECENT_WEEKS=1, STOCKOUT_HIST_WEEKS=8, STOCKOUT_TARGET_WOC=1.0, STOCKOUT_MAX_QTY=3
+F) Add small logging (print) statements guarded by debug to help verify counts:
+   - number of stock-out candidates found
+   - number of replenishment predictions added
+   - CD constrained count
+
+Testing tasks (must do):
+1) Create 2-3 unit/integration scenarios in a minimal test file or by adding a small internal “debug/test route” (preferred is pytest-style if present):
+   Scenario A: Store had historical sales but last week 0 and store stock 0; CD stock exists -> expect BREAK_REPLENISH >0
+   Scenario B: Store had last week sales -> should NOT get BREAK_REPLENISH (base handles it)
+   Scenario C: CD stock insufficient -> allocation prioritizes higher hist_avg
+2) Make sure existing base forecast still produces identical output when no stock-out candidates exist.
+
+Deliverables:
+- Commit-ready code changes.
+- Tell me exactly which files were changed and what was added.
+- Keep all formatting consistent with the project.
+
+Proceed to implement now.

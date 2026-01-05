@@ -44,6 +44,13 @@ ROLE_PERMISSIONS = {
 }
 MIN_WEEKS = 3  # mínimo de semanas de historia requeridas por SKU–Tienda
 
+# ------------------ Stock-out Replenishment Constants ------------------
+STOCKOUT_RECENT_WEEKS = 1      # Weeks to check for "no recent sales"
+STOCKOUT_HIST_WEEKS = 8        # Weeks of historical data to compute average
+STOCKOUT_TARGET_WOC = 1.0      # Target weeks of cover for replenishment
+STOCKOUT_MAX_QTY = 3           # Maximum qty per store for stock-out replenishment
+STOCKOUT_DEBUG = False         # Enable debug logging for stock-out layer
+
 
 # ------------------ Pagination Helper ------------------
 class Pagination:
@@ -833,6 +840,143 @@ def generate_predictions(
                     it2["suggested"] = 0
                     final_preds.append(it2)
                 break
+
+    # 4b) Stock-out Replenishment Layer (BREAK_REPLENISH)
+    existing_predicted_keys = {
+        (it["product_id"], it["store_id"])
+        for it in final_preds
+        if it["suggested"] > 0
+    }
+    
+    today = date.today()
+    recent_cutoff = today - timedelta(days=STOCKOUT_RECENT_WEEKS * 7)
+    hist_cutoff = today - timedelta(days=STOCKOUT_HIST_WEEKS * 7)
+    
+    latest_stock_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
+    
+    stockout_candidates = []
+    
+    if latest_stock_date and snapshot_date:
+        store_stock_map = {}
+        stock_snap_q = (
+            db.session.query(StockSnapshot.product_id, StockSnapshot.store_id, StockSnapshot.quantity)
+            .filter(StockSnapshot.as_of_date == latest_stock_date)
+            .all()
+        )
+        for pid, sid, qty in stock_snap_q:
+            store_stock_map[(pid, sid)] = qty
+        
+        recent_sales_map = defaultdict(int)
+        recent_q = (
+            db.session.query(
+                DistributionRecord.product_id,
+                DistributionRecord.store_id,
+                db.func.sum(DistributionRecord.quantity)
+            )
+            .filter(DistributionRecord.event_date >= recent_cutoff)
+            .group_by(DistributionRecord.product_id, DistributionRecord.store_id)
+            .all()
+        )
+        for pid, sid, qty in recent_q:
+            recent_sales_map[(pid, sid)] = qty or 0
+        
+        week_expr = db.func.strftime('%Y-%W', DistributionRecord.event_date)
+        hist_sales_q = (
+            db.session.query(
+                DistributionRecord.product_id,
+                DistributionRecord.store_id,
+                week_expr.label('week'),
+                db.func.sum(DistributionRecord.quantity).label('weekly_qty')
+            )
+            .filter(DistributionRecord.event_date >= hist_cutoff)
+            .filter(DistributionRecord.event_date < recent_cutoff)
+            .group_by(DistributionRecord.product_id, DistributionRecord.store_id, week_expr)
+            .all()
+        )
+        
+        hist_weekly = defaultdict(list)
+        for pid, sid, week, qty in hist_sales_q:
+            hist_weekly[(pid, sid)].append(qty or 0)
+        
+        all_sku_store_pairs = set(store_stock_map.keys()) | set(hist_weekly.keys())
+        
+        product_lookup = {p.id: (p.sku, p.name) for p in Product.query.all()}
+        store_lookup = {s.id: s.name for s in Store.query.all()}
+        
+        for (pid, sid) in all_sku_store_pairs:
+            if (pid, sid) in existing_predicted_keys:
+                continue
+            
+            store_stock = store_stock_map.get((pid, sid), 0)
+            if store_stock > 0:
+                continue
+            
+            recent_sales = recent_sales_map.get((pid, sid), 0)
+            if recent_sales > 0:
+                continue
+            
+            hist_weeks_list = hist_weekly.get((pid, sid), [])
+            hist_total = sum(hist_weeks_list)
+            if hist_total <= 0:
+                continue
+            
+            cd_available = cd_stock.get(pid, 0)
+            if cd_available <= 0:
+                continue
+            
+            hist_avg = hist_total / max(len(hist_weeks_list), 1)
+            replen_qty = max(1, min(int(round(hist_avg * STOCKOUT_TARGET_WOC)), STOCKOUT_MAX_QTY))
+            
+            sku_info = product_lookup.get(pid, ('', ''))
+            store_name = store_lookup.get(sid, '')
+            
+            stockout_candidates.append({
+                "sku": sku_info[0],
+                "store": store_name,
+                "product_id": pid,
+                "store_id": sid,
+                "suggested": replen_qty,
+                "hist_avg": hist_avg,
+                "model_name": model_tag + " | BREAK_REPLENISH",
+            })
+        
+        stockout_candidates.sort(key=lambda x: x["hist_avg"], reverse=True)
+        
+        replenish_per_product = defaultdict(list)
+        for cand in stockout_candidates:
+            replenish_per_product[cand["product_id"]].append(cand)
+        
+        replenish_added = 0
+        cd_constrained = 0
+        
+        for product_id, cands in replenish_per_product.items():
+            base_assigned = sum(it["suggested"] for it in final_preds if it["product_id"] == product_id)
+            original_cd = cd_stock.get(product_id, 0)
+            remaining_cd = original_cd - base_assigned
+            
+            if remaining_cd <= 0:
+                for c in cands:
+                    c["suggested"] = 0
+                    final_preds.append(c)
+                cd_constrained += len(cands)
+                continue
+            
+            for c in cands:
+                want = c["suggested"]
+                give = min(want, remaining_cd)
+                c["suggested"] = give
+                remaining_cd -= give
+                final_preds.append(c)
+                
+                if give > 0:
+                    replenish_added += 1
+                if give < want:
+                    cd_constrained += 1
+        
+        if STOCKOUT_DEBUG:
+            print(f"[STOCKOUT] Candidates found: {len(stockout_candidates)}")
+            print(f"[STOCKOUT] Replenishment predictions added: {replenish_added}")
+            print(f"[STOCKOUT] CD constrained count: {cd_constrained}")
 
     # 5) Guardar predicciones y registrar asignaciones
     target_week = next_monday()
