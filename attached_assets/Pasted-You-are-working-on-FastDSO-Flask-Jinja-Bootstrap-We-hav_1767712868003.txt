@@ -1,0 +1,30 @@
+You are working on FastDSO (Flask + Jinja + Bootstrap). We have a new animated modal popup loader that should be the ONLY loading UX for file uploads & long processing. Currently:
+	•	Store Stock upload: modal works but needs progress percentage.
+	•	Stock CD upload and Sales Upload/Distribution: modal shows, but after ~2 seconds it disappears and the old legacy loading screen appears. We must remove the legacy loading screen entirely and keep ONLY the modal, with progress percentage.
+
+HARD REQUIREMENTS:
+	1.	Do NOT break existing routes, forms, or backend logic. Only adjust templates/JS/CSS.
+	2.	Remove the old loading overlay/screen for stock_cd and upload_sales pages (and any other module still using the legacy loader). The modal must be the only loader shown.
+	3.	The modal must NOT auto-close until the request finishes and browser navigates/redirects. If there is JS calling hide/close after timeout, remove it.
+	4.	Add a percent progress indicator for ALL upload forms:
+	•	Stock CD upload
+	•	Stock Stores upload
+	•	Sales Upload + Generate distribution
+	•	Store-to-store redistribution (if it uploads/processes)
+	5.	Implement real progress ONLY if upload is handled via XMLHttpRequest / fetch. If we keep standard POST, implement an “indeterminate -> staged progress” that increments smoothly up to 95% while waiting, then completes when the response returns.
+	6.	Ensure double-submit prevention (disable submit button on submit).
+	7.	Ensure modal persists across slow operations and does not flicker.
+	8.	Keep UI consistent with our corporate blue/white theme.
+
+IMPLEMENTATION PLAN (follow exactly):
+A) Identify and delete/disable the legacy loader code:
+	•	Search templates for old loader markup (e.g. “loading-screen”, “spinner”, “overlay”, “progress-container”, etc.)
+	•	Search JS for old listeners that manipulate it (e.g. setTimeout(() => hideLoader(), 2000)).
+	•	Remove the old loader HTML/CSS/JS references but keep the page layout intact.
+
+B) Standardize to ONE modal component:
+	•	Put the modal HTML once in base.html (or a shared partial included by all templates).
+	•	Add a JS helper in a single static file (e.g. static/js/loader.js) that:
+	•	attaches to all forms with data-loader=“true”
+	•	on submit: opens modal, sets title/icon based on data attributes, disables submit, starts progress (0->95).
+	•	on page unload or navigation: keep modal visible (don’t hide).

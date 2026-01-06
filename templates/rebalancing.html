@@ -12,10 +12,10 @@
     </div>
     <div class="card-body">
       <form method="POST" action="{{ url_for('rebalancing') }}" id="rebalancingForm"
-              data-processing="true"
-              data-proc-title="Procesando Redistribución"
-              data-proc-msg="Evaluando stock de tiendas y generando transferencias sugeridas..."
-              data-proc-variant="redistribution">
+              data-loader="true"
+              data-loader-title="Procesando Redistribución"
+              data-loader-msg="Evaluando stock de tiendas y generando transferencias sugeridas..."
+              data-loader-icon="store-transfer">
         <div class="row g-3">
           <div class="col-md-3">
             <label class="form-label">Tienda destino (opcional)</label>

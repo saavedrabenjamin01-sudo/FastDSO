@@ -656,24 +656,27 @@ body{
 }
 
 .proc-progress{
-  height: 6px;
+  height: 8px;
   background: rgba(29, 78, 216, 0.12);
-  border-radius: 6px;
+  border-radius: 8px;
   overflow: hidden;
+  width: 100%;
 }
 
 .proc-progress-bar{
   height: 100%;
-  width: 30%;
+  width: 0%;
   background: linear-gradient(90deg, var(--primary), var(--primary-2));
-  border-radius: 6px;
-  animation: procIndeterminate 1.5s ease-in-out infinite;
+  border-radius: 8px;
+  transition: width 0.15s ease-out;
 }
 
-@keyframes procIndeterminate{
-  0%{ transform: translateX(-100%); width: 30%; }
-  50%{ transform: translateX(150%); width: 50%; }
-  100%{ transform: translateX(400%); width: 30%; }
+.proc-percent{
+  margin-top: 12px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--primary);
+  letter-spacing: 0.5px;
 }
 
 /* Icon Animations */

@@ -29,10 +29,10 @@
 <div class="card">
   <div class="card-body">
     <form method="post" enctype="multipart/form-data" class="row g-3"
-            data-processing="true"
-            data-proc-title="Procesando Ventas y Distribución"
-            data-proc-msg="Analizando ventas y preparando envíos sugeridos a tiendas..."
-            data-proc-variant="sales_dist">
+            data-loader="true"
+            data-loader-title="Procesando Ventas y Distribución"
+            data-loader-msg="Analizando ventas y preparando envíos sugeridos a tiendas..."
+            data-loader-icon="truck">
 
       <!-- alerta si no hay stock tiendas -->
       {% if require_stock_confirm %}
