@@ -183,6 +183,7 @@ STOCKOUT_DEBUG = False         # Enable debug logging
 6. Marks predictions with "| BREAK_REPLENISH" in model_name
 
 ## Recent Changes
+- January 6, 2026: Added unified processing modal overlay for all upload/processing operations with animated SVG icons
 - January 6, 2026: Implemented Runs Center with active run management, status workflow, and run comparison
 - January 6, 2026: Added is_active column to Run model for active run designation
 - January 6, 2026: Dashboard now defaults to active run (fallback to latest)
