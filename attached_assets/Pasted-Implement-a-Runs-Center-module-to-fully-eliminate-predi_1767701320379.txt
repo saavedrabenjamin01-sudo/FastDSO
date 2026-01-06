@@ -1,0 +1,74 @@
+Implement a “Runs Center” module to fully eliminate prediction overlap and provide traceability. This app is Flask + SQLAlchemy + Jinja templates. Predictions currently may overlap in Dashboard because they are filtered by latest_week (target_period_start) or mixed filters; we need runs as the source of truth.
+
+Goals
+	1.	Every distribution generation creates a unique run_id (UUID) and links all predictions created/updated in that run.
+	2.	Dashboard must show ONLY the latest run by default (not mixed across older runs), while still allowing filters.
+	3.	Add a new page “Runs Center” to list runs, inspect details, export, and set which run is “active” (optional but recommended).
+	4.	Ensure zero breaking changes to existing working modules (uploads, stock modules, forecasting, redistribution).
+
+Data model changes
+	•	Create a new SQLAlchemy model PredictionRun (new table), fields:
+	•	id (int pk)
+	•	run_id (string(36), unique, indexed)
+	•	created_at (datetime utc now, indexed)
+	•	created_by_user_id (FK user.id, nullable)
+	•	mode (string) – analysis mode used (e.g., sma3_min3)
+	•	meta_folio (string nullable)
+	•	meta_responsable (string nullable)
+	•	meta_categoria (string nullable)
+	•	meta_fecha_doc (string nullable)
+	•	sales_snapshot_info (string nullable) e.g. “upload df only”
+	•	notes (text nullable)
+	•	Ensure Prediction has run_id (string(36), indexed, NOT NULL). If the table already has run_id, keep it; if not, add it.
+	•	If using SQLite without migrations, implement a safe “bootstrap” routine:
+	•	On app startup: db.create_all().
+	•	Then check if prediction table has column run_id. If missing, recreate DB only if this is a dev environment OR provide a one-time admin-only route /admin/rebuild_db to drop and recreate tables (user said losing old predictions is OK but keep admin user).
+	•	Keep admin user creation after DB init.
+
+Generate predictions change (minimal)
+	•	In generate_predictions(...), generate a new UUID run_id = str(uuid.uuid4()) at the start of the function.
+	•	Create a PredictionRun row with run_id + metadata fields (mode, meta fields, created_by_user_id=current_user.id if available).
+	•	When inserting/updating Prediction, ALWAYS set Prediction.run_id = run_id and Prediction.created_at = now.
+	•	Return run_id together with count (e.g. return run_id, len(final_preds)), or store it in Flask g.last_run_id. Update the upload route accordingly to display it in flash.
+
+Dashboard behavior change (critical to fix overlap)
+	•	Add query param support: ?run_id=...
+	•	Determine the default run:
+	•	If request has run_id, use it.
+	•	Else: find latest run via PredictionRun.created_at desc and use that run_id.
+	•	Filter ALL dashboard prediction tables by Prediction.run_id == active_run_id (not by latest_week). Store filters (store/folio/responsable) remain, but applied within that run.
+	•	KPI cards must compute based on predictions of active_run_id (and store filter if selected).
+	•	Remanente CD must be based on product_ids from predictions in active_run_id.
+	•	Top sales can remain as is (based on DistributionRecord), but optionally add a “sales window” later. For now keep stable.
+
+Runs Center page
+	•	Add sidebar menu item “Runs Center” under an “Operations” group (or wherever fits).
+	•	Route: /runs (GET)
+	•	List last 50 runs from PredictionRun ordered by created_at desc.
+	•	For each run show: created_at, created_by (username), mode, meta fields, total_pred_lines, total_units_suggested.
+	•	Provide actions:
+	•	“View” -> /runs/<run_id>
+	•	“Set Active” -> redirects to dashboard with ?run_id=<run_id>
+	•	“Export Predictions” -> reuse existing export but filtered by run_id.
+	•	“Delete Run” (admin only) -> deletes predictions with that run_id and deletes PredictionRun row.
+	•	Route: /runs/<run_id> (GET)
+	•	Show run header (meta, counts) and a preview table of predictions (top 50).
+	•	Include a search/filter by store inside the run.
+
+Export changes
+	•	export_predictions must accept optional run_id (query param). If present, export predictions for that run only.
+	•	Add new export: /runs/<run_id>/export as a convenience.
+
+UI/Template
+	•	Keep the current aesthetic: sidebar, cards, tables.
+	•	Add a small “Active run” badge in dashboard header showing run_id short form (first 8 chars) + timestamp.
+	•	Ensure no Jinja undefined variables: provide defaults for runs lists, active_run, etc.
+
+Acceptance criteria
+	•	After generating a new distribution, dashboard shows ONLY that run predictions.
+	•	Switching runs via Runs Center shows predictions of that run only.
+	•	No overlap between multiple runs.
+	•	No breaking of stock uploads, sales uploads, forecast modules.
+	•	Admin user remains after DB rebuild if needed.
+
+Proceed with implementation and run basic smoke tests (create run, list runs, open run detail, dashboard filtering by run_id, export).
