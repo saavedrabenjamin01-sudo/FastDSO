@@ -43,7 +43,7 @@ PredDist is a Flask-based web application for managing product distribution pred
 - **User**: Authentication (username, password_hash, role, is_active)
 - **Product**: SKU and product name
 - **Store**: Store names
-- **Run**: Versioned run history (run_id, run_type, user_id, folio, responsable, categoria, store_filter, notes, status, rows_count, predictions_count)
+- **Run**: Versioned run history (run_id, run_type, user_id, folio, responsable, categoria, store_filter, notes, status, rows_count, predictions_count, is_active)
 - **DistributionRecord**: Sales history (product, store, quantity, date, run_id)
 - **StockCD**: Distribution center stock snapshots
 - **StockSnapshot**: Store stock snapshots
@@ -67,6 +67,8 @@ PredDist is a Flask-based web application for managing product distribution pred
 10. **Simulation Mode**: Run calculations without saving to database for what-if analysis
 11. **Background Job Processing**: Large file uploads processed asynchronously with progress tracking
 12. **Stock-out Replenishment (BREAK_REPLENISH)**: Automatic suggestions for out-of-stock SKU-Store pairs with historical demand
+13. **Runs Center**: Centralized run management with activation, status workflow, and run comparison
+14. **Run Comparison**: Compare two distribution runs side-by-side with KPI deltas and SKU-store differences
 
 ## Simulation Mode
 
@@ -181,6 +183,11 @@ STOCKOUT_DEBUG = False         # Enable debug logging
 6. Marks predictions with "| BREAK_REPLENISH" in model_name
 
 ## Recent Changes
+- January 6, 2026: Implemented Runs Center with active run management, status workflow, and run comparison
+- January 6, 2026: Added is_active column to Run model for active run designation
+- January 6, 2026: Dashboard now defaults to active run (fallback to latest)
+- January 6, 2026: Added /runs/compare page for side-by-side run comparison with KPI deltas
+- January 6, 2026: Added activate run and change status functionality (Admin/Management only)
 - January 5, 2026: Added Stock-out Replenishment layer (BREAK_REPLENISH) for out-of-stock SKU-Store pairs
 - January 5, 2026: Optimized rebalancing module with indexed lookups and bulk inserts
 - December 31, 2025: Implemented Background Job System with ThreadPoolExecutor (4 workers)
