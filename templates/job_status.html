@@ -3,42 +3,29 @@
 {% block content %}
 <div class="row justify-content-center mt-5">
   <div class="col-md-6">
-    <div class="card">
+    <div class="card d-none" id="result-card">
       <div class="card-body text-center py-5">
-        <div id="job-icon" class="mb-4">
-          <div class="spinner-border text-primary" role="status" style="width: 4rem; height: 4rem;">
-            <span class="visually-hidden">Procesando...</span>
-          </div>
-        </div>
-        
-        <h4 class="mb-3">{{ job_label }}</h4>
-        
-        <div class="progress mb-3" style="height: 24px;">
-          <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" 
-               role="progressbar" style="width: {{ job.progress }}%;" 
-               aria-valuenow="{{ job.progress }}" aria-valuemin="0" aria-valuemax="100">
-            <span id="progress-text">{{ job.progress }}%</span>
-          </div>
-        </div>
-        
-        <p id="status-message" class="text-muted mb-4">{{ job.message or 'Iniciando...' }}</p>
-        
-        <div id="result-section" class="d-none">
-          <div id="success-icon" class="text-success mb-3 d-none">
+        <div id="success-section" class="d-none">
+          <div class="text-success mb-3">
             <i class="bi bi-check-circle-fill" style="font-size: 4rem;"></i>
           </div>
-          <div id="error-icon" class="text-danger mb-3 d-none">
-            <i class="bi bi-x-circle-fill" style="font-size: 4rem;"></i>
-          </div>
-          <a id="continue-btn" href="{{ redirect_url }}" class="btn btn-primary d-none">
+          <h4 class="mb-3">Proceso completado</h4>
+          <p id="success-message" class="text-muted mb-4"></p>
+          <a href="{{ redirect_url }}" class="btn btn-primary">
             <i class="bi bi-arrow-right me-2"></i>Continuar
           </a>
         </div>
         
-        <p class="small text-muted mt-4">
-          <i class="bi bi-clock me-1"></i>
-          Iniciado: {{ job.created_at.strftime('%H:%M:%S') if job.created_at else 'N/A' }}
-        </p>
+        <div id="error-section" class="d-none">
+          <div class="text-danger mb-3">
+            <i class="bi bi-x-circle-fill" style="font-size: 4rem;"></i>
+          </div>
+          <h4 class="mb-3">Error en el proceso</h4>
+          <p id="error-message" class="text-muted mb-4"></p>
+          <a href="{{ redirect_url }}" class="btn btn-primary">
+            <i class="bi bi-arrow-right me-2"></i>Continuar
+          </a>
+        </div>
       </div>
     </div>
   </div>
@@ -48,54 +35,53 @@
 (function() {
   const jobId = "{{ job.id }}";
   const pollInterval = 1500;
-  let stillWorkingTimeout = null;
+  const jobType = "{{ job.job_type }}";
+  
+  var iconVariant = 'generic';
+  if (jobType === 'upload_stock_cd') iconVariant = 'warehouse';
+  else if (jobType === 'upload_stock_store') iconVariant = 'store';
+  else if (jobType === 'upload_sales') iconVariant = 'truck';
+  
+  if (window.showLoaderModal) {
+    window.showLoaderModal('{{ job_label }}', '{{ job.message or "Procesando..." }}', iconVariant);
+  }
   
   function updateUI(data) {
-    document.getElementById('progress-bar').style.width = data.progress + '%';
-    document.getElementById('progress-bar').setAttribute('aria-valuenow', data.progress);
-    document.getElementById('progress-text').textContent = data.progress + '%';
-    document.getElementById('status-message').textContent = data.message || 'Procesando...';
+    if (window.updateLoaderProgress) {
+      var progress = Math.min(data.progress, 95);
+      window.updateLoaderProgress(progress);
+    }
     
     if (data.status === 'done') {
-      clearTimeout(stillWorkingTimeout);
-      document.getElementById('job-icon').classList.add('d-none');
-      document.getElementById('result-section').classList.remove('d-none');
-      document.getElementById('success-icon').classList.remove('d-none');
-      document.getElementById('continue-btn').classList.remove('d-none');
-      document.getElementById('progress-bar').classList.remove('progress-bar-animated');
-      document.getElementById('progress-bar').classList.add('bg-success');
+      if (window.updateLoaderProgress) window.updateLoaderProgress(100);
+      setTimeout(function() {
+        if (window.hideLoaderModal) window.hideLoaderModal();
+        document.getElementById('result-card').classList.remove('d-none');
+        document.getElementById('success-section').classList.remove('d-none');
+        document.getElementById('success-message').textContent = data.message || 'El proceso ha finalizado correctamente.';
+      }, 500);
     } else if (data.status === 'error') {
-      clearTimeout(stillWorkingTimeout);
-      document.getElementById('job-icon').classList.add('d-none');
-      document.getElementById('result-section').classList.remove('d-none');
-      document.getElementById('error-icon').classList.remove('d-none');
-      document.getElementById('continue-btn').classList.remove('d-none');
-      document.getElementById('progress-bar').classList.remove('progress-bar-animated');
-      document.getElementById('progress-bar').classList.add('bg-danger');
+      if (window.hideLoaderModal) window.hideLoaderModal();
+      document.getElementById('result-card').classList.remove('d-none');
+      document.getElementById('error-section').classList.remove('d-none');
+      document.getElementById('error-message').textContent = data.message || 'Ocurrió un error durante el proceso.';
     }
   }
   
   function poll() {
     fetch('/jobs/' + jobId)
-      .then(r => r.json())
-      .then(data => {
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
         updateUI(data);
         if (data.status === 'queued' || data.status === 'running') {
           setTimeout(poll, pollInterval);
         }
       })
-      .catch(err => {
+      .catch(function(err) {
         console.error('Poll error:', err);
         setTimeout(poll, pollInterval * 2);
       });
   }
-  
-  stillWorkingTimeout = setTimeout(function() {
-    const msg = document.getElementById('status-message');
-    if (msg.textContent.indexOf('Aún') === -1) {
-      msg.textContent += ' (Aún trabajando...)';
-    }
-  }, 10000);
   
   poll();
 })();
