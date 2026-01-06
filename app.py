@@ -195,6 +195,7 @@ class Run(db.Model):
     mode = db.Column(db.String(50), nullable=True)
     rows_count = db.Column(db.Integer, nullable=True)
     predictions_count = db.Column(db.Integer, nullable=True)
+    is_active = db.Column(db.Boolean, default=False, nullable=False, index=True)
 
     user = db.relationship('User', backref='runs')
 
@@ -3270,6 +3271,178 @@ def view_run(run_id):
     return render_template('run_detail.html', run=run)
 
 
+@app.route('/runs/<run_id>/activate', methods=['POST'])
+@login_required
+@require_permission('runs:view')
+def activate_run(run_id):
+    """Set a run as active (only one active at a time)."""
+    if current_user.role not in ['Admin', 'Management']:
+        flash('Solo Admin o Management pueden activar corridas.', 'danger')
+        return redirect(url_for('runs'))
+    
+    run = Run.query.filter_by(run_id=run_id).first_or_404()
+    
+    if run.run_type != 'distribution':
+        flash('Solo corridas de distribución pueden ser activadas.', 'warning')
+        return redirect(url_for('runs'))
+    
+    Run.query.filter(Run.run_type == 'distribution').update({'is_active': False})
+    run.is_active = True
+    db.session.commit()
+    
+    log_audit(
+        action='run.activate',
+        entity_type='run',
+        entity_id=run.id,
+        run_id=run_id,
+        status='success',
+        message=f'Corrida {run_id[:8]} activada'
+    )
+    
+    flash(f'Corrida {run_id[:8]} activada exitosamente.', 'success')
+    return redirect(url_for('runs'))
+
+
+@app.route('/runs/<run_id>/status', methods=['POST'])
+@login_required
+@require_permission('runs:view')
+def change_run_status(run_id):
+    """Change run status (Admin/Manager only)."""
+    if current_user.role not in ['Admin', 'Management']:
+        flash('Solo Admin o Management pueden cambiar el estado.', 'danger')
+        return redirect(url_for('runs'))
+    
+    new_status = request.form.get('status', '').strip()
+    allowed_statuses = ['DRAFT', 'SIMULATED', 'APPROVED', 'EXECUTED', 'ARCHIVED', 'completed', 'failed']
+    
+    if new_status not in allowed_statuses:
+        flash('Estado inválido.', 'danger')
+        return redirect(url_for('runs'))
+    
+    run = Run.query.filter_by(run_id=run_id).first_or_404()
+    old_status = run.status
+    run.status = new_status
+    db.session.commit()
+    
+    log_audit(
+        action='run.status_change',
+        entity_type='run',
+        entity_id=run.id,
+        run_id=run_id,
+        status='success',
+        message=f'Estado cambiado de {old_status} a {new_status}'
+    )
+    
+    flash(f'Estado de corrida cambiado a {new_status}.', 'success')
+    return redirect(url_for('runs'))
+
+
+@app.route('/runs/compare', methods=['GET'])
+@login_required
+@require_permission('runs:view')
+def compare_runs():
+    """Compare two distribution runs side by side."""
+    left_id = request.args.get('left', '').strip()
+    right_id = request.args.get('right', '').strip()
+    
+    distribution_runs = (
+        Run.query
+        .filter(Run.run_type == 'distribution')
+        .order_by(Run.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    
+    left_run = None
+    right_run = None
+    comparison_data = []
+    left_kpis = {}
+    right_kpis = {}
+    delta_kpis = {}
+    
+    if left_id and right_id:
+        left_run = Run.query.filter_by(run_id=left_id).first()
+        right_run = Run.query.filter_by(run_id=right_id).first()
+        
+        if left_run and right_run:
+            left_preds = (
+                db.session.query(
+                    Product.sku,
+                    Product.name,
+                    Store.name.label('store_name'),
+                    Prediction.quantity
+                )
+                .join(Product, Prediction.product_id == Product.id)
+                .join(Store, Prediction.store_id == Store.id)
+                .filter(Prediction.run_id == left_id)
+                .all()
+            )
+            
+            right_preds = (
+                db.session.query(
+                    Product.sku,
+                    Product.name,
+                    Store.name.label('store_name'),
+                    Prediction.quantity
+                )
+                .join(Product, Prediction.product_id == Product.id)
+                .join(Store, Prediction.store_id == Store.id)
+                .filter(Prediction.run_id == right_id)
+                .all()
+            )
+            
+            left_map = {(str(p.sku), p.store_name): (p.name, p.quantity) for p in left_preds}
+            right_map = {(str(p.sku), p.store_name): (p.name, p.quantity) for p in right_preds}
+            
+            all_keys = set(left_map.keys()) | set(right_map.keys())
+            
+            for key in all_keys:
+                sku, store = key
+                left_name, left_qty = left_map.get(key, ('', 0))
+                right_name, right_qty = right_map.get(key, ('', 0))
+                name = left_name or right_name
+                delta = right_qty - left_qty
+                
+                comparison_data.append({
+                    'sku': sku,
+                    'name': name,
+                    'store': store,
+                    'left_qty': left_qty,
+                    'right_qty': right_qty,
+                    'delta': delta
+                })
+            
+            comparison_data.sort(key=lambda x: abs(x['delta']), reverse=True)
+            
+            left_total = sum(p.quantity for p in left_preds)
+            right_total = sum(p.quantity for p in right_preds)
+            left_skus = len(set(p.sku for p in left_preds))
+            right_skus = len(set(p.sku for p in right_preds))
+            left_stores = len(set(p.store_name for p in left_preds))
+            right_stores = len(set(p.store_name for p in right_preds))
+            
+            left_kpis = {'total_units': left_total, 'distinct_skus': left_skus, 'distinct_stores': left_stores}
+            right_kpis = {'total_units': right_total, 'distinct_skus': right_skus, 'distinct_stores': right_stores}
+            delta_kpis = {
+                'total_units': right_total - left_total,
+                'distinct_skus': right_skus - left_skus,
+                'distinct_stores': right_stores - left_stores
+            }
+    
+    return render_template(
+        'runs_compare.html',
+        distribution_runs=distribution_runs,
+        left_id=left_id,
+        right_id=right_id,
+        left_run=left_run,
+        right_run=right_run,
+        comparison_data=comparison_data[:200],
+        left_kpis=left_kpis,
+        right_kpis=right_kpis,
+        delta_kpis=delta_kpis
+    )
+
+
 # ======================================================
 # ADMIN USER MANAGEMENT
 # ======================================================
@@ -3994,6 +4167,12 @@ def init_database():
                 conn.execute(text("ALTER TABLE run ADD COLUMN predictions_count INTEGER"))
                 conn.commit()
             print("✅ Added 'predictions_count' column to run table")
+        
+        if 'is_active' not in run_columns:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE run ADD COLUMN is_active BOOLEAN DEFAULT 0"))
+                conn.commit()
+            print("✅ Added 'is_active' column to run table")
     
     admin = User.query.filter_by(username="admin").first()
     if not admin:

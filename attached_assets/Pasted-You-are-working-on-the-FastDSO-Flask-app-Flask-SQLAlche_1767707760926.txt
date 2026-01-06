@@ -1,0 +1,116 @@
+You are working on the FastDSO Flask app (Flask + SQLAlchemy + Jinja).
+
+HARD RULES (MANDATORY)
+- Do NOT refactor unrelated code.
+- Do NOT rename existing tables or columns.
+- Do NOT break current functionality.
+- Make the smallest possible changes to solve the problem.
+- Prefer additive changes only.
+- Keep backward compatibility.
+
+OBJECTIVE
+Definitively eliminate prediction overlap by introducing a proper “Runs Center” with run versioning, status, and comparison, and wire it into the existing UI under “Operaciones”.
+
+STEP 1 — DETECT CURRENT STATE
+Search the codebase and determine:
+- Does a Run / PredictionRun / DistributionRun model already exist?
+- Does Prediction already have run_id?
+Act accordingly:
+
+CASE A: Run model exists → reuse it.
+CASE B: No Run model, but Prediction.run_id exists → create Run model.
+CASE C: Neither exists → create Run model AND add Prediction.run_id.
+
+Do NOT drop tables. Do NOT rename columns.
+
+STEP 2 — RUN MODEL (IF MISSING)
+Create model Run with:
+- id: UUID string (36 chars), primary key
+- created_at: datetime UTC default now
+- status: string, default "DRAFT", indexed
+- mode: string
+- model_name: string
+- meta_json: TEXT nullable
+Allowed status values:
+DRAFT, SIMULATED, APPROVED, EXECUTED, ARCHIVED
+
+STEP 3 — PREDICTION GENERATION (CRITICAL)
+Modify generate_predictions with MINIMAL changes:
+- On each execution:
+  - Create ONE new Run row.
+  - Assign its id to ALL Prediction rows created/updated in that execution.
+- NEVER update Prediction rows belonging to a different run_id.
+- NEVER mix predictions across runs.
+- Return run_id from generate_predictions.
+
+This step MUST fully stop overlapping predictions.
+
+STEP 4 — ACTIVE RUN LOGIC
+Implement ONE active run:
+- Only one run can be active at a time.
+- Store this safely (preferred: is_active boolean on Run).
+- Add POST route to activate a run.
+- Dashboard default view must show ONLY the active run.
+- If no active run exists, fallback to latest run.
+
+STEP 5 — DASHBOARD FIX (MANDATORY)
+Fix dashboard queries so that:
+- predictions, KPIs, remanente, and tables:
+  → ONLY use the active run (or selected run via filters).
+- Product name must come from Product.name (never show "sku xxx").
+
+NO other dashboard behavior changes allowed.
+
+STEP 6 — RUNS CENTER UI
+Create:
+- GET /runs → list runs (newest first)
+  Columns:
+  - created_at
+  - status (badge)
+  - mode
+  - total units (sum Prediction.quantity)
+  - distinct skus
+  - distinct stores
+  Actions:
+  - Set Active
+  - Change Status (only Admin/Manager)
+
+STEP 7 — RUN COMPARISON
+Create:
+- GET /runs/compare?left=<run_id>&right=<run_id>
+Show:
+- KPIs for each run
+- Delta KPIs (right - left)
+- Table per (SKU, Store):
+  - left_qty, right_qty, delta
+Missing pairs = 0.
+Default sort: abs(delta) DESC.
+
+STEP 8 — SIDEBAR INTEGRATION
+Under existing sidebar group “Operaciones” add:
+- “Runs Center” → /runs
+- “Compare Runs” → /runs/compare
+Do NOT alter styling, spacing, or other menus.
+
+STEP 9 — PERMISSIONS
+Reuse existing roles:
+- Only Admin/Manager can:
+  - change run status
+  - activate runs
+- All roles can view runs and comparisons.
+
+STEP 10 — MIGRATION SAFETY
+We are on SQLite.
+- If Flask-Migrate exists → use it.
+- If not → write SAFE, idempotent migration logic:
+  - check table/column existence before creating
+- App must boot cleanly (no "no such column" errors).
+
+FINAL CHECKS (REQUIRED)
+1) Generate 2 runs → predictions must not overlap.
+2) Dashboard shows only active run.
+3) Compare page shows correct deltas.
+4) Older runs remain queryable via filters.
+5) No existing feature is broken.
+
+Implement now.
