@@ -1,0 +1,145 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h5 class="mb-0">Comparar Corridas</h5>
+    <small class="text-muted">Compare dos corridas de distribución</small>
+  </div>
+  <a href="{{ url_for('runs') }}" class="btn btn-outline-secondary btn-sm">Volver</a>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <form method="get" action="{{ url_for('compare_runs') }}" class="row g-3">
+      <div class="col-md-5">
+        <label class="form-label">Corrida Izquierda (Base)</label>
+        <select name="left" class="form-select">
+          <option value="">Seleccionar...</option>
+          {% for r in distribution_runs %}
+          <option value="{{ r.run_id }}" {% if r.run_id == left_id %}selected{% endif %}>
+            {{ r.run_id[:8] }} — {{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '-' }}
+            {% if r.folio %}({{ r.folio }}){% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-5">
+        <label class="form-label">Corrida Derecha (Nueva)</label>
+        <select name="right" class="form-select">
+          <option value="">Seleccionar...</option>
+          {% for r in distribution_runs %}
+          <option value="{{ r.run_id }}" {% if r.run_id == right_id %}selected{% endif %}>
+            {{ r.run_id[:8] }} — {{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '-' }}
+            {% if r.folio %}({{ r.folio }}){% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2 d-flex align-items-end">
+        <button type="submit" class="btn btn-primary w-100">Comparar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if left_run and right_run %}
+<div class="row mb-3">
+  <div class="col-md-4">
+    <div class="card border-primary">
+      <div class="card-header bg-primary text-white">Izquierda: {{ left_run.run_id[:8] }}</div>
+      <div class="card-body">
+        <p class="mb-1"><strong>Fecha:</strong> {{ left_run.created_at.strftime('%Y-%m-%d %H:%M') if left_run.created_at else '-' }}</p>
+        <p class="mb-1"><strong>Unidades:</strong> {{ '{:,}'.format(left_kpis.total_units) }}</p>
+        <p class="mb-1"><strong>SKUs:</strong> {{ left_kpis.distinct_skus }}</p>
+        <p class="mb-0"><strong>Tiendas:</strong> {{ left_kpis.distinct_stores }}</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card border-success">
+      <div class="card-header bg-success text-white">Derecha: {{ right_run.run_id[:8] }}</div>
+      <div class="card-body">
+        <p class="mb-1"><strong>Fecha:</strong> {{ right_run.created_at.strftime('%Y-%m-%d %H:%M') if right_run.created_at else '-' }}</p>
+        <p class="mb-1"><strong>Unidades:</strong> {{ '{:,}'.format(right_kpis.total_units) }}</p>
+        <p class="mb-1"><strong>SKUs:</strong> {{ right_kpis.distinct_skus }}</p>
+        <p class="mb-0"><strong>Tiendas:</strong> {{ right_kpis.distinct_stores }}</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card border-warning">
+      <div class="card-header bg-warning">Delta (Derecha - Izquierda)</div>
+      <div class="card-body">
+        <p class="mb-1"><strong>Unidades:</strong> 
+          <span class="{% if delta_kpis.total_units > 0 %}text-success{% elif delta_kpis.total_units < 0 %}text-danger{% endif %}">
+            {{ '+' if delta_kpis.total_units > 0 else '' }}{{ '{:,}'.format(delta_kpis.total_units) }}
+          </span>
+        </p>
+        <p class="mb-1"><strong>SKUs:</strong> 
+          <span class="{% if delta_kpis.distinct_skus > 0 %}text-success{% elif delta_kpis.distinct_skus < 0 %}text-danger{% endif %}">
+            {{ '+' if delta_kpis.distinct_skus > 0 else '' }}{{ delta_kpis.distinct_skus }}
+          </span>
+        </p>
+        <p class="mb-0"><strong>Tiendas:</strong> 
+          <span class="{% if delta_kpis.distinct_stores > 0 %}text-success{% elif delta_kpis.distinct_stores < 0 %}text-danger{% endif %}">
+            {{ '+' if delta_kpis.distinct_stores > 0 else '' }}{{ delta_kpis.distinct_stores }}
+          </span>
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">Diferencias por SKU-Tienda (ordenado por |delta| desc, top 200)</div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0">
+        <thead>
+          <tr>
+            <th>SKU</th>
+            <th>Producto</th>
+            <th>Tienda</th>
+            <th class="text-end">Izq</th>
+            <th class="text-end">Der</th>
+            <th class="text-end">Delta</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if comparison_data %}
+            {% for row in comparison_data %}
+            <tr>
+              <td>{{ row.sku }}</td>
+              <td>{{ row.name }}</td>
+              <td>{{ row.store }}</td>
+              <td class="text-end">{{ row.left_qty }}</td>
+              <td class="text-end">{{ row.right_qty }}</td>
+              <td class="text-end {% if row.delta > 0 %}text-success{% elif row.delta < 0 %}text-danger{% endif %}">
+                {{ '+' if row.delta > 0 else '' }}{{ row.delta }}
+              </td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="6" class="text-center py-4">
+                <p class="text-muted mb-0">No hay diferencias para mostrar.</p>
+              </td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% elif left_id or right_id %}
+<div class="alert alert-warning">
+  Seleccione ambas corridas para comparar.
+</div>
+{% else %}
+<div class="alert alert-info">
+  Seleccione dos corridas de distribución para ver las diferencias.
+</div>
+{% endif %}
+
+{% endblock %}

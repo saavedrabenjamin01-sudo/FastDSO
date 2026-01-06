@@ -56,18 +56,18 @@
           <tr>
             <th>Fecha</th>
             <th>Tipo</th>
+            <th>Activa</th>
             <th>Folio</th>
             <th>Responsable</th>
             <th>Categoria</th>
-            <th>Tienda</th>
             <th>Estado</th>
-            <th></th>
+            <th>Acciones</th>
           </tr>
         </thead>
         <tbody>
           {% if runs %}
             {% for r in runs %}
-            <tr>
+            <tr {% if r.is_active %}class="table-success"{% endif %}>
               <td>{{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '-' }}</td>
               <td>
                 {% if r.run_type == 'sales_upload' %}
@@ -80,27 +80,74 @@
                   <span class="badge bg-secondary">{{ r.run_type }}</span>
                 {% endif %}
               </td>
+              <td>
+                {% if r.is_active %}
+                  <span class="badge bg-success">Activa</span>
+                {% elif r.run_type == 'distribution' %}
+                  <span class="text-muted">-</span>
+                {% else %}
+                  <span class="text-muted">N/A</span>
+                {% endif %}
+              </td>
               <td>{{ r.folio or '-' }}</td>
               <td>{{ r.responsable or '-' }}</td>
               <td>{{ r.categoria or '-' }}</td>
-              <td>{{ r.store_filter or '-' }}</td>
               <td>
-                {% if r.status == 'completed' %}
-                  <span class="text-success">Completado</span>
+                {% if r.status == 'completed' or r.status == 'EXECUTED' %}
+                  <span class="badge bg-success">{{ r.status }}</span>
                 {% elif r.status == 'failed' %}
-                  <span class="text-danger">Fallido</span>
+                  <span class="badge bg-danger">{{ r.status }}</span>
+                {% elif r.status == 'APPROVED' %}
+                  <span class="badge bg-info">{{ r.status }}</span>
+                {% elif r.status == 'SIMULATED' %}
+                  <span class="badge bg-warning text-dark">{{ r.status }}</span>
+                {% elif r.status == 'ARCHIVED' %}
+                  <span class="badge bg-secondary">{{ r.status }}</span>
                 {% else %}
-                  <span class="text-muted">{{ r.status }}</span>
+                  <span class="badge bg-light text-dark">{{ r.status }}</span>
                 {% endif %}
               </td>
               <td>
-                <a href="{{ url_for('view_run', run_id=r.run_id) }}" class="btn btn-sm btn-outline-primary">Ver</a>
+                <div class="btn-group btn-group-sm">
+                  <a href="{{ url_for('view_run', run_id=r.run_id) }}" class="btn btn-outline-primary" title="Ver detalles">
+                    <i class="bi bi-eye"></i>
+                  </a>
+                  {% if r.run_type == 'distribution' %}
+                    <a href="{{ url_for('dashboard', run_id=r.run_id) }}" class="btn btn-outline-secondary" title="Ver en Dashboard">
+                      <i class="bi bi-graph-up"></i>
+                    </a>
+                    {% if current_user.role in ['Admin', 'Management'] and not r.is_active %}
+                    <form method="post" action="{{ url_for('activate_run', run_id=r.run_id) }}" style="display:inline;">
+                      <button type="submit" class="btn btn-outline-success" title="Activar corrida">
+                        <i class="bi bi-check-circle"></i>
+                      </button>
+                    </form>
+                    {% endif %}
+                  {% endif %}
+                  {% if current_user.role in ['Admin', 'Management'] %}
+                  <div class="dropdown">
+                    <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Cambiar estado">
+                      <i class="bi bi-flag"></i>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                      {% for status in ['DRAFT', 'SIMULATED', 'APPROVED', 'EXECUTED', 'ARCHIVED'] %}
+                      <li>
+                        <form method="post" action="{{ url_for('change_run_status', run_id=r.run_id) }}">
+                          <input type="hidden" name="status" value="{{ status }}">
+                          <button type="submit" class="dropdown-item {% if r.status == status %}active{% endif %}">{{ status }}</button>
+                        </form>
+                      </li>
+                      {% endfor %}
+                    </ul>
+                  </div>
+                  {% endif %}
+                </div>
               </td>
             </tr>
             {% endfor %}
           {% else %}
             <tr>
-              <td colspan="8" class="text-center py-4">
+              <td colspan="9" class="text-center py-4">
                 <div class="text-muted mb-2" style="font-size: 2rem;">📋</div>
                 <p class="text-muted mb-2">No hay corridas que coincidan con los filtros.</p>
                 {% if search or run_type_filter %}

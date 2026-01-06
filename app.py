@@ -1242,10 +1242,14 @@ def dashboard():
     valid_run_ids = {r.run_id for r in runs}
     if run_id_filter and run_id_filter in valid_run_ids:
         selected_run_id = run_id_filter
-    elif runs:
-        selected_run_id = runs[0].run_id
     else:
-        selected_run_id = None
+        active_run = next((r for r in runs if r.is_active), None)
+        if active_run:
+            selected_run_id = active_run.run_id
+        elif runs:
+            selected_run_id = runs[0].run_id
+        else:
+            selected_run_id = None
 
     # --- Última semana de predicción (del run seleccionado) ---
     if selected_run_id:
