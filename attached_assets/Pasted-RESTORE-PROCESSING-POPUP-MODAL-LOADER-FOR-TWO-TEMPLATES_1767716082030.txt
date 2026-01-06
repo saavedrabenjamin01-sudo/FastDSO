@@ -1,0 +1,107 @@
+RESTORE PROCESSING POPUP (MODAL LOADER) FOR TWO TEMPLATES ONLY
+We accidentally removed BOTH the legacy loader and the new popup loader. Now we need to restore ONLY the popup loader system (processing modal) and make it work on:
+
+1) Stock CD upload template
+2) Sales upload / generate distribution template
+
+DO NOT reintroduce any old/legacy full-page loading screens. Only the popup modal.
+
+CONTEXT / REQUIREMENTS
+- We use Bootstrap 5 already.
+- The loader system is:
+  - templates/_processing_modal.html (the popup HTML)
+  - static/js/loader.js (the JS hook that reads data-loader attributes)
+  - style in static/css/style.css (proc-overlay, proc-card, animations, progress bar)
+- The popup must:
+  - show on FORM submit
+  - show the correct icon per page (warehouse for Stock CD, truck for Sales upload)
+  - display simulated progress % (0 → 95%) and progress bar
+  - NEVER auto-hide via JS
+  - Only disappears naturally when server responds / redirects (page navigation)
+
+TASKS
+
+A) RESTORE THE MODAL PARTIAL
+1. Create/restore file: templates/_processing_modal.html
+2. It must contain the popup markup with:
+   - #processingModal overlay container
+   - title element #procTitle
+   - message element #procMsg
+   - percent element #procPercent
+   - progress bar element .proc-progress-bar
+   - icons SVG blocks with ids:
+     - procIconStockCd
+     - procIconSalesDist
+     - procIconGeneric
+   (If you already have the full version with 4 icons, keep it; minimum required are the 3 above.)
+
+B) RESTORE loader.js
+1. Create/restore file: static/js/loader.js
+2. Must:
+   - attach submit handler to every FORM with data-loader="true"
+   - read:
+     - data-loader-title
+     - data-loader-msg
+     - data-loader-icon
+   - call showModal(title, msg, iconVariant)
+   - disable submit button and change text to spinner
+   - simulate progress to 95% (do NOT auto-close)
+   - expose window.showLoaderModal / updateLoaderProgress / hideLoaderModal (optional but ok)
+3. IMPORTANT:
+   - Remove any logic that hides modal based on alerts or timeouts.
+   - No setTimeout to hide. No “if alert-danger hide”.
+
+C) INCLUDE MODAL + SCRIPT IN base.html
+1. In templates/base.html:
+   - Ensure the modal partial is included ONCE before closing body:
+     {% include '_processing_modal.html' %}
+   - Ensure loader.js is loaded ONCE after Bootstrap bundle:
+     <script src="{{ url_for('static', filename='js/loader.js') }}"></script
+   - Ensure no other loader scripts exist.
+
+D) RESTORE THE TWO TEMPLATES HOOKS
+1) templates/stock_cd.html
+- The form must include these attributes:
+  data-loader="true"
+  data-loader-title="Cargando Stock CD"
+  data-loader-msg="Guardando productos en el inventario del Centro de Distribución..."
+  data-loader-icon="warehouse"
+- Do not add any other loading overlay.
+
+2) templates/upload.html (sales)
+- The form must include these attributes:
+  data-loader="true"
+  data-loader-title="Procesando Ventas y Distribución"
+  data-loader-msg="Analizando ventas y preparando envíos sugeridos a tiendas..."
+  data-loader-icon="truck"
+- Do not add any other loading overlay.
+
+E) RESTORE CSS (IF MISSING)
+If the popup has no styling (black text on white without overlay), add/restore CSS in static/css/style.css:
+- .proc-overlay: fixed fullscreen overlay, centered card, blur/dim background, z-index high
+- .proc-card: rounded, shadow, white background
+- .proc-progress + .proc-progress-bar: nice progress bar
+- .proc-percent: visible percentage
+- minimal SVG animation classes (optional but desirable)
+
+ACCEPTANCE TEST
+1) Open Stock CD page, submit file:
+- Popup appears, warehouse icon visible
+- Progress bar animates and shows % increasing
+- Popup stays until redirect
+- No legacy loader appears
+
+2) Open Sales Upload page, submit file:
+- Popup appears, truck icon visible
+- Same progress behavior
+- No legacy loader appears
+
+DELIVERABLE
+- Provide the complete code for:
+  - templates/_processing_modal.html
+  - static/js/loader.js
+- Provide a diff/confirmation for:
+  - templates/base.html include + script
+  - templates/stock_cd.html attributes
+  - templates/upload.html attributes
+- Confirm no old loader elements remain in those templates.
