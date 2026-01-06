@@ -1,0 +1,80 @@
+CRITICAL BUG FIX – SINGLE LOADER STANDARDIZATION
+
+We have confirmed that the loader popup disappears because:
+1) The page reloads after POST (expected).
+2) Legacy loaders still exist in Stock CD and Sales Upload templates.
+3) loader.js auto-hides the modal when any alert-danger exists.
+
+GOAL
+- Use ONE loader system only: processing modal.
+- Completely remove all legacy loading screens.
+- Ensure the modal NEVER auto-closes via JS.
+- Show a progress percentage for ALL upload/process pages.
+
+FILES INVOLVED
+- templates/stock_cd.html
+- templates/upload.html (sales)
+- templates/rebalancing*.html (if any loader exists)
+- static/js/loader.js
+- templates/_processing_modal.html
+
+STEP BY STEP TASKS
+
+1) REMOVE LEGACY LOADERS
+Search and delete any of the following from templates:
+- loading overlays
+- progress bars outside the modal
+- divs shown during submit
+- inline JS handling progress
+- CSS classes related to old loaders
+
+Affected templates:
+- stock_cd.html
+- upload.html
+- rebalancing pages
+
+Only keep:
+- the form
+- data-loader attributes
+
+2) FIX loader.js (MANDATORY)
+Edit static/js/loader.js:
+
+- DELETE this block entirely:
+  if (document.querySelector('.alert-danger') || document.querySelector('.alert-error')) {
+    hideModal();
+  }
+
+- DO NOT auto-hide the modal anywhere.
+- The modal must stay visible until navigation / redirect happens.
+- Keep simulated progress capped at 95%.
+- Keep submit button disabled after submit.
+
+3) ENSURE SINGLE SCRIPT SOURCE
+- base.html must include ONLY:
+  <script src="{{ url_for('static', filename='js/loader.js') }}"></script>
+- Remove any other loader-related scripts from templates.
+
+4) PROGRESS BAR CONSISTENCY
+- Ensure the modal progress bar and percentage are visible in:
+  - Stock CD
+  - Stock Stores
+  - Sales Upload
+  - Redistribution
+- Use the same modal everywhere.
+
+5) ACCEPTANCE TESTS
+- Submit Stock CD upload:
+  - Modal appears
+  - Progress animates
+  - Modal stays until redirect
+  - NO legacy loader appears
+- Submit Sales upload:
+  - Same behavior
+- Large files (30k+ rows) do NOT flash loaders or close modal early.
+- No duplicated loaders on screen.
+
+DELIVERABLE
+- List of removed legacy loader code (files + brief description).
+- Updated loader.js content.
+- Confirmation that modal is the ONLY loader in the app.

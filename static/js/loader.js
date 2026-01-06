@@ -101,10 +101,6 @@ document.addEventListener('DOMContentLoaded', function() {
     document.body.style.overflow = '';
   }
 
-  if (document.querySelector('.alert-danger') || document.querySelector('.alert-error')) {
-    hideModal();
-  }
-
   document.querySelectorAll('[data-loader="true"]').forEach(function(el) {
     if (el.tagName === 'FORM') {
       el.addEventListener('submit', function(e) {
