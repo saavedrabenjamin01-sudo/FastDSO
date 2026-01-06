@@ -51,6 +51,12 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
+  function updateMessage(msg) {
+    if (procMsg) {
+      procMsg.textContent = msg;
+    }
+  }
+
   function startSimulatedProgress() {
     currentProgress = 0;
     updateProgress(0);
@@ -92,7 +98,6 @@ document.addEventListener('DOMContentLoaded', function() {
     updateProgress(0);
     modal.style.display = 'flex';
     document.body.style.overflow = 'hidden';
-    startSimulatedProgress();
   }
 
   function hideModal() {
@@ -101,12 +106,111 @@ document.addEventListener('DOMContentLoaded', function() {
     document.body.style.overflow = '';
   }
 
+  function pollJobStatus(jobId, redirectUrl, variant) {
+    updateMessage('Procesando datos en el servidor...');
+    
+    function poll() {
+      fetch('/jobs/' + jobId)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var jobProgress = Math.min(data.progress || 0, 100);
+          var displayProgress = 50 + (jobProgress * 0.5);
+          updateProgress(displayProgress);
+          
+          if (data.message) {
+            updateMessage(data.message);
+          }
+          
+          if (data.status === 'done') {
+            updateProgress(100);
+            updateMessage('Completado. Redirigiendo...');
+            setTimeout(function() {
+              window.location.href = redirectUrl;
+            }, 500);
+          } else if (data.status === 'error') {
+            hideModal();
+            alert('Error: ' + (data.message || 'Error desconocido'));
+            window.location.reload();
+          } else {
+            setTimeout(poll, 1500);
+          }
+        })
+        .catch(function(err) {
+          console.error('Poll error:', err);
+          setTimeout(poll, 3000);
+        });
+    }
+    
+    poll();
+  }
+
+  function submitFormWithXHR(form, title, msg, variant) {
+    var formData = new FormData(form);
+    var xhr = new XMLHttpRequest();
+    
+    showModal(title, msg, variant);
+    
+    xhr.upload.onprogress = function(e) {
+      if (e.lengthComputable) {
+        var percent = (e.loaded / e.total) * 50;
+        updateProgress(percent);
+        if (percent < 50) {
+          updateMessage('Subiendo archivo... ' + Math.floor((e.loaded / e.total) * 100) + '%');
+        }
+      }
+    };
+    
+    xhr.onload = function() {
+      if (xhr.status === 200) {
+        try {
+          var resp = JSON.parse(xhr.responseText);
+          if (resp.ok && resp.job_id) {
+            updateProgress(50);
+            updateMessage('Archivo recibido. Procesando...');
+            pollJobStatus(resp.job_id, resp.redirect_url || '/dashboard', variant);
+          } else if (resp.ok && resp.redirect_url) {
+            updateProgress(100);
+            window.location.href = resp.redirect_url;
+          } else {
+            hideModal();
+            alert(resp.message || 'Error desconocido');
+            window.location.reload();
+          }
+        } catch (e) {
+          hideModal();
+          alert('Error procesando respuesta del servidor');
+          window.location.reload();
+        }
+      } else {
+        hideModal();
+        try {
+          var errResp = JSON.parse(xhr.responseText);
+          alert(errResp.message || 'Error en el servidor');
+        } catch (e) {
+          alert('Error en el servidor: ' + xhr.status);
+        }
+        window.location.reload();
+      }
+    };
+    
+    xhr.onerror = function() {
+      hideModal();
+      alert('Error de conexión. Intenta nuevamente.');
+      window.location.reload();
+    };
+    
+    xhr.open('POST', form.action || window.location.href, true);
+    xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+    xhr.send(formData);
+  }
+
   document.querySelectorAll('[data-loader="true"]').forEach(function(el) {
     if (el.tagName === 'FORM') {
       el.addEventListener('submit', function(e) {
         var title = el.getAttribute('data-loader-title');
         var msg = el.getAttribute('data-loader-msg');
         var variant = el.getAttribute('data-loader-icon');
+        var isAjax = el.getAttribute('data-ajax') === 'true';
         
         el.querySelectorAll('button[type="submit"], input[type="submit"]').forEach(function(btn) {
           btn.disabled = true;
@@ -116,7 +220,13 @@ document.addEventListener('DOMContentLoaded', function() {
           }
         });
         
-        showModal(title, msg, variant);
+        if (isAjax) {
+          e.preventDefault();
+          submitFormWithXHR(el, title, msg, variant);
+        } else {
+          showModal(title, msg, variant);
+          startSimulatedProgress();
+        }
       });
     } else if (el.tagName === 'BUTTON' || el.tagName === 'A') {
       el.addEventListener('click', function(e) {
@@ -129,6 +239,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         showModal(title, msg, variant);
+        startSimulatedProgress();
       });
     }
   });
@@ -136,4 +247,5 @@ document.addEventListener('DOMContentLoaded', function() {
   window.showLoaderModal = showModal;
   window.hideLoaderModal = hideModal;
   window.updateLoaderProgress = updateProgress;
+  window.updateLoaderMessage = updateMessage;
 });

@@ -1,0 +1,107 @@
+FIX LOADING POPUP: MAKE IT PERSIST + SHOW REAL PROGRESS (AJAX UPLOAD) FOR STOCK CD + SALES UPLOAD
+Current issue: our popup modal disappears or we only see flash success message with no loader. This is expected because the forms submit normally and Flask does a redirect, which reloads the page and destroys the modal DOM. We must keep the user on the same page while uploading/processing.
+
+Goal:
+- Keep ONLY the popup loader (processing modal) and show it during the entire upload + server processing.
+- Add REAL upload progress percentage (not simulated) for:
+  1) Stock CD upload page
+  2) Sales upload / generate distribution page
+- No legacy loader. No other loader screens.
+- Do NOT break existing Flask routes, permissions, or templates.
+
+APPROACH (MANDATORY)
+- Convert ONLY these two forms to AJAX submit using XMLHttpRequest (XHR).
+- Use XHR.upload.onprogress to update the modal progress bar and %.
+- Keep the modal visible until the server returns success/failure.
+- On success: redirect via JS to dashboard (or the URL returned by server).
+- On error: show an alert on the same page, and keep UI usable.
+
+TASKS
+
+A) FRONTEND: Implement XHR submit handler (ONLY for forms with data-loader="true")
+1) Update static/js/loader.js:
+   - Keep current showModal(), updateProgress(), etc.
+   - Add a new function submitFormWithXHR(form):
+     - preventDefault()
+     - create new XMLHttpRequest()
+     - send new FormData(form)
+     - set header: X-Requested-With: XMLHttpRequest
+     - on xhr.upload.onprogress:
+         percent = (loaded/total)*100
+         updateLoaderProgress(percent capped at 95 until response)
+     - on xhr.onreadystatechange / onload:
+         - if status 200:
+             parse JSON { ok: true, redirect_url, message, category }
+             set progress to 100
+             then window.location = redirect_url
+         - else:
+             parse JSON if possible, show error, hide modal, re-enable button
+   - Attach this ONLY to forms that have data-loader="true" AND data-ajax="true"
+     (we’ll add data-ajax="true" only to stock_cd and sales forms so other forms remain normal)
+
+2) Ensure the modal NEVER auto-hides via timers or alerts scanning.
+   Remove any “hideModal() if .alert-danger exists” logic.
+
+B) TEMPLATES: Enable AJAX only on the two pages
+1) In templates/stock_cd.html form tag add:
+   data-loader="true"
+   data-ajax="true"
+   data-loader-title="Cargando Stock CD"
+   data-loader-msg="Guardando productos en el inventario del Centro de Distribución..."
+   data-loader-icon="warehouse"
+
+2) In templates/upload.html (sales) form tag add:
+   data-loader="true"
+   data-ajax="true"
+   data-loader-title="Procesando Ventas y Distribución"
+   data-loader-msg="Analizando ventas y preparando envíos sugeridos a tiendas..."
+   data-loader-icon="truck"
+
+C) BACKEND: Return JSON when request is AJAX (do not redirect for AJAX)
+Modify ONLY the two Flask routes that receive these forms (Stock CD upload endpoint and Sales upload endpoint):
+- Detect AJAX:
+  is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+- If is_ajax:
+  - On success return:
+    return jsonify({
+      "ok": True,
+      "redirect_url": url_for("dashboard"),
+      "message": "Carga exitosa ...",
+      "category": "success"
+    }), 200
+  - On validation error return:
+    return jsonify({
+      "ok": False,
+      "message": "Error ...",
+      "category": "danger"
+    }), 400
+- If NOT AJAX:
+  keep existing behavior (flash + redirect) exactly as-is.
+This preserves non-JS behavior.
+
+D) UI: Keep flash messages behavior after redirect
+- The AJAX response can include message/category, but we are redirecting immediately.
+- We should also set flash server-side before returning JSON so the dashboard shows the flash after redirect.
+  (Flash works because session cookie persists.)
+So in AJAX success flow:
+  flash("...", "success")
+  return jsonify({ ok:true, redirect_url: url_for("dashboard") })
+
+E) Acceptance tests
+1) Stock CD (6500 and 35k lines):
+- Popup stays visible during upload/processing
+- % increases (real progress)
+- On success redirects to dashboard and flash is shown
+
+2) Sales upload:
+- Popup stays visible
+- % increases
+- After server completes (including prediction generation), redirects to dashboard
+- No “old loader screen” appears ever
+
+DELIVERABLE
+- Provide updated code for:
+  - static/js/loader.js (complete file)
+  - the two templates form tags updated
+  - backend modifications in the two routes to return JSON for AJAX and keep current behavior for normal submits
+- Confirm no other pages are affected.

@@ -2411,21 +2411,29 @@ def process_sales_upload(job_id, payload):
 def upload():
     import os
     
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+    
     has_stock = db.session.query(StockSnapshot.id).first() is not None
     require_stock_confirm = not has_stock
 
     if request.method == 'POST':
         if require_stock_confirm and not request.form.get('confirm_no_stock'):
+            if is_ajax:
+                return jsonify({'ok': False, 'message': 'No hay stock de tienda cargado. Confirma que quieres continuar.', 'category': 'warning'}), 400
             flash('No hay stock de tienda cargado. Confirma que quieres continuar.', 'warning')
             return redirect(url_for('upload'))
 
         file = request.files.get('file')
         if not file:
+            if is_ajax:
+                return jsonify({'ok': False, 'message': 'Sube un archivo CSV o Excel.', 'category': 'warning'}), 400
             flash('Sube un archivo CSV o Excel.', 'warning')
             return redirect(url_for('upload'))
 
         filename = file.filename.lower()
         if not (filename.endswith('.csv') or filename.endswith('.xlsx') or filename.endswith('.xls')):
+            if is_ajax:
+                return jsonify({'ok': False, 'message': 'Formato no soportado. Usa .csv o .xlsx', 'category': 'danger'}), 400
             flash('Formato no soportado. Usa .csv o .xlsx', 'danger')
             return redirect(url_for('upload'))
         
@@ -2459,6 +2467,16 @@ def upload():
             payload=payload,
             user_id=user_id
         )
+        
+        if is_ajax:
+            flash('Ventas procesadas exitosamente.', 'success')
+            return jsonify({
+                'ok': True,
+                'job_id': job_id,
+                'redirect_url': url_for('dashboard'),
+                'message': 'Archivo recibido. Procesando ventas y distribución...',
+                'category': 'success'
+            })
         
         return redirect(url_for('job_status_view', job_id=job_id))
 
@@ -2974,15 +2992,21 @@ def process_stock_cd_upload(job_id, payload):
 def upload_stock_cd():
     from datetime import date
     import os
+    
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
 
     if request.method == 'POST':
         file = request.files.get('file')
         if not file:
+            if is_ajax:
+                return jsonify({'ok': False, 'message': 'Sube un archivo CSV o Excel.', 'category': 'warning'}), 400
             flash('Sube un archivo CSV o Excel.', 'warning')
             return redirect(url_for('upload_stock_cd'))
 
         filename = file.filename.lower()
         if not (filename.endswith('.csv') or filename.endswith('.xlsx') or filename.endswith('.xls')):
+            if is_ajax:
+                return jsonify({'ok': False, 'message': 'Formato no soportado. Usa .csv o .xlsx', 'category': 'danger'}), 400
             flash('Formato no soportado. Usa .csv o .xlsx', 'danger')
             return redirect(url_for('upload_stock_cd'))
         
@@ -3011,6 +3035,16 @@ def upload_stock_cd():
             payload=payload,
             user_id=user_id
         )
+        
+        if is_ajax:
+            flash('Stock CD cargado exitosamente.', 'success')
+            return jsonify({
+                'ok': True,
+                'job_id': job_id,
+                'redirect_url': url_for('dashboard'),
+                'message': 'Archivo recibido. Procesando...',
+                'category': 'success'
+            })
         
         return redirect(url_for('job_status_view', job_id=job_id))
 
