@@ -1,0 +1,56 @@
+DEBUG AND FIX 500 ERROR ON AJAX UPLOAD (Stock CD + Sales)
+We implemented XHR/AJAX upload with X-Requested-With: XMLHttpRequest. The modal shows briefly, then server returns HTTP 500.
+We need an exact traceback and make backend return JSON error details for AJAX, while keeping normal form submit + redirect behavior unchanged.
+
+MANDATORY STEPS
+
+1) Reproduce and capture traceback
+- Run the Flask app with debug logs enabled.
+- Trigger the failing AJAX upload for:
+  a) Stock CD upload
+  b) Sales upload
+- Capture the full traceback from the server console/logs.
+
+2) Add safe JSON error handler ONLY for AJAX requests
+- Add a global Flask error handler for Exception and HTTPException:
+  - If request header X-Requested-With == "XMLHttpRequest":
+      return jsonify({ok:false, message:"Internal Server Error", detail:<short error>, traceback:<only when debug true>}), 500
+  - Else: keep default Flask behavior (do not change HTML error pages in normal mode)
+
+Implementation details:
+- Import:
+  from flask import jsonify, current_app
+  import traceback
+  from werkzeug.exceptions import HTTPException
+- Use current_app.debug to decide whether to include traceback text.
+
+3) Ensure the two upload routes return JSON for AJAX and do not crash on jsonify import
+- In each route (upload_stock_cd endpoint, and upload/sales endpoint):
+  - is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+  - Wrap the processing block in try/except Exception as e:
+      - if is_ajax: return jsonify({ok:false, message:str(e)}), 400 or 500 depending
+      - else: flash + redirect as before
+- Do NOT remove existing flash/redirect behavior for non-AJAX.
+
+4) Fix the real root cause based on traceback (do not guess)
+Common causes to check:
+- Missing imports: jsonify not imported
+- Pandas reading file stream issues when using XHR/FormData (request.files empty)
+- Excel engine missing in environment (openpyxl)
+- Using request.form fields that are missing (KeyError) in AJAX requests
+- Any db commit errors
+- Any route names mismatch (url_for)
+
+5) Frontend improvement: show returned JSON error clearly
+- In loader.js XHR onload, if status != 200:
+  - Try JSON.parse(xhr.responseText)
+  - Display message + detail in a Bootstrap alert inserted at top of main content
+  - Hide modal, re-enable submit buttons
+
+DELIVERABLES
+- Provide the exact traceback found.
+- Provide patched code:
+  - global AJAX-aware error handler
+  - minimal changes inside the two routes to safely return JSON on AJAX failures
+  - loader.js change to render server error message (no silent fail)
+- Confirm normal non-AJAX submit still works.

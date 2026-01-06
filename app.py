@@ -10,7 +10,8 @@ from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import func, or_
 from functools import wraps
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file
+from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify
+import traceback as tb_module
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import (
     LoginManager, login_user, login_required, logout_user, current_user, UserMixin
@@ -108,6 +109,35 @@ db = SQLAlchemy(app)  # ✅ si en tu proyecto aún no existe db más abajo
 
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
+
+# ------------------ Global AJAX Error Handler ------------------
+from werkzeug.exceptions import HTTPException
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+    
+    if isinstance(e, HTTPException):
+        code = e.code
+        message = e.description
+    else:
+        code = 500
+        message = str(e) if str(e) else 'Internal Server Error'
+    
+    if is_ajax:
+        response = {
+            'ok': False,
+            'message': message,
+            'category': 'danger'
+        }
+        if app.debug:
+            response['traceback'] = tb_module.format_exc()
+        return jsonify(response), code
+    
+    if isinstance(e, HTTPException):
+        return e
+    
+    raise e
 
 # ------------------ Modelos ------------------
 

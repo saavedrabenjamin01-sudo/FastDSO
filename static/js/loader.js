@@ -57,6 +57,36 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
+  function showErrorAlert(message, traceback) {
+    var existingAlert = document.getElementById('ajax-error-alert');
+    if (existingAlert) existingAlert.remove();
+    
+    var alertHtml = '<div id="ajax-error-alert" class="alert alert-danger alert-dismissible fade show" role="alert">' +
+      '<strong>Error:</strong> ' + message;
+    
+    if (traceback) {
+      alertHtml += '<details class="mt-2"><summary>Detalles técnicos</summary>' +
+        '<pre class="small mb-0 mt-2" style="max-height:200px;overflow:auto;">' + traceback + '</pre></details>';
+    }
+    
+    alertHtml += '<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>';
+    
+    var mainContent = document.querySelector('.container-fluid') || document.querySelector('main') || document.body;
+    mainContent.insertAdjacentHTML('afterbegin', alertHtml);
+    
+    window.scrollTo(0, 0);
+  }
+
+  function resetFormButtons(form) {
+    if (!form) return;
+    form.querySelectorAll('button[type="submit"], input[type="submit"]').forEach(function(btn) {
+      btn.disabled = false;
+      if (btn.tagName === 'BUTTON' && btn.dataset.originalText) {
+        btn.innerHTML = btn.dataset.originalText;
+      }
+    });
+  }
+
   function startSimulatedProgress() {
     currentProgress = 0;
     updateProgress(0);
@@ -173,30 +203,30 @@ document.addEventListener('DOMContentLoaded', function() {
             window.location.href = resp.redirect_url;
           } else {
             hideModal();
-            alert(resp.message || 'Error desconocido');
-            window.location.reload();
+            showErrorAlert(resp.message || 'Error desconocido', resp.traceback);
+            resetFormButtons(form);
           }
         } catch (e) {
           hideModal();
-          alert('Error procesando respuesta del servidor');
-          window.location.reload();
+          showErrorAlert('Error procesando respuesta del servidor');
+          resetFormButtons(form);
         }
       } else {
         hideModal();
         try {
           var errResp = JSON.parse(xhr.responseText);
-          alert(errResp.message || 'Error en el servidor');
+          showErrorAlert(errResp.message || 'Error en el servidor', errResp.traceback);
         } catch (e) {
-          alert('Error en el servidor: ' + xhr.status);
+          showErrorAlert('Error en el servidor: ' + xhr.status);
         }
-        window.location.reload();
+        resetFormButtons(form);
       }
     };
     
     xhr.onerror = function() {
       hideModal();
-      alert('Error de conexión. Intenta nuevamente.');
-      window.location.reload();
+      showErrorAlert('Error de conexión. Intenta nuevamente.');
+      resetFormButtons(form);
     };
     
     xhr.open('POST', form.action || window.location.href, true);
