@@ -4,13 +4,6 @@
 {% block page_title %}Redistribución Tienda-Tienda{% endblock %}
 
 {% block content %}
-<div id="loadingOverlay" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(255,255,255,0.9);z-index:9999;justify-content:center;align-items:center;flex-direction:column;">
-  <div class="spinner-border text-primary" style="width:3rem;height:3rem;" role="status">
-    <span class="visually-hidden">Procesando...</span>
-  </div>
-  <p class="mt-3 text-primary fw-semibold" id="loadingText">Calculando redistribución...</p>
-</div>
-
 <div class="container-fluid px-0">
 
   <div class="card mb-4">
@@ -18,7 +11,11 @@
       <h5 class="mb-0"><i class="bi bi-shuffle me-2"></i>Parámetros de Redistribución</h5>
     </div>
     <div class="card-body">
-      <form method="POST" action="{{ url_for('rebalancing') }}" id="rebalancingForm">
+      <form method="POST" action="{{ url_for('rebalancing') }}" id="rebalancingForm"
+              data-processing="true"
+              data-proc-title="Procesando Redistribución"
+              data-proc-msg="Evaluando stock de tiendas y generando transferencias sugeridas..."
+              data-proc-variant="redistribution">
         <div class="row g-3">
           <div class="col-md-3">
             <label class="form-label">Tienda destino (opcional)</label>
@@ -195,23 +192,4 @@
 
 </div>
 
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-  var form = document.getElementById('rebalancingForm');
-  var overlay = document.getElementById('loadingOverlay');
-  var submitBtn = form ? form.querySelector('button[type="submit"]') : null;
-  
-  if (document.querySelector('.alert-danger')) {
-    overlay.style.display = 'none';
-  }
-  
-  if (form && submitBtn) {
-    form.addEventListener('submit', function() {
-      overlay.style.display = 'flex';
-      submitBtn.disabled = true;
-      submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Procesando...';
-    });
-  }
-});
-</script>
 {% endblock %}

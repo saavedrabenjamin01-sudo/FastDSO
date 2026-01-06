@@ -599,3 +599,164 @@ body{
     font-size: 1.5rem;
   }
 }
+
+/* =========================
+   Processing Modal Overlay
+   ========================= */
+
+.proc-overlay{
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(11, 27, 58, 0.85);
+  backdrop-filter: blur(6px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.proc-card{
+  background: rgba(255, 255, 255, 0.98);
+  border-radius: 24px;
+  padding: 48px 56px;
+  text-align: center;
+  box-shadow: 0 24px 64px rgba(2, 8, 23, 0.25), 0 8px 24px rgba(29, 78, 216, 0.15);
+  border: 1px solid var(--border);
+  max-width: 420px;
+  width: 90%;
+}
+
+.proc-icon{
+  width: 80px;
+  height: 80px;
+  margin: 0 auto 24px auto;
+  color: var(--primary);
+}
+
+.proc-svg{
+  width: 100%;
+  height: 100%;
+}
+
+.proc-title{
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--sidebar-grad-1);
+  margin: 0 0 12px 0;
+}
+
+.proc-msg{
+  font-size: 1rem;
+  color: var(--muted);
+  margin: 0 0 28px 0;
+  line-height: 1.5;
+}
+
+.proc-progress{
+  height: 6px;
+  background: rgba(29, 78, 216, 0.12);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.proc-progress-bar{
+  height: 100%;
+  width: 30%;
+  background: linear-gradient(90deg, var(--primary), var(--primary-2));
+  border-radius: 6px;
+  animation: procIndeterminate 1.5s ease-in-out infinite;
+}
+
+@keyframes procIndeterminate{
+  0%{ transform: translateX(-100%); width: 30%; }
+  50%{ transform: translateX(150%); width: 50%; }
+  100%{ transform: translateX(400%); width: 30%; }
+}
+
+/* Icon Animations */
+
+/* Stock CD: Pulse on boxes */
+.proc-box{
+  animation: procPulseBox 1.2s ease-in-out infinite;
+}
+.proc-box-1{ animation-delay: 0s; }
+.proc-box-2{ animation-delay: 0.2s; }
+.proc-box-3{ animation-delay: 0.4s; }
+
+@keyframes procPulseBox{
+  0%, 100%{ opacity: 0.6; transform: scale(1); }
+  50%{ opacity: 1; transform: scale(1.02); }
+}
+
+.proc-pulse{
+  animation: procPulseDot 1s ease-in-out infinite;
+}
+
+@keyframes procPulseDot{
+  0%, 100%{ opacity: 0.4; transform: scale(0.8); }
+  50%{ opacity: 1; transform: scale(1.2); }
+}
+
+/* Stock Store: Bounce dot */
+.proc-bounce{
+  animation: procBounceDot 0.8s ease-in-out infinite;
+}
+
+@keyframes procBounceDot{
+  0%, 100%{ transform: translateY(0); }
+  50%{ transform: translateY(-6px); }
+}
+
+/* Sales Dist: Arrow slide */
+.proc-arrow-slide{
+  animation: procSlideArrow 1.2s ease-in-out infinite;
+}
+
+@keyframes procSlideArrow{
+  0%{ opacity: 0.3; transform: translateX(-8px); }
+  50%{ opacity: 1; transform: translateX(4px); }
+  100%{ opacity: 0.3; transform: translateX(-8px); }
+}
+
+.proc-wheel{
+  animation: procSpin 1s linear infinite;
+  transform-origin: center;
+}
+
+@keyframes procSpin{
+  from{ transform: rotate(0deg); }
+  to{ transform: rotate(360deg); }
+}
+
+/* Redistribution: Swap arrows */
+.proc-swap-arrow-l{
+  animation: procSwapL 1.4s ease-in-out infinite;
+}
+
+.proc-swap-arrow-r{
+  animation: procSwapR 1.4s ease-in-out infinite;
+}
+
+@keyframes procSwapL{
+  0%, 100%{ opacity: 0.4; transform: translateX(-4px); }
+  50%{ opacity: 1; transform: translateX(4px); }
+}
+
+@keyframes procSwapR{
+  0%, 100%{ opacity: 0.4; transform: translateX(4px); }
+  50%{ opacity: 1; transform: translateX(-4px); }
+}
+
+/* Generic: Spinning ring */
+.proc-spin-ring{
+  animation: procSpinRing 1.2s linear infinite;
+  transform-origin: center;
+}
+
+@keyframes procSpinRing{
+  from{ transform: rotate(0deg); }
+  to{ transform: rotate(360deg); }
+}

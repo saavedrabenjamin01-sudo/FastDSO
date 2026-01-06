@@ -1,0 +1,130 @@
+You are working on FastDSO (Flask + Jinja + Bootstrap + custom CSS). 
+
+GOAL
+Standardize a single “Processing Upload / Data Operation” modal overlay (popup) across ALL modules that:
+- upload Excel/CSV
+- process data (predictions, redistribution)
+- may take long time
+
+The modal must:
+- be visually consistent across pages
+- show an animated icon representing the action context
+- block double submits
+- work with existing forms (no breaking routes)
+- degrade gracefully (if JS disabled, app still works)
+
+HARD RULES
+- Do NOT refactor routes or change business logic.
+- Only modify templates + CSS + small JS.
+- Do NOT change endpoints, form fields, or POST behavior.
+- Keep the current design system/colors.
+
+IMPLEMENTATION PLAN
+
+1) Create ONE reusable partial template:
+templates/_processing_modal.html
+
+It must accept Jinja variables:
+- modal_title
+- modal_message
+- modal_variant  (string enum: "stock_cd" | "stock_store" | "sales_dist" | "redistribution" | "generic")
+
+The modal HTML should include:
+- full-screen overlay
+- centered card with rounded corners
+- animated SVG icon (inline SVG, no external libs)
+- spinner-like motion (CSS animation on SVG elements)
+- progress text ("Processing… Please wait")
+- optional progress bar placeholder (not required, but include a simple indeterminate bar)
+
+2) Add modal CSS globally:
+static/css/style.css
+Add styles for:
+- .proc-overlay, .proc-card, .proc-icon, .proc-title, .proc-msg
+- animation keyframes (rotate/pulse/slide)
+- indeterminate progress bar animation
+
+3) Add ONE small JS file:
+static/js/processing.js
+Responsibilities:
+- attach to all forms with attribute: data-processing="true"
+- on submit:
+  - disable submit buttons within the form
+  - show modal overlay
+  - set modal title/message/icon variant from:
+      data-proc-title, data-proc-msg, data-proc-variant
+- prevent double submit
+- also handle clicks on buttons that trigger server processing without upload (e.g. redistribution run button), if they have data-processing="true" too
+
+4) Wire it into base.html:
+- Include the modal partial once at the bottom of body
+- Include processing.js
+- Ensure no JS errors if a page doesn't define modal variables (use safe defaults)
+Defaults:
+  modal_title = "Processing"
+  modal_message = "Working on your request…"
+  modal_variant = "generic"
+
+5) Update templates that upload/process:
+Add data attributes to the main form tag:
+
+A) Stock CD upload page
+form attrs:
+data-processing="true"
+data-proc-title="Uploading Stock (CD)"
+data-proc-msg="Saving products into Distribution Center inventory…"
+data-proc-variant="stock_cd"
+
+Animated icon:
+- Warehouse box / stacked boxes + subtle pulse
+
+B) Stock Stores upload page
+data-proc-title="Uploading Stock (Stores)"
+data-proc-msg="Saving products into Store inventory…"
+data-proc-variant="stock_store"
+
+Icon:
+- Store front + bouncing dot
+
+C) Sales upload + prediction generation page
+data-proc-title="Processing Sales & Generating Distribution"
+data-proc-msg="Analyzing sales and preparing suggested shipments to stores…"
+data-proc-variant="sales_dist"
+
+Icon:
+- Truck/arrow moving from CD to store (animated arrow slide)
+
+D) Store-to-store Redistribution module
+data-proc-title="Processing Redistribution"
+data-proc-msg="Evaluating store stock and suggesting transfers between stores…"
+data-proc-variant="redistribution"
+
+Icon:
+- Two store icons with arrows swapping (animated arrows)
+
+6) UX REQUIREMENTS
+- Modal must appear immediately when form submit happens.
+- Page should continue normal POST → redirect after server finishes.
+- If server returns validation error and re-renders same page:
+  - modal should NOT remain stuck (hide on DOMContentLoaded).
+- Use aria attributes for accessibility.
+- Keep visual style consistent with current blue/white scheme.
+
+7) TESTS (MANDATORY)
+- Verify modal triggers on:
+  - Stock CD upload (large file)
+  - Stock Store upload
+  - Sales upload → prediction generation
+  - Redistribution execution
+- Verify modal does NOT trigger on simple GET filters.
+- Verify double click does not cause duplicate processing.
+- Verify after redirect to dashboard, overlay is not visible.
+
+DELIVERABLES
+- templates/_processing_modal.html
+- static/js/processing.js
+- style.css additions only (append below existing)
+- minimal edits to each template form tag to add data-* attributes
+No other changes.
+
+Implement now.

@@ -1,0 +1,42 @@
+<div id="processingModal" class="proc-overlay" role="dialog" aria-modal="true" aria-labelledby="procTitle" aria-describedby="procMsg" style="display:none;">
+  <div class="proc-card">
+    <div class="proc-icon" id="procIcon">
+      <svg id="procIconStockCd" class="proc-svg" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:none;">
+        <rect class="proc-box proc-box-1" x="10" y="28" width="20" height="16" rx="2" stroke="currentColor" stroke-width="2.5"/>
+        <rect class="proc-box proc-box-2" x="34" y="28" width="20" height="16" rx="2" stroke="currentColor" stroke-width="2.5"/>
+        <rect class="proc-box proc-box-3" x="22" y="10" width="20" height="16" rx="2" stroke="currentColor" stroke-width="2.5"/>
+        <circle class="proc-pulse" cx="32" cy="48" r="4" fill="currentColor"/>
+      </svg>
+      <svg id="procIconStockStore" class="proc-svg" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:none;">
+        <path class="proc-store" d="M12 26L32 14L52 26V50H12V26Z" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/>
+        <rect x="26" y="36" width="12" height="14" stroke="currentColor" stroke-width="2"/>
+        <circle class="proc-bounce" cx="32" cy="56" r="3" fill="currentColor"/>
+      </svg>
+      <svg id="procIconSalesDist" class="proc-svg" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:none;">
+        <rect x="6" y="24" width="16" height="20" rx="2" stroke="currentColor" stroke-width="2.5"/>
+        <path class="proc-arrow-slide" d="M26 34H38" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+        <polygon class="proc-arrow-slide" points="36,30 44,34 36,38" fill="currentColor"/>
+        <rect x="42" y="24" width="16" height="20" rx="2" stroke="currentColor" stroke-width="2.5"/>
+        <circle class="proc-wheel" cx="50" cy="48" r="4" stroke="currentColor" stroke-width="2"/>
+        <circle class="proc-wheel" cx="14" cy="48" r="4" stroke="currentColor" stroke-width="2"/>
+      </svg>
+      <svg id="procIconRedistribution" class="proc-svg" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:none;">
+        <path d="M8 26L18 16L28 26V46H8V26Z" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/>
+        <path d="M36 26L46 16L56 26V46H36V46Z" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/>
+        <path class="proc-swap-arrow-l" d="M29 28H35" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <polygon class="proc-swap-arrow-l" points="33,25 37,28 33,31" fill="currentColor"/>
+        <path class="proc-swap-arrow-r" d="M35 36H29" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <polygon class="proc-swap-arrow-r" points="31,39 27,36 31,33" fill="currentColor"/>
+      </svg>
+      <svg id="procIconGeneric" class="proc-svg" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:none;">
+        <circle class="proc-spin-ring" cx="32" cy="32" r="22" stroke="currentColor" stroke-width="3" stroke-dasharray="40 100"/>
+        <circle cx="32" cy="32" r="10" stroke="currentColor" stroke-width="2.5"/>
+      </svg>
+    </div>
+    <h4 class="proc-title" id="procTitle">Procesando</h4>
+    <p class="proc-msg" id="procMsg">Trabajando en tu solicitud...</p>
+    <div class="proc-progress">
+      <div class="proc-progress-bar"></div>
+    </div>
+  </div>
+</div>
