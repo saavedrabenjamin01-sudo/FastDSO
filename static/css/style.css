@@ -764,74 +764,85 @@ body{
   to{ transform: rotate(360deg); }
 }
 
-/* === Dashboard Mockup Layout === */
+/* === Dashboard Mockup v1 === */
 
-.dash-mock{
+.dash-mock-wrap{
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-/* ZONE A - Topbar */
-.dash-topbar{
+.dash-sim-alert{
+  border-radius: 12px;
+  margin-bottom: 0;
+}
+
+.dash-header-row{
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 10px 18px;
+  padding: 10px 16px;
   background: #fff;
   border-radius: 16px;
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
 }
 
-.dash-topbar-title{
-  font-size: 1.15rem;
+.dash-title{
+  font-size: 1.1rem;
   font-weight: 800;
   color: var(--sidebar-grad-1);
+  margin: 0;
+  display: flex;
+  align-items: center;
 }
 
-.dash-topbar-search{
+.dash-title i{
+  color: var(--primary);
+}
+
+.dash-global-search{
   position: relative;
   display: flex;
   align-items: center;
 }
 
-.dash-topbar-search i{
+.dash-global-search i{
   position: absolute;
   left: 10px;
   color: var(--muted);
   font-size: 0.8rem;
 }
 
-.dash-topbar-search input{
+.dash-global-search input{
   width: 180px;
   padding-left: 32px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: rgba(245, 248, 255, 0.7);
+  background: rgba(245, 248, 255, 0.6);
   font-size: 0.85rem;
 }
 
-/* ZONE A - Run Strip */
 .dash-runstrip{
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 10px 18px;
+  padding: 10px 16px;
   background: #fff;
   border-radius: 16px;
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
   font-size: 0.9rem;
+  color: var(--muted);
 }
 
-/* ZONE B - Filters */
-.dash-filters{
+.dash-runstrip strong{
+  color: var(--sidebar-grad-1);
+}
+
+.dash-filters-card{
   background: #fff;
   border-radius: 16px;
   border: 1px solid var(--border);
-  padding: 12px 18px;
+  padding: 12px 16px;
   box-shadow: var(--shadow);
 }
 
@@ -842,41 +853,42 @@ body{
   flex-wrap: wrap;
 }
 
-.dash-filter-group{
+.dash-filter-field{
   display: flex;
   flex-direction: column;
   gap: 4px;
-  min-width: 130px;
+  min-width: 140px;
+  flex: 1;
+  max-width: 220px;
 }
 
-.dash-filter-group label{
+.dash-filter-field label{
   font-size: 0.75rem;
   font-weight: 600;
   color: var(--muted);
 }
 
-.dash-filter-group .form-select,
-.dash-filter-group .form-control{
+.dash-filter-field .form-select,
+.dash-filter-field .form-control{
   border-radius: 8px;
   border: 1px solid var(--border);
   font-size: 0.85rem;
   padding: 6px 10px;
 }
 
-.dash-filter-buttons{
+.dash-filter-btns{
   display: flex;
   gap: 8px;
   margin-left: auto;
 }
 
-.dash-filter-buttons .btn{
+.dash-filter-btns .btn{
   border-radius: 8px;
   font-weight: 600;
   padding: 6px 16px;
   font-size: 0.85rem;
 }
 
-/* ZONE C - KPI Cards */
 .dash-kpi-grid{
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -894,33 +906,34 @@ body{
   background: #fff;
   border-radius: 16px;
   border: 1px solid var(--border);
-  padding: 20px 22px;
+  padding: 18px 20px;
   box-shadow: var(--shadow);
   position: relative;
 }
 
-.dash-kpi-icon{
-  width: 40px;
-  height: 40px;
+.dash-kpi-icon-box{
+  width: 42px;
+  height: 42px;
   color: var(--primary);
   display: grid;
   place-items: center;
-  font-size: 1.4rem;
+  font-size: 1.5rem;
   flex-shrink: 0;
 }
 
-.dash-kpi-body{
+.dash-kpi-content{
   flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .dash-kpi-label{
   font-size: 0.85rem;
   color: var(--muted);
   font-weight: 500;
-  margin-bottom: 2px;
 }
 
-.dash-kpi-value{
+.dash-kpi-number{
   font-size: 2.2rem;
   font-weight: 300;
   color: var(--sidebar-grad-1);
@@ -930,11 +943,10 @@ body{
 
 .dash-kpi-menu{
   position: absolute;
-  top: 10px;
-  right: 10px;
+  top: 8px;
+  right: 8px;
 }
 
-/* ZONE D - Panel Card (contains both Distribution + Remanente) */
 .dash-panel-card{
   background: #fff;
   border-radius: 16px;
@@ -943,55 +955,52 @@ body{
   overflow: hidden;
 }
 
-.dash-section{}
-
-.dash-section-header{
+.dash-panel-header{
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 18px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
   background: rgba(245, 248, 255, 0.4);
 }
 
-.dash-section-title{
+.dash-panel-title{
   font-weight: 700;
   font-size: 0.9rem;
   color: var(--sidebar-grad-1);
 }
 
-.dash-section-subtitle{
+.dash-panel-subtitle{
   font-weight: 400;
   color: var(--muted);
   font-size: 0.85rem;
 }
 
-.dash-section-actions{
+.dash-panel-actions{
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.dash-sku-search{
+.dash-search{
   width: 120px;
   border-radius: 6px;
   font-size: 0.8rem;
   padding: 5px 10px;
 }
 
-.dash-section-body{
+.dash-panel-body{
   padding: 0;
 }
 
-.dash-divider{
+.dash-panel-divider{
   height: 1px;
   background: var(--border);
   margin: 0;
 }
 
-/* Tables inside panel */
 .dash-table{
   margin: 0;
 }
@@ -1026,8 +1035,12 @@ body{
   border-bottom: none;
 }
 
-/* Pagination */
 .dash-pagination{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
   background: rgba(245, 248, 255, 0.4);
   border-top: 1px solid var(--border);
   padding: 8px 14px;
@@ -1051,36 +1064,41 @@ body{
   color: #fff;
 }
 
-/* Responsive adjustments */
+.dash-page-size{
+  width: 60px;
+  font-size: 0.8rem;
+  padding: 2px 6px;
+}
+
 @media (max-width: 768px){
   .dash-filters-form{
     flex-direction: column;
     align-items: stretch;
   }
-  .dash-filter-group{
+  .dash-filter-field{
     width: 100%;
+    max-width: none;
   }
-  .dash-filter-buttons{
+  .dash-filter-btns{
     margin-left: 0;
     justify-content: flex-end;
   }
-  .dash-topbar{
+  .dash-header-row{
     flex-direction: column;
     align-items: flex-start;
     gap: 10px;
   }
-  .dash-topbar-search{
+  .dash-global-search{
     width: 100%;
   }
-  .dash-topbar-search input{
+  .dash-global-search input{
     width: 100%;
   }
-  .dash-kpi-value{
+  .dash-kpi-number{
     font-size: 1.8rem;
   }
 }
 
-/* Hide legacy filters bar */
 .filters-bar{
   display: none;
 }

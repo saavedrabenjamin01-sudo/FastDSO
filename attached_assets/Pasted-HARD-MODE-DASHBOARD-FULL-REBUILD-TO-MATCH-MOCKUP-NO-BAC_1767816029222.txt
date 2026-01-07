@@ -1,0 +1,110 @@
+HARD MODE — DASHBOARD FULL REBUILD TO MATCH MOCKUP (NO BACKEND CHANGES)
+
+You MUST APPLY ACTUAL FILE EDITS. Do not respond with a plan only.
+1) Open: templates/dashboard.html
+2) Replace the entire file content (FULL REWRITE).
+3) Open: static/css/style.css
+4) Append a CSS block at the end under comment: /* === Dashboard Mockup v1 === */
+5) After editing, show me:
+   - which files were changed
+   - paste the final dashboard.html
+   - paste only the CSS block you appended
+
+VISUAL TARGET
+Match the attached mockup image EXACTLY in layout and hierarchy:
+- Compact, clean “Panel” header
+- Compact run summary strip
+- Compact filters (store, folio, responsable + buttons)
+- 2 KPI cards row:
+  Left: “Top productos vendidos” with big number
+  Right: “Stock CD hoy” with big number
+- One main panel card below containing:
+  - “Distribución sugerida — <model name>” header row
+  - right side: small search input + Export button
+  - predictions table (compact)
+  - “Remanente CD” header row inside same container
+  - right side: pagination controls (if you already have them) and Export remanente button
+  - remanente table (compact)
+
+IMPORTANT: Remove the big “Top sales full table” from the dashboard layout (mockup uses KPI summary only).
+If top_sales exists, use it ONLY to compute the KPI number (sum units or count of units). Do not render the big table.
+
+FUNCTIONALITY RULES (MANDATORY)
+- Do NOT modify Python/backend code, routes, queries, DB schema.
+- Keep all filters functional: the filter form must remain method="get" and submit to url_for('dashboard').
+- Keep the same field names:
+  store, folio, responsable, run_id (if present)
+- Keep export buttons functional using existing endpoints:
+  url_for('export_predictions') and url_for('export_cd_remanente')
+- Preserve run isolation: dashboard must display the active/current run predictions as already provided by backend.
+- Do NOT change variable names expected from backend:
+  stores, selected_store, folio, responsable
+  predictions (list of tuples), stock_cd_filtered (list of tuples)
+  kpi_units_suggested, kpi_stock_cd_total (already computed)
+  top_sales (if provided)
+- Correct tuple unpacking:
+  predictions are tuples (Prediction, Product, Store) => for p, prod, st in predictions[:10]
+  stock_cd_filtered are tuples (StockCD, Product) => for cd, prod in stock_cd_filtered[:10]
+- Add empty states if predictions or stock_cd_filtered are empty.
+
+RUN SUMMARY STRIP
+At the top of the dashboard content, create a small strip similar to the mockup:
+- If you have run metadata variables (e.g., active_run, selected_run, run_label), show them.
+- If not available, show a safe fallback text like:
+  “Corrida activa: —”
+Do not break Jinja if variables do not exist. Use safe Jinja patterns:
+  {{ var if var is defined else '—' }}
+
+KPI RULES
+- We need two KPI cards only:
+  Card 1: “Top productos vendidos” -> big number: use kpi_units_suggested as fallback if top_sales KPI not available.
+    Preferred:
+      top_units = sum(r.units for r in top_sales) if top_sales is defined and not empty else kpi_units_suggested
+  Card 2: “Stock CD hoy” -> use kpi_stock_cd_total
+- Add minimal icon illustration in each KPI card header area (optional), but keep it subtle like mockup.
+
+TABLES RULES
+- Predictions table must be compact:
+  columns: SKU, Producto, Tienda, Cant.
+- Add a small search input at header right (front-end only placeholder allowed):
+  placeholder: “Buscar SKU”
+- Export button stays in header right.
+
+- Remanente table must be compact:
+  columns: SKU, Producto, Stock CD disponible
+- Export remanente button on the right side of remanente header.
+
+SPACING RULES
+- Overall dashboard must be compact:
+  - small gaps (10–14px)
+  - cards radius 16–18px
+  - subtle shadow
+  - do not let components touch sidebar (keep natural padding)
+
+CSS REQUIREMENTS
+Append CSS to static/css/style.css (do not overwrite existing).
+Create classes:
+- .dash-mock-wrap
+- .dash-runstrip
+- .dash-filters-card
+- .dash-kpi-grid
+- .dash-kpi-card
+- .dash-panel-card
+- .dash-panel-header
+- .dash-table (compact table)
+- .dash-search (small input)
+
+Use existing design tokens if available (var(--shadow), --border, etc.). If not, use subtle rgba shadows.
+
+NO JAVASCRIPT REQUIRED
+Do not add JS for search or pagination. Only layout.
+
+FINAL CHECKLIST (must pass)
+- Dashboard renders with no Jinja errors.
+- Filters work and keep selection.
+- Exports work.
+- Only 2 KPI cards visible.
+- No big top_sales table visible.
+- Predictions + Remanente appear inside one main card, like mockup.
+
+NOW IMPLEMENT.
