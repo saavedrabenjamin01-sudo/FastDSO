@@ -2,34 +2,37 @@
 {% block content %}
 
 {% macro pagination_controls(pag, page_param, size_param, search_param, search_val, size_val, table_id) %}
-<div class="dash-pagination d-flex justify-content-between align-items-center flex-wrap gap-2 mt-2 px-3 py-2">
+<div class="dash-pagination d-flex justify-content-between align-items-center flex-wrap gap-2 px-3 py-2">
   <div class="d-flex align-items-center gap-2">
     <small class="text-muted">{{ pag.total }} registros</small>
-    <select class="form-select form-select-sm" style="width: auto;" onchange="updateParam('{{ size_param }}', this.value, '{{ page_param }}')">
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    <span class="text-muted small">Ant</span>
+    <nav aria-label="Pagination">
+      <ul class="pagination pagination-sm mb-0">
+        <li class="page-item {% if not pag.has_prev %}disabled{% endif %}">
+          <a class="page-link" href="javascript:void(0)" onclick="updateParam('{{ page_param }}', {{ pag.prev_num or 1 }})"><i class="bi bi-chevron-left"></i></a>
+        </li>
+        {% for p in pag.iter_pages() %}
+          {% if p %}
+            <li class="page-item {% if p == pag.page %}active{% endif %}">
+              <a class="page-link" href="javascript:void(0)" onclick="updateParam('{{ page_param }}', {{ p }})">{{ p }}</a>
+            </li>
+          {% else %}
+            <li class="page-item disabled"><span class="page-link">...</span></li>
+          {% endif %}
+        {% endfor %}
+        <li class="page-item {% if not pag.has_next %}disabled{% endif %}">
+          <a class="page-link" href="javascript:void(0)" onclick="updateParam('{{ page_param }}', {{ pag.next_num or pag.pages }})"><i class="bi bi-chevron-right"></i></a>
+        </li>
+      </ul>
+    </nav>
+    <select class="form-select form-select-sm" style="width: 70px;" onchange="updateParam('{{ size_param }}', this.value, '{{ page_param }}')">
       <option value="10" {% if size_val == 10 %}selected{% endif %}>10</option>
       <option value="25" {% if size_val == 25 %}selected{% endif %}>25</option>
       <option value="50" {% if size_val == 50 %}selected{% endif %}>50</option>
     </select>
   </div>
-  <nav aria-label="Pagination">
-    <ul class="pagination pagination-sm mb-0">
-      <li class="page-item {% if not pag.has_prev %}disabled{% endif %}">
-        <a class="page-link" href="javascript:void(0)" onclick="updateParam('{{ page_param }}', {{ pag.prev_num or 1 }})">Ant</a>
-      </li>
-      {% for p in pag.iter_pages() %}
-        {% if p %}
-          <li class="page-item {% if p == pag.page %}active{% endif %}">
-            <a class="page-link" href="javascript:void(0)" onclick="updateParam('{{ page_param }}', {{ p }})">{{ p }}</a>
-          </li>
-        {% else %}
-          <li class="page-item disabled"><span class="page-link">...</span></li>
-        {% endif %}
-      {% endfor %}
-      <li class="page-item {% if not pag.has_next %}disabled{% endif %}">
-        <a class="page-link" href="javascript:void(0)" onclick="updateParam('{{ page_param }}', {{ pag.next_num or pag.pages }})">Sig</a>
-      </li>
-    </ul>
-  </nav>
 </div>
 {% endmacro %}
 
@@ -47,18 +50,21 @@
 
   <div class="dash-topbar">
     <div class="dash-topbar-left">
+      <div class="dash-topbar-icon">
+        <i class="bi bi-grid-1x2-fill"></i>
+      </div>
       <h1 class="dash-page-title">Panel</h1>
     </div>
     <div class="dash-topbar-right">
       <div class="dash-global-search">
-        <input type="text" class="form-control form-control-sm" placeholder="Buscar..." disabled>
+        <i class="bi bi-search"></i>
+        <input type="text" class="form-control form-control-sm" placeholder="Buscar (globalmente)" disabled>
       </div>
-      <span class="dash-date text-muted">{{ now().strftime('%d %b %Y') if now is defined else '' }}</span>
     </div>
   </div>
 
   {% if active_simulations %}
-  <div class="alert alert-warning mb-3 dash-alert">
+  <div class="alert alert-warning mb-0 dash-alert">
     <div class="d-flex justify-content-between align-items-center flex-wrap">
       <div>
         <i class="bi bi-lightning-charge me-2"></i>
@@ -78,47 +84,23 @@
   </div>
   {% endif %}
 
-  <div class="dash-filters">
+  <div class="dash-filters-card">
     <form class="dash-filter-form" method="get" action="{{ url_for('dashboard') }}">
       
-      {% if runs and selected_run_id %}
-      {% set current_run = runs|selectattr('run_id', 'equalto', selected_run_id)|first %}
-      {% if current_run %}
-      <div class="dash-run-summary">
-        <span class="dash-run-badge">
-          <i class="bi bi-flag-fill me-1"></i>
-          {{ current_run.label() }}
-        </span>
-        {% if current_run.folio %}
-        <span class="dash-run-meta">Folio: {{ current_run.folio }}</span>
+      <div class="dash-run-line">
+        {% if runs and selected_run_id %}
+        {% set current_run = runs|selectattr('run_id', 'equalto', selected_run_id)|first %}
+        {% if current_run %}
+        <span class="dash-run-folio">Folio: {{ current_run.folio or 'N/A' }}</span>
+        <span class="dash-run-sep">|</span>
+        <span class="dash-run-info">Repo {{ current_run.responsable or 'Sin responsable' }} - {{ current_run.created_at.strftime('%Y-%m-%d %H:%M') if current_run.created_at else '' }}</span>
         {% endif %}
-        {% if current_run.responsable %}
-        <span class="dash-run-meta">Resp: {{ current_run.responsable }}</span>
-        {% endif %}
-        {% if current_run.created_at %}
-        <span class="dash-run-meta text-muted">{{ current_run.created_at.strftime('%d/%m/%Y %H:%M') }}</span>
         {% endif %}
       </div>
-      {% endif %}
-      {% endif %}
 
       <div class="dash-filter-row">
         <div class="dash-filter-item">
-          <label class="dash-filter-label">Corrida</label>
-          <select class="form-select form-select-sm" id="run_id" name="run_id">
-            {% for run in runs %}
-              <option value="{{ run.run_id }}" {% if selected_run_id == run.run_id %}selected{% endif %}>
-                {{ run.label() }}
-              </option>
-            {% endfor %}
-            {% if not runs %}
-              <option value="">Sin corridas</option>
-            {% endif %}
-          </select>
-        </div>
-
-        <div class="dash-filter-item">
-          <label class="dash-filter-label">Tienda</label>
+          <label class="dash-filter-label">Tiendas</label>
           <select class="form-select form-select-sm" id="store" name="store">
             <option value="">Todas</option>
             {% for s in stores %}
@@ -129,77 +111,60 @@
           </select>
         </div>
 
-        <div class="dash-filter-item">
-          <label class="dash-filter-label">Folio</label>
-          <input type="text"
-                 class="form-control form-control-sm"
-                 id="folio"
-                 name="folio"
-                 value="{{ folio or '' }}"
-                 placeholder="Filtrar...">
-        </div>
-
-        <div class="dash-filter-item">
-          <label class="dash-filter-label">Responsable</label>
-          <input type="text"
-                 class="form-control form-control-sm"
-                 id="responsable"
-                 name="responsable"
-                 value="{{ responsable or '' }}"
-                 placeholder="Filtrar...">
+        <div class="dash-filter-item dash-filter-grow">
+          <label class="dash-filter-label">Buscar (texto o títulos al folio)</label>
+          <div class="d-flex gap-2">
+            <input type="text"
+                   class="form-control form-control-sm"
+                   id="folio"
+                   name="folio"
+                   value="{{ folio or '' }}"
+                   placeholder="Ej: 300, Benjamin...">
+            <input type="hidden" name="responsable" value="{{ responsable or '' }}">
+            <input type="hidden" name="run_id" value="{{ selected_run_id or '' }}">
+          </div>
         </div>
 
         <div class="dash-filter-actions">
-          <button type="submit" class="btn btn-primary btn-sm">Aplicar</button>
+          <button type="submit" class="btn btn-primary btn-sm">Aplicar filtros</button>
           <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary btn-sm">Limpiar</a>
         </div>
       </div>
     </form>
   </div>
 
-  <div class="dash-kpis">
-    <div class="dash-kpi-card">
-      <div class="dash-kpi-icon" style="background: rgba(29, 78, 216, 0.1); color: var(--primary);">
-        <i class="bi bi-box-seam"></i>
+  <div class="dash-kpi-row">
+    <div class="dash-kpi-tile">
+      <div class="dash-kpi-tile-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="7" height="7" rx="1"/>
+          <rect x="14" y="3" width="7" height="7" rx="1"/>
+          <rect x="3" y="14" width="7" height="7" rx="1"/>
+          <rect x="14" y="14" width="7" height="7" rx="1"/>
+        </svg>
       </div>
-      <div class="dash-kpi-content">
-        <div class="dash-kpi-value">{{ "{:,}".format(kpi_units_suggested) }}</div>
-        <div class="dash-kpi-label">Unidades sugeridas</div>
-      </div>
-    </div>
-
-    <div class="dash-kpi-card">
-      <div class="dash-kpi-icon" style="background: rgba(14, 165, 233, 0.1); color: var(--primary-2);">
-        <i class="bi bi-tags"></i>
-      </div>
-      <div class="dash-kpi-content">
-        <div class="dash-kpi-value">{{ "{:,}".format(kpi_skus_distintos) }}</div>
-        <div class="dash-kpi-label">SKUs con distribución</div>
+      <div class="dash-kpi-tile-content">
+        <div class="dash-kpi-tile-label">Top productos vendidos</div>
+        <div class="dash-kpi-tile-value">{{ "{:,}".format(kpi_skus_distintos) }}</div>
       </div>
     </div>
 
-    <div class="dash-kpi-card">
-      <div class="dash-kpi-icon" style="background: rgba(16, 185, 129, 0.1); color: #10b981;">
-        <i class="bi bi-shop"></i>
+    <div class="dash-kpi-tile">
+      <div class="dash-kpi-tile-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+          <line x1="12" y1="22.08" x2="12" y2="12"/>
+        </svg>
       </div>
-      <div class="dash-kpi-content">
-        <div class="dash-kpi-value">{{ "{:,}".format(kpi_tiendas_alcanzadas) }}</div>
-        <div class="dash-kpi-label">Tiendas alcanzadas</div>
-      </div>
-    </div>
-
-    <div class="dash-kpi-card">
-      <div class="dash-kpi-icon" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b;">
-        <i class="bi bi-archive"></i>
-      </div>
-      <div class="dash-kpi-content">
-        <div class="dash-kpi-value">{{ "{:,}".format(kpi_stock_cd_total) }}</div>
-        <div class="dash-kpi-label">Stock CD hoy</div>
+      <div class="dash-kpi-tile-content">
+        <div class="dash-kpi-tile-label">Stocked CD hoy</div>
+        <div class="dash-kpi-tile-value">{{ "{:,}".format(kpi_stock_cd_total) }}</div>
       </div>
       {% if current_user.has_permission('admin:reset') %}
-      <div class="dash-kpi-actions">
+      <div class="dash-kpi-tile-menu">
         <div class="dropdown">
-          <button class="btn btn-link btn-sm text-muted p-0" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Acciones de reset">
+          <button class="btn btn-link btn-sm text-muted p-0" type="button" data-bs-toggle="dropdown" aria-expanded="false">
             <i class="bi bi-three-dots-vertical"></i>
           </button>
           <ul class="dropdown-menu dropdown-menu-end">
@@ -230,141 +195,87 @@
     </div>
   </div>
 
-  <div class="dash-tables-row">
-    <div class="dash-table-col">
-      <div class="dash-card">
-        <div class="dash-card-header">
-          <div class="dash-card-title">
-            <i class="bi bi-graph-up-arrow me-2"></i>
-            Top productos vendidos
-            {% if selected_store %}<span class="dash-subtitle">— {{ selected_store }}</span>{% endif %}
-          </div>
-          <div class="dash-card-actions">
-            <input type="text" 
-                   class="form-control form-control-sm dash-table-search" 
-                   placeholder="Buscar..." 
-                   value="{{ sales_search }}"
-                   onkeydown="if(event.key==='Enter'){event.preventDefault();updateParam('sales_search', this.value, 'sales_page');}">
-          </div>
+  <div class="dash-main-table">
+    <div class="dash-table-card">
+      <div class="dash-table-header">
+        <div class="dash-table-title">
+          Distribución sugerida
+          {% if predictions %}
+          <span class="dash-table-subtitle">— {{ predictions[0][0].model_name.split('—')[0] }}</span>
+          {% endif %}
         </div>
-        <div class="dash-card-body">
-          <div class="table-responsive">
-            <table class="table table-sm dash-table">
-              <thead>
-                <tr>
-                  <th>SKU</th>
-                  <th>Producto</th>
-                  <th>Tienda</th>
-                  <th class="text-end">Unidades</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% if top_sales %}
-                  {% for r in top_sales %}
-                    <tr>
-                      <td class="fw-medium">{{ r.sku }}</td>
-                      <td>{{ r.product }}</td>
-                      <td>{{ r.store }}</td>
-                      <td class="text-end fw-semibold">{{ "{:,}".format(r.units|int) }}</td>
-                    </tr>
-                  {% endfor %}
-                {% else %}
-                  <tr><td colspan="4">{{ empty_state('📊', 'Sin datos de ventas para los filtros seleccionados.', 'Cargar ventas', url_for('upload')) }}</td></tr>
-                {% endif %}
-              </tbody>
-            </table>
-          </div>
-          {% if sales_pagination %}
-          {{ pagination_controls(sales_pagination, 'sales_page', 'sales_size', 'sales_search', sales_search, sales_size, 'sales') }}
+        <div class="dash-table-actions">
+          <input type="text" 
+                 class="form-control form-control-sm dash-inline-search" 
+                 placeholder="Buscar SKU" 
+                 value="{{ pred_search }}"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();updateParam('pred_search', this.value, 'pred_page');}">
+          {% if selected_run_id %}
+          <a class="btn btn-sm btn-primary" href="{{ url_for('export_predictions', run_id=selected_run_id) }}">Exportar</a>
+          {% else %}
+          <button class="btn btn-sm btn-outline-secondary" disabled>Exportar</button>
           {% endif %}
         </div>
       </div>
-    </div>
-
-    <div class="dash-table-col">
-      <div class="dash-card">
-        <div class="dash-card-header">
-          <div class="dash-card-title">
-            <i class="bi bi-box-arrow-in-right me-2"></i>
-            Distribución sugerida
-            {% if predictions %}<span class="dash-subtitle">— {{ predictions[0][0].model_name.split('—')[0] }}</span>{% endif %}
-          </div>
-          <div class="dash-card-actions">
-            <input type="text" 
-                   class="form-control form-control-sm dash-table-search" 
-                   placeholder="Buscar..." 
-                   value="{{ pred_search }}"
-                   onkeydown="if(event.key==='Enter'){event.preventDefault();updateParam('pred_search', this.value, 'pred_page');}">
-            {% if selected_run_id %}
-            <a class="btn btn-sm btn-primary" href="{{ url_for('export_predictions', run_id=selected_run_id) }}">
-              <i class="bi bi-download me-1"></i>Exportar
-            </a>
-            {% else %}
-            <button class="btn btn-sm btn-outline-secondary" disabled>Exportar</button>
-            {% endif %}
-          </div>
-        </div>
-        <div class="dash-card-body">
-          <div class="table-responsive">
-            <table class="table table-sm dash-table">
-              <thead>
-                <tr>
-                  <th>SKU</th>
-                  <th>Producto</th>
-                  <th>Tienda</th>
-                  <th class="text-end">Cant.</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% if predictions %}
-                  {% for p, prod, st in predictions %}
-                    <tr>
-                      <td class="fw-medium">{{ prod.sku }}</td>
-                      <td>{{ prod.name }}</td>
-                      <td>{{ st.name }}</td>
-                      <td class="text-end fw-semibold">{{ "{:,}".format(p.quantity|int) }}</td>
-                    </tr>
-                  {% endfor %}
-                {% else %}
-                  <tr><td colspan="4">{{ empty_state('📦', 'Sin predicciones para los filtros seleccionados.', 'Cargar ventas', url_for('upload')) }}</td></tr>
-                {% endif %}
-              </tbody>
-            </table>
-          </div>
-          {% if pred_pagination %}
-          {{ pagination_controls(pred_pagination, 'pred_page', 'pred_size', 'pred_search', pred_search, pred_size, 'pred') }}
-          {% endif %}
+      <div class="dash-table-body">
+        <div class="table-responsive">
+          <table class="table table-sm dash-table mb-0">
+            <thead>
+              <tr>
+                <th>SKU#</th>
+                <th>Tienda</th>
+                <th>Tienda</th>
+                <th class="text-end">Cant.</th>
+                <th class="text-end">SKU1.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% if predictions %}
+                {% for p, prod, st in predictions %}
+                  <tr>
+                    <td class="fw-medium">{{ prod.sku }}</td>
+                    <td>{{ st.name }}</td>
+                    <td>{{ st.name }}</td>
+                    <td class="text-end">{{ "{:,}".format(p.quantity|int) }}</td>
+                    <td class="text-end text-muted">{{ loop.index }}</td>
+                  </tr>
+                {% endfor %}
+              {% else %}
+                <tr><td colspan="5">{{ empty_state('📦', 'Sin predicciones para los filtros seleccionados.', 'Cargar ventas', url_for('upload')) }}</td></tr>
+              {% endif %}
+            </tbody>
+          </table>
         </div>
       </div>
+      {% if pred_pagination %}
+      {{ pagination_controls(pred_pagination, 'pred_page', 'pred_size', 'pred_search', pred_search, pred_size, 'pred') }}
+      {% endif %}
     </div>
   </div>
 
-  <div class="dash-remainder">
-    <div class="dash-card">
-      <div class="dash-card-header">
-        <div class="dash-card-title">
-          <i class="bi bi-box2-heart me-2"></i>
-          Resumen remanente CD
-          <span class="dash-subtitle">— Solo SKUs de la distribución seleccionada</span>
+  <div class="dash-remainder-section">
+    <div class="dash-table-card">
+      <div class="dash-table-header">
+        <div class="dash-table-title">
+          Remanente CD
+          <span class="dash-table-subtitle">: saldo mínimo CD pos distribución seleccionada</span>
         </div>
-        <div class="dash-card-actions">
+        <div class="dash-table-actions">
           <input type="text" 
-                 class="form-control form-control-sm dash-table-search" 
-                 placeholder="Buscar SKU o producto..." 
+                 class="form-control form-control-sm dash-inline-search" 
+                 placeholder="Buscar SKU..." 
                  value="{{ cd_search }}"
                  onkeydown="if(event.key==='Enter'){event.preventDefault();updateParam('cd_search', this.value, 'cd_page');}">
           {% if selected_run_id %}
-          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('export_cd_remanente', run_id=selected_run_id) }}">
-            <i class="bi bi-download me-1"></i>Exportar remanente
-          </a>
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('export_cd_remanente', run_id=selected_run_id) }}">Exportar remanente</a>
           {% else %}
           <button class="btn btn-sm btn-outline-secondary" disabled>Exportar remanente</button>
           {% endif %}
         </div>
       </div>
-      <div class="dash-card-body">
+      <div class="dash-table-body">
         <div class="table-responsive">
-          <table class="table table-sm dash-table">
+          <table class="table table-sm dash-table mb-0">
             <thead>
               <tr>
                 <th>SKU</th>
@@ -387,10 +298,10 @@
             </tbody>
           </table>
         </div>
-        {% if cd_pagination %}
-        {{ pagination_controls(cd_pagination, 'cd_page', 'cd_size', 'cd_search', cd_search, cd_size, 'cd') }}
-        {% endif %}
       </div>
+      {% if cd_pagination %}
+      {{ pagination_controls(cd_pagination, 'cd_page', 'cd_size', 'cd_search', cd_search, cd_size, 'cd') }}
+      {% endif %}
     </div>
   </div>
 
