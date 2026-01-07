@@ -1,0 +1,113 @@
+HARD MODE — Dashboard UI must match the provided mockup exactly (layout + spacing + visual hierarchy), while preserving ALL existing functionality and variables.
+
+CONTEXT
+FastDSO is Flask + Jinja + Bootstrap + custom style.css. Dashboard already works functionally (filters, KPIs, predictions, remanente, exports, runs). The task is ONLY UI layout/styling.
+
+ABSOLUTE RULES
+1) Do NOT change backend code, queries, routes, DB, or variable names.
+2) Do NOT remove any existing buttons/actions:
+   - Apply filters / Clear
+   - Export distribution
+   - Export remanente
+   - Run selector / active run info (if present)
+3) Keep current Jinja loops correct:
+   - predictions: for p, prod, st in predictions
+   - top_sales: use current structure
+   - stock_cd_filtered: for cd, prod in stock_cd_filtered
+4) Only modify:
+   - templates/dashboard.html
+   - static/css/style.css (append-only changes under a “Dashboard Mockup” section)
+5) Keep sidebar and base.html unchanged.
+
+VISUAL TARGET (MUST MATCH MOCKUP)
+The Dashboard page must be structured in 4 stacked zones:
+
+ZONE A — Header + Run summary (top strip)
+- A compact header row:
+  Left: “Panel”
+  Right: a search input “Buscar (globalmente)” (placeholder, can be disabled)
+- Immediately below: a single-line “Run summary strip” like:
+  “Folio: 300 | Repo Benjamin Saavedra — 2024-01-07 13:23”
+  This strip is a small rounded bar with subtle shadow.
+
+ZONE B — Filters row (compact)
+- Filters appear in a tight card/strip:
+  - Store dropdown
+  - Folio text input
+  - Responsable text input
+  - Buttons: “Aplicar filtros” (primary) and “Limpiar” (secondary)
+- Inputs are compact, aligned in one row (wrap if needed but prefer one row).
+- Very small vertical spacing between elements.
+
+ZONE C — KPI cards (2 cards only, like mockup)
+- Two wide KPI cards side by side:
+  Left card: “Top productos vendidos” with big number (e.g., 220)
+  Right card: “Stock CD hoy” with big number (e.g., 705,285)
+- Each card shows:
+  - small title (muted)
+  - big bold number
+  - small subtle subtext (optional)
+- Cards have:
+  - rounded corners
+  - soft shadow
+  - white background
+  - subtle blue accent
+
+ZONE D — Main content area
+- A single large card container holding:
+  1) “Distribución sugerida — <model name>” header row
+     - right side: small SKU search input + Export button
+  2) Predictions table (compact)
+  3) “Remanente CD” section directly below inside the same container:
+     - header row with “Remanente CD” title
+     - right side: pagination controls (can keep existing pagination)
+     - table for remanente preview
+
+IMPORTANT: In the mockup, Top Sales table is NOT displayed as a big full table. It’s summarized via the KPI card only.
+So: remove the big Top Sales table block from the dashboard view, but do NOT remove the backend data. Just don’t render it as a main table.
+If you still want a preview, limit to a tiny 5-row preview inside the KPI card using very small text (optional).
+
+FUNCTIONALITY MUST REMAIN
+- Filters must still work and persist selected values.
+- Predictions table must still show the active run (no overlap).
+- Export buttons still work.
+- Remanente still shows based on the same run filter.
+- If no predictions, show a clean empty state inside the distribution card.
+
+STYLING INSTRUCTIONS (VERY SPECIFIC)
+Add a new CSS section in static/css/style.css:
+
+/* === Dashboard Mockup Layout === */
+- Use a wrapper .dash-mock
+- Use .dash-topbar, .dash-runstrip, .dash-filters, .dash-kpi-grid, .dash-panel-card
+- Use consistent spacing: 10–14px gaps
+- Card radius: 16–18px
+- Shadow: subtle (reuse existing var(--shadow) if exists)
+- Background: light gradient remains (do not change body background)
+- Table: compact, small font, minimal borders
+
+DO NOT introduce new frameworks or new CSS files.
+
+IMPLEMENTATION STEPS (MANDATORY ORDER)
+1) Rewrite templates/dashboard.html layout to follow zones A–D exactly.
+2) Keep the existing filter form, but restyle/relayout to match zone B.
+3) Render only two KPI cards: “Top productos vendidos” and “Stock CD hoy”.
+   - Use existing variables for values.
+   - If you don’t have “Top productos vendidos number” directly, compute it from existing backend-provided top_sales length or units. If not available, show kpi_units_suggested as placeholder but label correctly (preferred: show total top_sales units if provided).
+4) Create a single main card that contains predictions + remanente stacked (zone D).
+5) Add a small SKU search input in predictions header (front-end only placeholder is fine).
+6) Add empty state messages if predictions/stock_cd_filtered are empty.
+
+DELIVERABLES
+- Provide the full updated templates/dashboard.html
+- Provide only the appended CSS block to static/css/style.css
+- Do not modify any other templates or backend code.
+
+VALIDATION CHECKLIST
+- Dashboard renders without Jinja errors.
+- Filters work.
+- Exports work.
+- No overlapping runs.
+- Layout visually matches mockup: compact, modern, two KPI cards, one main distribution/remanent card.
+
+Proceed now.
