@@ -1,3 +1,15 @@
+You MUST apply changes by overwriting files exactly. No partial edits. No “plan only”.
+
+TARGET FILES:
+- templates/dashboard.html  (FULL REPLACE)
+- static/css/style.css      (APPEND ONLY)
+
+STEP 1 — HARD REPLACE dashboard.html
+Open templates/dashboard.html and REPLACE ALL CONTENTS with the exact file content below (verbatim). Do not keep any old sections. Do not keep any other tables besides predictions+remanente. Do not render the full top_sales table.
+
+After replacing, print the first 30 lines of templates/dashboard.html to confirm it was overwritten.
+
+=== BEGIN dashboard.html (FULL FILE) ===
 {% extends 'base.html' %}
 {% block content %}
 
@@ -158,3 +170,91 @@
 </div>
 
 {% endblock %}
+=== END dashboard.html ===
+
+
+STEP 2 — APPEND CSS
+Open static/css/style.css and APPEND the CSS block below at the VERY END (do not delete other CSS).
+
+=== BEGIN CSS APPEND ===
+/* === Dashboard Mockup v1 === */
+.dashv1{ display:flex; flex-direction:column; gap:12px; }
+.dashv1-runstrip{
+  background: rgba(255,255,255,.75);
+  border: 1px solid rgba(18,40,90,.10);
+  border-radius: 14px;
+  padding: 10px 12px;
+  box-shadow: var(--shadow);
+}
+.dashv1-pill{
+  display:inline-block; font-size:12px; font-weight:700;
+  background: rgba(29,78,216,.10);
+  color: #0b2b7a;
+  border: 1px solid rgba(29,78,216,.18);
+  padding: 2px 8px; border-radius: 999px; margin-right:8px;
+}
+.dashv1-runtext{ color: rgba(15,23,42,.75); font-size: 13px; }
+.dashv1-filters{
+  display:grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr auto;
+  gap: 10px;
+  align-items:end;
+  background: rgba(255,255,255,.65);
+  border: 1px solid rgba(18,40,90,.10);
+  border-radius: 14px;
+  padding: 10px 12px;
+  box-shadow: var(--shadow);
+}
+.dashv1-label{ font-size: 12px; font-weight: 700; color: rgba(15,23,42,.75); margin-bottom:6px; }
+.dashv1-actions{ display:flex; gap:8px; justify-content:flex-end; }
+.dashv1-kpis{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.dashv1-kpi{
+  background: #fff;
+  border: 1px solid rgba(18,40,90,.10);
+  border-radius: 16px;
+  padding: 14px 16px;
+  box-shadow: var(--shadow);
+  min-height: 86px;
+}
+.dashv1-kpi-title{ font-size: 12px; font-weight: 800; color: rgba(15,23,42,.65); }
+.dashv1-kpi-value{ font-size: 30px; font-weight: 900; color: #0b2b7a; margin-top: 4px; }
+.dashv1-panel{
+  background:#fff;
+  border: 1px solid rgba(18,40,90,.10);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  overflow:hidden;
+}
+.dashv1-panel-head{
+  display:flex; align-items:center; justify-content:space-between;
+  padding: 12px 14px;
+  background: rgba(245,248,255,.9);
+  border-bottom: 1px solid rgba(18,40,90,.08);
+}
+.dashv1-panel-title{ font-weight: 900; color:#0b1b3a; }
+.dashv1-subtitle{ font-weight:700; color: rgba(15,23,42,.60); margin-left:6px; font-size:12px; }
+.dashv1-panel-tools{ display:flex; gap:8px; align-items:center; }
+.dashv1-search{ width: 160px; }
+.dashv1-tablewrap{ padding: 0 12px 12px 12px; }
+.dashv1-table thead th{ font-size: 12px; color: rgba(15,23,42,.70); border-bottom: 1px solid rgba(18,40,90,.10); }
+.dashv1-table tbody td{ font-size: 12px; vertical-align: middle; }
+.dashv1-mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+.dashv1-empty{ color: rgba(15,23,42,.55); padding: 14px 8px; }
+.dashv1-divider{ height: 10px; background: rgba(245,248,255,.9); border-top: 1px solid rgba(18,40,90,.06); border-bottom: 1px solid rgba(18,40,90,.06); }
+@media (max-width: 1200px){
+  .dashv1-filters{ grid-template-columns: 1fr 1fr; }
+  .dashv1-kpis{ grid-template-columns: 1fr; }
+}
+=== END CSS APPEND ===
+
+STEP 3 — VERIFY
+- Confirm there is NO full top_sales table rendered in dashboard.html.
+- Confirm only two KPI cards exist.
+- Confirm predictions and remanente are inside ONE panel card.
+- Confirm dashboard still renders without Jinja errors.
+
+Now implement. Do not deviate.
