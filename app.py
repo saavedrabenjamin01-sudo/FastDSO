@@ -2877,20 +2877,38 @@ def reset_stock_cd():
     return redirect(url_for('dashboard'))
 
 def process_stock_cd_upload(job_id, payload):
-    """Background task to process Stock CD upload with bulk operations. Uses isolated session."""
+    """
+    Background task to process Stock CD upload with bulk operations. Uses isolated session.
+    
+    Modes:
+    - append: Add quantities to existing SKUs, create new ones. Does NOT touch SKUs not in file.
+    - replace_today: Delete all stock for snapshot_date, then insert new rows.
+    - replace_all: Delete ALL stock history, then insert new rows.
+    
+    Append mode scenario:
+    - Start: SKU A=10, SKU B=20 (snapshot_date X)
+    - Upload: SKU A +5
+    - Result: SKU A=15, SKU B=20 (unchanged), same snapshot_date
+    """
     from datetime import date
     import os
     
     filepath = payload.get('filepath')
-    modo = payload.get('modo', 'replace')
-    snapshot_date_str = payload.get('snapshot_date')
+    modo = payload.get('modo', 'replace_today')
+    fecha_doc_str = payload.get('fecha_doc')
     user_id = payload.get('user_id')
     original_filename = payload.get('original_filename', 'unknown')
     
-    snapshot_date = date.fromisoformat(snapshot_date_str) if snapshot_date_str else date.today()
-    
     session = get_isolated_session()
     try:
+        update_job_status(job_id, progress=5, message='Determinando fecha de snapshot...')
+        
+        if fecha_doc_str:
+            snapshot_date = date.fromisoformat(fecha_doc_str)
+        else:
+            max_date_row = session.query(func.max(StockCD.as_of_date)).scalar()
+            snapshot_date = max_date_row if max_date_row else date.today()
+        
         update_job_status(job_id, progress=10, message='Leyendo archivo...')
         
         if filepath.endswith('.csv'):
@@ -2950,20 +2968,24 @@ def process_stock_cd_upload(job_id, payload):
         
         update_job_status(job_id, progress=60, message='Preparando stock...')
         
-        if modo == 'replace':
+        created = 0
+        updated = 0
+        
+        if modo == 'replace_all':
+            session.query(StockCD).delete()
+            session.commit()
+        elif modo == 'replace_today':
             session.query(StockCD).filter_by(as_of_date=snapshot_date).delete()
             session.commit()
         
         existing_stock = {}
-        if modo == 'add':
+        if modo == 'append':
             for sc in session.query(StockCD).filter_by(as_of_date=snapshot_date).all():
                 existing_stock[sc.product_id] = sc
         
         update_job_status(job_id, progress=70, message='Insertando stock...')
         
         stock_inserts = []
-        created = 0
-        updated = 0
         
         for _, row in df.iterrows():
             sku = row['sku']
@@ -2972,8 +2994,9 @@ def process_stock_cd_upload(job_id, payload):
             if not pid:
                 continue
             
-            if modo == 'add' and pid in existing_stock:
+            if modo == 'append' and pid in existing_stock:
                 existing_stock[pid].quantity += qty
+                existing_stock[pid].as_of_date = snapshot_date
                 updated += 1
             else:
                 stock_inserts.append({
@@ -3000,12 +3023,13 @@ def process_stock_cd_upload(job_id, payload):
         except:
             pass
         
+        mode_label = {'append': 'sumado', 'replace_today': 'reemplazado hoy', 'replace_all': 'reemplazado todo'}.get(modo, modo)
         update_job_status(
             job_id,
             status='done',
             progress=100,
-            message=f'Stock CD cargado. Nuevos: {created}, Actualizados: {updated}',
-            result={'created': created, 'updated': updated, 'total_rows': total_rows}
+            message=f'Stock CD {mode_label} ({snapshot_date}). Nuevos: {created}, Actualizados: {updated}',
+            result={'created': created, 'updated': updated, 'total_rows': total_rows, 'snapshot_date': str(snapshot_date)}
         )
         
     except Exception as e:
@@ -3047,14 +3071,14 @@ def upload_stock_cd():
         filepath = os.path.join(upload_dir, saved_filename)
         file.save(filepath)
         
-        modo = request.form.get('modo', 'replace')
-        snapshot_date = date.today()
+        modo = request.form.get('mode', 'replace_today')
+        fecha_doc_str = request.form.get('fecha_doc', '').strip()
         user_id = current_user.id if current_user.is_authenticated else None
         
         payload = {
             'filepath': filepath,
             'modo': modo,
-            'snapshot_date': str(snapshot_date),
+            'fecha_doc': fecha_doc_str if fecha_doc_str else None,
             'user_id': user_id,
             'original_filename': file.filename
         }

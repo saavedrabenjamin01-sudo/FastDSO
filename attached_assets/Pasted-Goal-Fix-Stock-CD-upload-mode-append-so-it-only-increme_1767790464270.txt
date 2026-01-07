@@ -1,0 +1,40 @@
+Goal: Fix Stock CD upload mode append so it only increments quantities for SKUs present in the file, without zeroing other SKUs, and always preserves/sets as_of_date.
+
+Constraints:
+	•	Do NOT change UI or templates unless needed.
+	•	Do NOT change database schema.
+	•	Only adjust the Stock CD upload route/service handling the three modes: append, replace_today, replace_all.
+	•	Keep current behavior for replace_today and replace_all.
+	•	Must work for both CSV and XLSX.
+
+Bug to fix:
+	•	In append mode, current implementation sums uploaded SKUs but sets all other SKUs to 0 and also causes missing/blank as_of_date.
+
+Required behavior (append):
+	1.	Determine snapshot_date:
+	•	If user provides fecha_doc (date input), use it.
+	•	Else if there is any existing StockCD row, use the MAX(StockCD.as_of_date).
+	•	Else fallback to date.today().
+	2.	Parse the uploaded file into rows with sku and quantity (ignore non-numeric quantities safely).
+	3.	Normalize SKU as string with leading zeros preserved (treat as text).
+	4.	For each SKU in the upload:
+	•	Find Product by sku.
+	•	If missing, create Product (use product_name if available, else sku as name).
+	•	Upsert StockCD row using (product_id, snapshot_date):
+	•	If exists: row.quantity = row.quantity + delta (delta can be 0+)
+	•	Else: create with quantity = delta and as_of_date = snapshot_date
+	5.	Do NOT update any StockCD rows for SKUs not present in the file.
+	6.	Ensure all rows written have as_of_date = snapshot_date (never null).
+	7.	Commit once at the end, and show correct flash message with snapshot_date used.
+
+Also verify:
+	•	The distribution generation logic still discounts from the latest snapshot date (MAX(as_of_date)) and works after append.
+	•	Add a small unit/integration test or a simple “manual scenario” in comments:
+	•	Start with snapshot_date having SKU A=10, SKU B=20.
+	•	Append upload contains only SKU A +5.
+	•	Result must be: A=15, B=20 (unchanged), both with same snapshot_date.
+	•	No rows should have null as_of_date.
+
+Deliverables:
+	•	Provide the exact updated function/route code for Stock CD upload.
+	•	If helper functions are needed (normalize_sku, parse_date), add them minimally.
