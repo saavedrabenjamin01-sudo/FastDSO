@@ -1,0 +1,264 @@
+HARD MODE — FIX DASHBOARD TO MATCH MOCKUP WITH EXACT MARKUP + CSS (NO BACKEND CHANGES)
+
+You MUST apply actual edits and you MUST paste the exact markup structure described below. No creative redesign. No table-first layout. We want a compact mockup-style dashboard.
+
+FILES TO EDIT
+1) templates/dashboard.html  -> FULL REPLACE
+2) static/css/style.css      -> APPEND ONLY (do not remove other CSS)
+
+DO NOT TOUCH
+- app.py / backend routes / queries
+- variable names from backend
+- base.html / sidebar / permissions
+
+REQUIRED DASHBOARD LAYOUT (exact)
+The dashboard must have:
+A) Run strip row (single pill)
+B) Filters row (compact)
+C) KPI row (two cards only)
+D) Main panel card with:
+   - Distribución sugerida header (title + search + Export)
+   - Predictions table (compact, max 10 rows)
+   - Remanente header (title + Export remanente + pager placeholder ok)
+   - Remanente table (compact, max 10 rows)
+
+IMPORTANT:
+- REMOVE any extra large tables or separate cards. Everything is inside ONE main panel card.
+- Do NOT render a full Top Sales table. Only show a KPI number in the “Top productos vendidos” KPI card.
+
+TEMPLATE VARIABLES (must keep)
+- stores, selected_store, folio, responsable
+- predictions: list of (Prediction, Product, Store)
+- stock_cd_filtered: list of (StockCD, Product)
+- kpi_stock_cd_total
+- top_sales optional (if exists). If top_sales not available, show fallback.
+- Exports:
+  url_for('export_predictions')
+  url_for('export_cd_remanente')
+
+UNPACKING RULES
+- predictions: for p, prod, st in predictions[:10]
+- stock_cd_filtered: for cd, prod in stock_cd_filtered[:10]
+
+FULL REPLACE templates/dashboard.html WITH THIS (verbatim structure; adapt only variable outputs, not structure):
+
+{% extends 'base.html' %}
+{% block content %}
+<div class="dashv1">
+
+  <!-- A) Run strip -->
+  <div class="dashv1-runstrip">
+    <div class="dashv1-runlabel">
+      <span class="dashv1-pill">Folio</span>
+      <span class="dashv1-runtext">
+        {{ (folio if folio) else '—' }} | {{ (responsable if responsable) else '—' }}
+        {% if active_run is defined and active_run %}
+          — {{ active_run.created_at if active_run.created_at is defined else '' }}
+        {% endif %}
+      </span>
+    </div>
+  </div>
+
+  <!-- B) Filters -->
+  <form class="dashv1-filters" method="get" action="{{ url_for('dashboard') }}">
+    <div class="dashv1-filter">
+      <label class="dashv1-label">Tiendas</label>
+      <select class="form-select form-select-sm" name="store">
+        <option value="">Todas las tiendas</option>
+        {% for s in stores %}
+          <option value="{{ s.name }}" {% if selected_store == s.name %}selected{% endif %}>{{ s.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="dashv1-filter">
+      <label class="dashv1-label">Folio</label>
+      <input class="form-control form-control-sm" name="folio" value="{{ folio or '' }}" placeholder="Buscar por folio">
+    </div>
+
+    <div class="dashv1-filter">
+      <label class="dashv1-label">Responsable</label>
+      <input class="form-control form-control-sm" name="responsable" value="{{ responsable or '' }}" placeholder="Responsable">
+    </div>
+
+    <div class="dashv1-actions">
+      <button class="btn btn-primary btn-sm">Aplicar filtros</button>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('dashboard') }}">Limpiar</a>
+    </div>
+  </form>
+
+  <!-- C) KPI row (2 cards) -->
+  <div class="dashv1-kpis">
+    <div class="dashv1-kpi">
+      <div class="dashv1-kpi-title">Top productos vendidos</div>
+      <div class="dashv1-kpi-value">
+        {% if top_sales is defined and top_sales %}
+          {{ (top_sales|length) }}
+        {% else %}
+          {{ (kpi_units_suggested if kpi_units_suggested is defined else 0) }}
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="dashv1-kpi">
+      <div class="dashv1-kpi-title">Stock CD hoy</div>
+      <div class="dashv1-kpi-value">{{ kpi_stock_cd_total }}</div>
+    </div>
+  </div>
+
+  <!-- D) Main panel card -->
+  <div class="dashv1-panel">
+    <div class="dashv1-panel-head">
+      <div class="dashv1-panel-title">
+        Distribución sugerida
+        {% if predictions and predictions[0] %}
+          <span class="dashv1-subtitle">— {{ predictions[0][0].model_name }}</span>
+        {% endif %}
+      </div>
+      <div class="dashv1-panel-tools">
+        <input class="form-control form-control-sm dashv1-search" placeholder="Buscar SKU" disabled>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('export_predictions') }}">Exportar</a>
+      </div>
+    </div>
+
+    <div class="dashv1-tablewrap">
+      <table class="table table-sm mb-0 dashv1-table">
+        <thead>
+          <tr>
+            <th>SKU</th>
+            <th>Producto</th>
+            <th>Tienda</th>
+            <th class="text-end">Cant.</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if predictions %}
+            {% for p, prod, st in predictions[:10] %}
+              <tr>
+                <td class="dashv1-mono">{{ prod.sku }}</td>
+                <td>{{ prod.name }}</td>
+                <td>{{ st.name }}</td>
+                <td class="text-end">{{ p.quantity }}</td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr><td colspan="4" class="dashv1-empty">Sin predicciones para los filtros seleccionados.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="dashv1-divider"></div>
+
+    <div class="dashv1-panel-head">
+      <div class="dashv1-panel-title">
+        Remanente CD <span class="dashv1-subtitle">: saldo mínimo CD pos distribución seleccionada</span>
+      </div>
+      <div class="dashv1-panel-tools">
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('export_cd_remanente') }}">Exportar remanente</a>
+      </div>
+    </div>
+
+    <div class="dashv1-tablewrap">
+      <table class="table table-sm mb-0 dashv1-table">
+        <thead>
+          <tr>
+            <th>SKU</th>
+            <th>Producto</th>
+            <th class="text-end">Stock CD disponible</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if stock_cd_filtered %}
+            {% for cd, prod in stock_cd_filtered[:10] %}
+              <tr>
+                <td class="dashv1-mono">{{ prod.sku }}</td>
+                <td>{{ prod.name }}</td>
+                <td class="text-end">{{ cd.quantity }}</td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr><td colspan="3" class="dashv1-empty">Sin datos de Stock CD disponibles para este run.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+NOW CSS:
+Append this EXACT CSS block to static/css/style.css at bottom:
+
+/* === Dashboard Mockup v1 === */
+.dashv1{ display:flex; flex-direction:column; gap:12px; }
+.dashv1-runstrip{
+  background: rgba(255,255,255,.75);
+  border: 1px solid rgba(18,40,90,.10);
+  border-radius: 14px;
+  padding: 10px 12px;
+  box-shadow: var(--shadow);
+}
+.dashv1-pill{
+  display:inline-block; font-size:12px; font-weight:700;
+  background: rgba(29,78,216,.10);
+  color: #0b2b7a;
+  border: 1px solid rgba(29,78,216,.18);
+  padding: 2px 8px; border-radius: 999px; margin-right:8px;
+}
+.dashv1-runtext{ color: rgba(15,23,42,.75); font-size: 13px; }
+.dashv1-filters{
+  display:grid;
+  grid-template-columns: 1.2fr 1fr 1fr auto;
+  gap: 10px;
+  align-items:end;
+  background: rgba(255,255,255,.65);
+  border: 1px solid rgba(18,40,90,.10);
+  border-radius: 14px;
+  padding: 10px 12px;
+  box-shadow: var(--shadow);
+}
+.dashv1-label{ font-size: 12px; font-weight: 700; color: rgba(15,23,42,.75); margin-bottom:6px; }
+.dashv1-actions{ display:flex; gap:8px; justify-content:flex-end; }
+.dashv1-kpis{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.dashv1-kpi{
+  background: #fff;
+  border: 1px solid rgba(18,40,90,.10);
+  border-radius: 16px;
+  padding: 14px 16px;
+  box-shadow: var(--shadow);
+  min-height: 86px;
+}
+.dashv1-kpi-title{ font-size: 12px; font-weight: 800; color: rgba(15,23,42,.65); }
+.dashv1-kpi-value{ font-size: 30px; font-weight: 900; color: #0b2b7a; margin-top: 4px; }
+.dashv1-panel{
+  background:#fff;
+  border: 1px solid rgba(18,40,90,.10);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  overflow:hidden;
+}
+.dashv1-panel-head{
+  display:flex; align-items:center; justify-content:space-between;
+  padding: 12px 14px;
+  background: rgba(245,248,255,.9);
+  border-bottom: 1px solid rgba(18,40,90,.08);
+}
+.dashv1-panel-title{ font-weight: 900; color:#0b1b3a; }
+.dashv1-subtitle{ font-weight:700; color: rgba(15,23,42,.60); margin-left:6px; font-size:12px; }
+.dashv1-panel-tools{ display:flex; gap:8px; align-items:center; }
+.dashv1-search{ width: 160px; }
+.dashv1-tablewrap{ padding: 0 12px 12px 12px; }
+.dashv1-table thead th{ font-size: 12px; color: rgba(15,23,42,.70); border-bottom: 1px solid rgba(18,40,90,.10); }
+.dashv1-table tbody td{ font-size: 12px; vertical-align: middle; }
+.dashv1-mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+.dashv1-empty{ color: rgba(15,23,42,.55); padding: 14px 8px; }
+.dashv1-divider{ height: 10px; background: rgba(245,248,255,.9); border-top: 1px solid rgba(18,40,90,.06); border-bottom: 1px solid rgba(18,40,90,.06); }
+
+Ensure it renders and matches mockup.
+No other changes.
