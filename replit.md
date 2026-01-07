@@ -183,6 +183,8 @@ STOCKOUT_DEBUG = False         # Enable debug logging
 6. Marks predictions with "| BREAK_REPLENISH" in model_name
 
 ## Recent Changes
+- January 7, 2026: Redesigned Dashboard V1.1 with modern card-based layout, KPI cards with icons, side-by-side tables, topbar with global search
+- January 7, 2026: Fixed Stock CD upload modes (append, replace_today, replace_all) with proper form field handling and snapshot date logic
 - January 6, 2026: Added unified processing modal overlay for all upload/processing operations with animated SVG icons
 - January 6, 2026: Implemented Runs Center with active run management, status workflow, and run comparison
 - January 6, 2026: Added is_active column to Run model for active run designation

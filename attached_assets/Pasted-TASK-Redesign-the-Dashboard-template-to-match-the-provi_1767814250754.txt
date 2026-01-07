@@ -1,0 +1,94 @@
+TASK: Redesign the Dashboard template to match the provided mockup style while preserving 100% of current functionality.
+
+CONTEXT
+FastDSO is a Flask + Jinja + Bootstrap app with:
+- Runs Center (run_id selection / active run)
+- Dashboard filters (store, folio, responsable, run selector if exists)
+- KPI cards
+- Tables: Top sales, Suggested distribution, CD remainder
+- Exports and pagination
+- Role-based permissions
+- Job-based processing for heavy uploads
+We must NOT break any of these.
+
+GOAL (UI)
+Update ONLY the Dashboard UI to match the mockup:
+- Clean topbar with global search input (placeholder)
+- Filter strip (run/folio/store/responsable) with compact inputs
+- KPI cards in a row (2–4 cards) with large numbers
+- Two main tables side-by-side (Top sales left, Suggested distribution right)
+- Remainder table below, full width
+- Card-based layout, rounded corners, soft shadows, blue accents consistent with sidebar
+- Keep the sidebar and base layout intact
+
+HARD RULES
+1) Do NOT change backend logic, routes, query results, or database schema.
+2) Do NOT remove any existing template variables. Only reorganize how they are displayed.
+3) Preserve all existing buttons and actions:
+   - Apply filters / Clear
+   - Export distribution
+   - Export remanente
+   - Pagination controls (if present)
+4) Preserve Run behavior:
+   - Dashboard must show the currently selected/active run as before.
+   - If run_id selector exists, keep it. If not, keep current active run logic untouched.
+5) Preserve role-based visibility:
+   - Buttons/sections only show if current permissions allow.
+
+IMPLEMENTATION DETAILS
+A) Template work:
+- Modify templates/dashboard.html (only) to restructure layout.
+- Keep current Jinja blocks and variables:
+  stores, selected_store, folio, responsable, predictions, top_sales, stock_cd_filtered,
+  kpi_units_suggested, kpi_skus_distintos, kpi_tiendas_alcanzadas, kpi_stock_cd_total,
+  export endpoints, and any run-related vars (runs list / selected_run_id / active_run).
+- Ensure loops keep correct unpacking:
+  - predictions: for p, prod, st in predictions
+  - stock_cd_filtered: for cd, prod in stock_cd_filtered
+  - top_sales: use row.sku / row.product / row.store / row.units (or current structure)
+
+B) Styling:
+- Add minimal new CSS to static/css/style.css under a “Dashboard V1.1” section:
+  - .dash-wrap, .dash-topbar, .dash-filters, .dash-kpis, .dash-card, .dash-table
+  - Rounded corners (16–18px), subtle shadow, light background, blue accent borders
+  - Make tables compact, align headers, keep sticky table header optional
+- Do NOT create a new CSS file. Extend existing.
+
+C) Components to include (matching mockup):
+1) Topbar:
+- Left: page title “Panel”
+- Right: global search input (disabled placeholder is fine)
+2) Filters block:
+- Run summary line (folio + responsable + date) if available
+- Store dropdown
+- Folio text filter
+- Responsable text filter
+- Buttons: Apply / Clear
+3) KPI row:
+- Units suggested
+- SKUs with distribution
+- Stores reached
+- Stock CD today (or current snapshot total)
+4) Tables row:
+- Left: Top sales (top 10) with search field (optional, can be placeholder)
+- Right: Suggested distribution (top 10) + Export button on header
+5) Remainder:
+- Full width table + Export remanente button
+
+D) Keep functionality:
+- Keep all form names and query params unchanged.
+- Keep export URL parameters unchanged.
+- Keep existing pagination markup if present (just restyle/relocate).
+- Ensure no JS changes required.
+
+ACCEPTANCE TESTS
+- Dashboard loads with no Jinja errors.
+- Filters apply correctly and persist selected values.
+- Exports still work.
+- Runs selection (if present) still works and prevents overlap.
+- All KPI numbers match backend values.
+- Layout visually matches mockup: compact, modern, card-based.
+
+DELIVERABLE
+- Provide the updated templates/dashboard.html and the appended CSS changes in style.css.
+- Do not modify other templates unless absolutely necessary.
