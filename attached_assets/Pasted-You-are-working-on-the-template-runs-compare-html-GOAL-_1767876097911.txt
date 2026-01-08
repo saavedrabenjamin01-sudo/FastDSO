@@ -1,0 +1,62 @@
+You are working on the template `runs_compare.html`.
+
+GOAL:
+Improve the visual clarity of the "Compare Runs" page to match the FastDSO dashboard style, WITHOUT changing any backend logic, routes, variables, or calculations.
+
+STRICT RULES:
+- Do NOT change Python code, queries, or Jinja variables.
+- Do NOT rename variables.
+- Only update HTML structure and CSS classes.
+- Keep all existing data and functionality.
+
+STEP 1 – Comparison KPI Cards (Top Section)
+- Replace the current alert-style blocks (Left / Right / Delta) with dashboard-style KPI cards.
+- Layout: 3 cards in a single row.
+- Card styles:
+  - Left Run → neutral blue tone
+  - Right Run → neutral green tone
+  - Delta → conditional color:
+      * Positive delta → green
+      * Negative delta → red
+      * Zero delta → muted gray
+- Each card must display:
+  - Run label (Left / Right / Delta)
+  - Units
+  - SKUs
+  - Stores
+- Use rounded corners, soft shadow, and spacing consistent with dashboard KPI cards.
+
+STEP 2 – Delta Emphasis
+- Delta values must be visually dominant:
+  - Larger font size
+  - Bold weight
+- Add +/- sign explicitly.
+- Use color-coded badges for delta values.
+
+STEP 3 – Comparison Table Improvements
+- Keep the same table columns and data.
+- Improve readability:
+  - Zebra striping (very subtle).
+  - Right-align numeric columns.
+- Delta column:
+  - Green background for positive values.
+  - Red background for negative values.
+  - Muted gray for zero.
+- Rows with delta = 0:
+  - Reduce opacity slightly to de-emphasize.
+- Sort remains unchanged (do not alter logic).
+
+STEP 4 – Empty Space Handling
+- Reduce unused vertical space below the table.
+- Center empty-state messages if no differences exist.
+- Use the same empty-state icon style used elsewhere in FastDSO.
+
+STEP 5 – Visual Consistency
+- Match fonts, paddings, border-radius, and shadows used in:
+  - dashboard.html
+  - runs.html
+- Do NOT introduce new colors outside the existing FastDSO palette.
+
+OUTPUT:
+- Return the full updated HTML for `runs_compare.html`.
+- If CSS changes are needed, list them clearly at the bottom.

@@ -1,19 +1,21 @@
 {% extends 'base.html' %}
 {% block content %}
 
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <div>
-    <h5 class="mb-0">Comparar Corridas</h5>
-    <small class="text-muted">Compare dos corridas de distribución</small>
+<div class="compare-wrap">
+  <div class="compare-header">
+    <div class="compare-header-text">
+      <h1 class="compare-title">Comparar Corridas</h1>
+      <p class="compare-subtitle">Compara dos corridas de distribución para analizar diferencias</p>
+    </div>
+    <a href="{{ url_for('runs') }}" class="btn compare-btn-back">
+      <i class="bi bi-arrow-left me-1"></i>Volver
+    </a>
   </div>
-  <a href="{{ url_for('runs') }}" class="btn btn-outline-secondary btn-sm">Volver</a>
-</div>
 
-<div class="card mb-3">
-  <div class="card-body">
-    <form method="get" action="{{ url_for('compare_runs') }}" class="row g-3">
-      <div class="col-md-5">
-        <label class="form-label">Corrida Izquierda (Base)</label>
+  <div class="compare-select-card">
+    <form method="get" action="{{ url_for('compare_runs') }}" class="compare-select-form">
+      <div class="compare-select-field">
+        <label class="compare-label">Corrida Izquierda (Base)</label>
         <select name="left" class="form-select">
           <option value="">Seleccionar...</option>
           {% for r in distribution_runs %}
@@ -24,8 +26,11 @@
           {% endfor %}
         </select>
       </div>
-      <div class="col-md-5">
-        <label class="form-label">Corrida Derecha (Nueva)</label>
+      <div class="compare-select-vs">
+        <i class="bi bi-arrow-left-right"></i>
+      </div>
+      <div class="compare-select-field">
+        <label class="compare-label">Corrida Derecha (Nueva)</label>
         <select name="right" class="form-select">
           <option value="">Seleccionar...</option>
           {% for r in distribution_runs %}
@@ -36,66 +41,95 @@
           {% endfor %}
         </select>
       </div>
-      <div class="col-md-2 d-flex align-items-end">
-        <button type="submit" class="btn btn-primary w-100">Comparar</button>
-      </div>
+      <button type="submit" class="btn compare-btn-submit">
+        <i class="bi bi-arrow-repeat me-1"></i>Comparar
+      </button>
     </form>
   </div>
-</div>
 
-{% if left_run and right_run %}
-<div class="row mb-3">
-  <div class="col-md-4">
-    <div class="card border-primary">
-      <div class="card-header bg-primary text-white">Izquierda: {{ left_run.run_id[:8] }}</div>
-      <div class="card-body">
-        <p class="mb-1"><strong>Fecha:</strong> {{ left_run.created_at.strftime('%Y-%m-%d %H:%M') if left_run.created_at else '-' }}</p>
-        <p class="mb-1"><strong>Unidades:</strong> {{ '{:,}'.format(left_kpis.total_units) }}</p>
-        <p class="mb-1"><strong>SKUs:</strong> {{ left_kpis.distinct_skus }}</p>
-        <p class="mb-0"><strong>Tiendas:</strong> {{ left_kpis.distinct_stores }}</p>
+  {% if left_run and right_run %}
+  <div class="compare-kpi-row">
+    <div class="compare-kpi compare-kpi-left">
+      <div class="compare-kpi-header">
+        <span class="compare-kpi-tag">Base</span>
+        <span class="compare-kpi-id">{{ left_run.run_id[:8] }}</span>
+      </div>
+      <div class="compare-kpi-date">{{ left_run.created_at.strftime('%Y-%m-%d %H:%M') if left_run.created_at else '-' }}</div>
+      <div class="compare-kpi-stats">
+        <div class="compare-kpi-stat">
+          <div class="compare-kpi-stat-value">{{ '{:,}'.format(left_kpis.total_units) }}</div>
+          <div class="compare-kpi-stat-label">Unidades</div>
+        </div>
+        <div class="compare-kpi-stat">
+          <div class="compare-kpi-stat-value">{{ left_kpis.distinct_skus }}</div>
+          <div class="compare-kpi-stat-label">SKUs</div>
+        </div>
+        <div class="compare-kpi-stat">
+          <div class="compare-kpi-stat-value">{{ left_kpis.distinct_stores }}</div>
+          <div class="compare-kpi-stat-label">Tiendas</div>
+        </div>
       </div>
     </div>
-  </div>
-  <div class="col-md-4">
-    <div class="card border-success">
-      <div class="card-header bg-success text-white">Derecha: {{ right_run.run_id[:8] }}</div>
-      <div class="card-body">
-        <p class="mb-1"><strong>Fecha:</strong> {{ right_run.created_at.strftime('%Y-%m-%d %H:%M') if right_run.created_at else '-' }}</p>
-        <p class="mb-1"><strong>Unidades:</strong> {{ '{:,}'.format(right_kpis.total_units) }}</p>
-        <p class="mb-1"><strong>SKUs:</strong> {{ right_kpis.distinct_skus }}</p>
-        <p class="mb-0"><strong>Tiendas:</strong> {{ right_kpis.distinct_stores }}</p>
+
+    <div class="compare-kpi compare-kpi-delta">
+      <div class="compare-kpi-header">
+        <span class="compare-kpi-tag compare-kpi-tag-delta">Delta</span>
+        <span class="compare-kpi-hint">Der - Izq</span>
       </div>
-    </div>
-  </div>
-  <div class="col-md-4">
-    <div class="card border-warning">
-      <div class="card-header bg-warning">Delta (Derecha - Izquierda)</div>
-      <div class="card-body">
-        <p class="mb-1"><strong>Unidades:</strong> 
-          <span class="{% if delta_kpis.total_units > 0 %}text-success{% elif delta_kpis.total_units < 0 %}text-danger{% endif %}">
+      <div class="compare-kpi-stats compare-kpi-stats-delta">
+        <div class="compare-kpi-stat">
+          <div class="compare-kpi-stat-value compare-delta-value {% if delta_kpis.total_units > 0 %}delta-positive{% elif delta_kpis.total_units < 0 %}delta-negative{% else %}delta-zero{% endif %}">
             {{ '+' if delta_kpis.total_units > 0 else '' }}{{ '{:,}'.format(delta_kpis.total_units) }}
-          </span>
-        </p>
-        <p class="mb-1"><strong>SKUs:</strong> 
-          <span class="{% if delta_kpis.distinct_skus > 0 %}text-success{% elif delta_kpis.distinct_skus < 0 %}text-danger{% endif %}">
+          </div>
+          <div class="compare-kpi-stat-label">Unidades</div>
+        </div>
+        <div class="compare-kpi-stat">
+          <div class="compare-kpi-stat-value compare-delta-value {% if delta_kpis.distinct_skus > 0 %}delta-positive{% elif delta_kpis.distinct_skus < 0 %}delta-negative{% else %}delta-zero{% endif %}">
             {{ '+' if delta_kpis.distinct_skus > 0 else '' }}{{ delta_kpis.distinct_skus }}
-          </span>
-        </p>
-        <p class="mb-0"><strong>Tiendas:</strong> 
-          <span class="{% if delta_kpis.distinct_stores > 0 %}text-success{% elif delta_kpis.distinct_stores < 0 %}text-danger{% endif %}">
+          </div>
+          <div class="compare-kpi-stat-label">SKUs</div>
+        </div>
+        <div class="compare-kpi-stat">
+          <div class="compare-kpi-stat-value compare-delta-value {% if delta_kpis.distinct_stores > 0 %}delta-positive{% elif delta_kpis.distinct_stores < 0 %}delta-negative{% else %}delta-zero{% endif %}">
             {{ '+' if delta_kpis.distinct_stores > 0 else '' }}{{ delta_kpis.distinct_stores }}
-          </span>
-        </p>
+          </div>
+          <div class="compare-kpi-stat-label">Tiendas</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="compare-kpi compare-kpi-right">
+      <div class="compare-kpi-header">
+        <span class="compare-kpi-tag compare-kpi-tag-right">Nueva</span>
+        <span class="compare-kpi-id">{{ right_run.run_id[:8] }}</span>
+      </div>
+      <div class="compare-kpi-date">{{ right_run.created_at.strftime('%Y-%m-%d %H:%M') if right_run.created_at else '-' }}</div>
+      <div class="compare-kpi-stats">
+        <div class="compare-kpi-stat">
+          <div class="compare-kpi-stat-value">{{ '{:,}'.format(right_kpis.total_units) }}</div>
+          <div class="compare-kpi-stat-label">Unidades</div>
+        </div>
+        <div class="compare-kpi-stat">
+          <div class="compare-kpi-stat-value">{{ right_kpis.distinct_skus }}</div>
+          <div class="compare-kpi-stat-label">SKUs</div>
+        </div>
+        <div class="compare-kpi-stat">
+          <div class="compare-kpi-stat-value">{{ right_kpis.distinct_stores }}</div>
+          <div class="compare-kpi-stat-label">Tiendas</div>
+        </div>
       </div>
     </div>
   </div>
-</div>
 
-<div class="card">
-  <div class="card-header">Diferencias por SKU-Tienda (ordenado por |delta| desc, top 200)</div>
-  <div class="card-body p-0">
-    <div class="table-responsive">
-      <table class="table table-sm table-hover mb-0">
+  <div class="compare-table-card">
+    <div class="compare-table-header">
+      <div class="compare-table-title">
+        <i class="bi bi-list-columns me-2"></i>Diferencias por SKU-Tienda
+      </div>
+      <span class="compare-table-badge">Top 200 por |delta|</span>
+    </div>
+    <div class="compare-table-wrap">
+      <table class="compare-table">
         <thead>
           <tr>
             <th>SKU</th>
@@ -109,21 +143,27 @@
         <tbody>
           {% if comparison_data %}
             {% for row in comparison_data %}
-            <tr>
-              <td>{{ row.sku }}</td>
-              <td>{{ row.name }}</td>
+            <tr class="{% if row.delta == 0 %}compare-row-zero{% endif %}">
+              <td><code class="compare-sku">{{ row.sku }}</code></td>
+              <td class="compare-name">{{ row.name[:35] }}{% if row.name|length > 35 %}...{% endif %}</td>
               <td>{{ row.store }}</td>
               <td class="text-end">{{ row.left_qty }}</td>
               <td class="text-end">{{ row.right_qty }}</td>
-              <td class="text-end {% if row.delta > 0 %}text-success{% elif row.delta < 0 %}text-danger{% endif %}">
-                {{ '+' if row.delta > 0 else '' }}{{ row.delta }}
+              <td class="text-end">
+                <span class="compare-delta-cell {% if row.delta > 0 %}delta-positive{% elif row.delta < 0 %}delta-negative{% else %}delta-zero{% endif %}">
+                  {{ '+' if row.delta > 0 else '' }}{{ row.delta }}
+                </span>
               </td>
             </tr>
             {% endfor %}
           {% else %}
             <tr>
-              <td colspan="6" class="text-center py-4">
-                <p class="text-muted mb-0">No hay diferencias para mostrar.</p>
+              <td colspan="6" class="compare-empty-cell">
+                <div class="compare-empty">
+                  <div class="compare-empty-icon"><i class="bi bi-check-circle"></i></div>
+                  <div class="compare-empty-title">Sin diferencias</div>
+                  <div class="compare-empty-hint">Las dos corridas tienen los mismos resultados.</div>
+                </div>
               </td>
             </tr>
           {% endif %}
@@ -131,15 +171,18 @@
       </table>
     </div>
   </div>
+
+  {% elif left_id or right_id %}
+  <div class="compare-alert compare-alert-warning">
+    <i class="bi bi-exclamation-triangle me-2"></i>
+    Seleccione ambas corridas para comparar.
+  </div>
+  {% else %}
+  <div class="compare-alert compare-alert-info">
+    <i class="bi bi-info-circle me-2"></i>
+    Seleccione dos corridas de distribución para ver las diferencias.
+  </div>
+  {% endif %}
 </div>
-{% elif left_id or right_id %}
-<div class="alert alert-warning">
-  Seleccione ambas corridas para comparar.
-</div>
-{% else %}
-<div class="alert alert-info">
-  Seleccione dos corridas de distribución para ver las diferencias.
-</div>
-{% endif %}
 
 {% endblock %}
