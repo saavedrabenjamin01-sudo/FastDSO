@@ -1,5 +1,6 @@
 import os
 import io
+import uuid
 import datetime as dt
 from datetime import datetime, timedelta, date
 from io import BytesIO
@@ -2391,7 +2392,7 @@ def process_sales_upload(job_id, payload):
         df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0).astype(int)
         df['date'] = pd.to_datetime(df['date'], errors='coerce')
         
-        sales_run_id = str(uuid4())
+        sales_run_id = str(uuid.uuid4())
         sales_run = Run(
             run_id=sales_run_id,
             run_type='sales_upload',
@@ -4597,7 +4598,7 @@ def slow_stock():
             return redirect(url_for('slow_stock'))
         
         # Save run
-        run_id = str(uuid4())
+        run_id = str(uuid.uuid4())
         new_run = SlowStockRun(
             run_id=run_id,
             created_by_user_id=current_user.id,
