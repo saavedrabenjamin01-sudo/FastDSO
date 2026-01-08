@@ -7,69 +7,126 @@
     <p class="query-subtitle">Stock disponible en Centro de Distribución para asignar a tiendas</p>
   </div>
 
-  <div class="query-card">
-    <form method="post" enctype="multipart/form-data"
-          data-loader="true"
-          data-ajax="true"
-          data-loader-title="Cargando Stock CD"
-          data-loader-msg="Guardando productos en el inventario del Centro de Distribución..."
-          data-loader-icon="warehouse">
+  <div class="row g-3">
+    <div class="col-12 col-lg-8">
+      <div class="query-card">
+        <form method="post" enctype="multipart/form-data"
+              data-loader="true"
+              data-ajax="true"
+              data-loader-title="Cargando Stock CD"
+              data-loader-msg="Guardando productos en el inventario del Centro de Distribución..."
+              data-loader-icon="warehouse">
 
-      <div class="upload-row-3">
-        <div class="upload-field">
-          <label class="query-label">Archivo de stock CD</label>
-          <input type="file" class="form-control" name="file"
-                 accept=".csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-                 required>
-          <small class="text-muted">Acepta <code>.csv</code> y <code>.xlsx</code></small>
-        </div>
+          <div class="upload-row-3">
+            <div class="upload-field">
+              <label class="query-label">Archivo de stock CD</label>
+              <input type="file" class="form-control" name="file"
+                     accept=".csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                     required>
+              <small class="text-muted">Acepta <code>.csv</code> y <code>.xlsx</code></small>
+            </div>
 
-        <div class="upload-field">
-          <label class="query-label">Modo de carga</label>
-          <select class="form-select" name="mode">
-            <option value="append">Sumar al stock actual</option>
-            <option value="replace_today">Reemplazar solo snapshot de hoy</option>
-            <option value="replace_all">Borrar histórico y cargar desde cero</option>
-          </select>
-        </div>
+            <div class="upload-field">
+              <label class="query-label">Modo de carga</label>
+              <select class="form-select" name="mode">
+                <option value="append">Sumar al stock actual</option>
+                <option value="replace_today">Reemplazar solo snapshot de hoy</option>
+                <option value="replace_all">Borrar histórico y cargar desde cero</option>
+              </select>
+            </div>
 
-        <div class="upload-field">
-          <label class="query-label">Fecha snapshot</label>
-          <input type="date" class="form-control" name="fecha_doc">
-        </div>
+            <div class="upload-field">
+              <label class="query-label">Fecha snapshot</label>
+              <input type="date" class="form-control" name="fecha_doc">
+            </div>
+          </div>
+
+          <div class="upload-actions">
+            <button type="submit" class="btn btn-primary query-btn">
+              <i class="bi bi-box-seam me-2"></i>Cargar stock CD
+            </button>
+          </div>
+        </form>
       </div>
 
-      <div class="upload-actions">
-        <button type="submit" class="btn btn-primary query-btn">
-          <i class="bi bi-box-seam me-2"></i>Cargar stock CD
+      <div class="upload-collapse-wrap">
+        <button class="btn btn-link upload-collapse-toggle" type="button" data-bs-toggle="collapse" data-bs-target="#fileReqCollapse">
+          <i class="bi bi-info-circle me-1"></i>Requisitos del archivo
         </button>
+        <div class="collapse" id="fileReqCollapse">
+          <div class="upload-collapse-body">
+            <p class="mb-2"><strong>Columnas requeridas:</strong></p>
+            <ul class="upload-req-list">
+              <li><code>sku</code> — Código del producto (texto, ceros a la izquierda preservados)</li>
+              <li><code>product_name</code> — Nombre del producto</li>
+              <li><code>quantity</code> — Cantidad disponible en CD</li>
+            </ul>
+            <p class="mb-1"><strong>Formatos aceptados:</strong> <code>.csv</code>, <code>.xlsx</code></p>
+            <p class="text-muted mb-0">El SKU debe ser texto para preservar ceros a la izquierda.</p>
+          </div>
+        </div>
       </div>
-    </form>
-  </div>
 
-  <div class="upload-info-box">
-    <div class="upload-info-title"><i class="bi bi-lightbulb me-2"></i>Modos de carga</div>
-    <ul class="upload-info-list">
-      <li><strong>Sumar:</strong> Agrega cantidades a SKUs existentes, mantiene el resto sin cambios.</li>
-      <li><strong>Reemplazar hoy:</strong> Reemplaza únicamente el snapshot de la fecha seleccionada.</li>
-      <li><strong>Borrar todo:</strong> Elimina todo el historial de stock CD y carga desde cero.</li>
-    </ul>
-  </div>
+      <div class="upload-impact-note">
+        <i class="bi bi-exclamation-circle me-2"></i>
+        Esta carga impacta los resultados de forecast y distribución.
+      </div>
+    </div>
 
-  <div class="upload-collapse-wrap">
-    <button class="btn btn-link upload-collapse-toggle" type="button" data-bs-toggle="collapse" data-bs-target="#fileReqCollapse">
-      <i class="bi bi-info-circle me-1"></i>Requisitos del archivo
-    </button>
-    <div class="collapse" id="fileReqCollapse">
-      <div class="upload-collapse-body">
-        <p class="mb-2"><strong>Columnas requeridas:</strong></p>
-        <ul class="upload-req-list">
-          <li><code>sku</code> — Código del producto (texto, ceros a la izquierda preservados)</li>
-          <li><code>product_name</code> — Nombre del producto</li>
-          <li><code>quantity</code> — Cantidad disponible en CD</li>
+    <div class="col-12 col-lg-4">
+      <div class="upload-sidecard">
+        <div class="upload-sidecard-title"><i class="bi bi-list-check me-2"></i>Guía rápida</div>
+        <ol class="upload-guide-list">
+          <li>Sube archivo de stock CD</li>
+          <li>Elige modo de carga</li>
+          <li>Confirma fecha de snapshot</li>
+          <li>Revisa en Consulta Stock / Dashboard</li>
+        </ol>
+      </div>
+
+      <div class="upload-sidecard">
+        <div class="upload-sidecard-title"><i class="bi bi-toggles me-2"></i>Modos de carga</div>
+        <ul class="upload-modes-list">
+          <li>
+            <strong>Sumar (append)</strong>
+            <span>Agrega cantidades a SKUs existentes; mantiene el resto sin cambios.</span>
+          </li>
+          <li>
+            <strong>Reemplazar hoy</strong>
+            <span>Reemplaza únicamente el snapshot de la fecha seleccionada.</span>
+          </li>
+          <li>
+            <strong>Borrar todo</strong>
+            <span>Elimina todo el historial de stock CD y carga desde cero.</span>
+          </li>
         </ul>
-        <p class="mb-1"><strong>Formatos aceptados:</strong> <code>.csv</code>, <code>.xlsx</code></p>
-        <p class="text-muted mb-0">El SKU debe ser texto para preservar ceros a la izquierda.</p>
+      </div>
+
+      <div class="upload-sidecard">
+        <div class="upload-sidecard-title"><i class="bi bi-table me-2"></i>Ejemplo de archivo</div>
+        <div class="upload-example-table-wrap">
+          <table class="upload-example-table">
+            <thead>
+              <tr>
+                <th>sku</th>
+                <th>product_name</th>
+                <th>quantity</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>000123</td>
+                <td>Producto A</td>
+                <td>150</td>
+              </tr>
+              <tr>
+                <td>000456</td>
+                <td>Producto B</td>
+                <td>75</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
