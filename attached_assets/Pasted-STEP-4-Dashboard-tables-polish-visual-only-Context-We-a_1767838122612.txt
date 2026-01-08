@@ -1,0 +1,78 @@
+STEP 4 — Dashboard tables polish (visual only)
+
+Context:
+We are polishing the tables in templates/dashboard.html:
+- “Distribución sugerida” table
+- “Remanente CD” table
+We must keep all functionality intact (pagination, updateParam, filters, exports). No backend changes.
+
+Scope (strict):
+- Prefer CSS-only changes in static/css/style.css.
+- Only minimal HTML changes allowed if needed (e.g., adding a wrapper class).
+- Do NOT change Jinja logic, loops, variables, or pagination macros.
+
+Goals:
+1) Sticky table headers (thead stays visible when scrolling inside the table area).
+2) Soft zebra striping (very subtle alternating row background).
+3) Hover highlight (subtle, smooth transition).
+4) Better readability:
+   - slightly more vertical padding
+   - headers with soft background
+   - numbers right-aligned
+5) Keep the dashboard layout and cards unchanged.
+
+Implementation instructions:
+
+A) Add/ensure wrappers for scroll area
+- For each table area in dashboard.html, ensure the container has a class:
+  - .dash-table-scroll
+- If there is already a container (dash-panel-body), do NOT restructure the page; just add a nested wrapper div around the table:
+  <div class="dash-table-scroll"> ...table... </div>
+- The wrapper must allow vertical scrolling without affecting page scroll.
+
+B) CSS (append-only at end of static/css/style.css)
+Append under comment:
+/* === Dashboard tables polish === */
+
+Use these exact rules:
+
+- Make table header sticky:
+  .dash-table-scroll { max-height: 320px; overflow: auto; }
+  .dash-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #f3f6fb;
+  }
+
+- Zebra:
+  .dash-table tbody tr:nth-child(even) { background: rgba(245, 248, 255, 0.55); }
+
+- Hover:
+  .dash-table tbody tr { transition: background-color 120ms ease; }
+  .dash-table tbody tr:hover { background: rgba(29, 78, 216, 0.06); }
+
+- Row spacing:
+  .dash-table thead th, .dash-table tbody td { padding-top: 10px; padding-bottom: 10px; }
+
+- Borders lighter:
+  .dash-table tbody td { border-top: 1px solid rgba(18,40,90,.06); }
+  .dash-table thead th { border-bottom: 1px solid rgba(18,40,90,.10); }
+
+- Numeric alignment:
+  Ensure all numeric columns already have class text-end (keep it). No backend changes.
+
+C) Ensure it doesn’t break mobile layout
+- Add a media query:
+  @media (max-width: 992px) { .dash-table-scroll { max-height: 260px; } }
+
+Acceptance criteria:
+- Headers remain visible when scrolling inside each table area.
+- Rows are easier to read (zebra + hover).
+- No layout break in dashboard.
+- Pagination remains below tables and still works.
+
+Deliverable:
+- Show the exact minimal HTML change in dashboard.html (only wrapper insertion, if applied).
+- Show only the appended CSS snippet.
+- Confirm no backend changes.

@@ -1544,3 +1544,48 @@ body{
 .dash-quick-actions .qa-btn i {
   font-size: 1rem;
 }
+
+/* === Dashboard tables polish === */
+.dash-table-scroll {
+  max-height: 320px;
+  overflow: auto;
+}
+
+.dash-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f3f6fb;
+}
+
+.dash-table tbody tr:nth-child(even) {
+  background: rgba(245, 248, 255, 0.55);
+}
+
+.dash-table tbody tr {
+  transition: background-color 120ms ease;
+}
+
+.dash-table tbody tr:hover {
+  background: rgba(29, 78, 216, 0.06);
+}
+
+.dash-table thead th,
+.dash-table tbody td {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.dash-table tbody td {
+  border-top: 1px solid rgba(18, 40, 90, 0.06);
+}
+
+.dash-table thead th {
+  border-bottom: 1px solid rgba(18, 40, 90, 0.10);
+}
+
+@media (max-width: 992px) {
+  .dash-table-scroll {
+    max-height: 260px;
+  }
+}
