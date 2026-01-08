@@ -25,19 +25,20 @@ ROLE_PERMISSIONS = {
         'dashboard:view', 'sales:upload', 'stock_store:upload', 'stock_cd:upload',
         'stock:query', 'distribution:generate', 'distribution:export',
         'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'admin:users', 'admin:reset', 'audit:view',
-        'rebalancing:view', 'rebalancing:run'
+        'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run'
     ],
     'Management': [
         'dashboard:view', 'stock:query', 'distribution:export',
-        'forecast_v2:view', 'runs:view', 'audit:view', 'rebalancing:view'
+        'forecast_v2:view', 'runs:view', 'audit:view', 'rebalancing:view', 'slow_stock:view'
     ],
     'CategoryManager': [
         'dashboard:view', 'sales:upload', 'distribution:generate', 'distribution:export',
-        'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'rebalancing:view', 'rebalancing:run'
+        'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'rebalancing:view', 'rebalancing:run',
+        'slow_stock:view', 'slow_stock:run'
     ],
     'WarehouseOps': [
         'dashboard:view', 'stock_store:upload', 'stock_cd:upload', 'stock:query',
-        'distribution:export', 'rebalancing:view', 'rebalancing:run'
+        'distribution:export', 'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run'
     ],
     'Viewer': [
         'dashboard:view', 'stock:query'
@@ -378,6 +379,82 @@ class Job(db.Model):
             except:
                 return {}
         return {}
+
+
+# ------------------ Slow Stock & Smart Reallocation Models ------------------
+
+class SkuLifecycle(db.Model):
+    """Global SKU lifecycle data: last purchase date, last sale date."""
+    __tablename__ = 'sku_lifecycle'
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), unique=True, nullable=False)
+    last_purchase_date = db.Column(db.Date, nullable=True)
+    last_sale_date_global = db.Column(db.Date, nullable=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    product = db.relationship('Product', backref='lifecycle')
+
+
+class SkuStoreLifecycle(db.Model):
+    """Per SKU-store lifecycle data: last sale date at store level."""
+    __tablename__ = 'sku_store_lifecycle'
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False)
+    last_sale_date_store = db.Column(db.Date, nullable=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    product = db.relationship('Product')
+    store = db.relationship('Store')
+
+    __table_args__ = (
+        db.UniqueConstraint('product_id', 'store_id', name='uq_sku_store_lifecycle'),
+    )
+
+
+class SlowStockRun(db.Model):
+    """Run metadata for slow stock analysis."""
+    __tablename__ = 'slow_stock_run'
+    id = db.Column(db.Integer, primary_key=True)
+    run_id = db.Column(db.String(36), unique=True, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    params_json = db.Column(db.Text, nullable=True)
+    dead_store_count = db.Column(db.Integer, default=0)
+    slow_store_count = db.Column(db.Integer, default=0)
+    transfer_count = db.Column(db.Integer, default=0)
+    dead_cd_count = db.Column(db.Integer, default=0)
+
+    user = db.relationship('User', backref='slow_stock_runs')
+
+    def get_params(self):
+        if self.params_json:
+            try:
+                return json.loads(self.params_json)
+            except:
+                return {}
+        return {}
+
+
+class SlowStockSuggestion(db.Model):
+    """Individual slow stock transfer suggestion."""
+    __tablename__ = 'slow_stock_suggestion'
+    id = db.Column(db.Integer, primary_key=True)
+    run_id = db.Column(db.String(36), db.ForeignKey('slow_stock_run.run_id'), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    from_store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False)
+    to_store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False)
+    qty = db.Column(db.Integer, nullable=False)
+    donor_status = db.Column(db.String(20), nullable=True)  # DEAD_STORE, SLOW_STORE
+    receiver_sales_rate = db.Column(db.Float, nullable=True)
+    receiver_woc = db.Column(db.Float, nullable=True)
+    reason = db.Column(db.String(255), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    product = db.relationship('Product')
+    from_store = db.relationship('Store', foreign_keys=[from_store_id])
+    to_store = db.relationship('Store', foreign_keys=[to_store_id])
+    run = db.relationship('SlowStockRun', backref='suggestions')
 
 
 # ------------------ Background Job Infrastructure ------------------
@@ -4215,6 +4292,532 @@ def clear_simulation_route(sim_type):
         flash('Simulación limpiada.', 'info')
     redirect_to = request.args.get('redirect', 'dashboard')
     return redirect(url_for(redirect_to))
+
+
+# ------------------ Slow Stock & Smart Reallocation Module ------------------
+
+# Default parameters
+SLOW_STOCK_PARAMS = {
+    'DEAD_DAYS_STORE': 60,
+    'SLOW_MIN_DAYS_STORE': 21,
+    'DEAD_DAYS_GLOBAL': 90,
+    'DEAD_PURCHASE_DAYS': 120,
+    'SLOW_RATE_THRESHOLD': 0.3,
+    'RECENT_WINDOW_WEEKS': 4,
+    'RECEIVER_MIN_RATE': 0.5,
+    'RECEIVER_WOC_MIN': 1.5,
+    'TARGET_RECEIVER_WOC': 2.5,
+    'DONOR_FLOOR': 1,
+    'MIN_TRANSFER_QTY': 2
+}
+
+
+def compute_slow_stock_analysis(params=None):
+    """
+    Compute slow/dead stock analysis for stores and CD.
+    Returns dict with store_analysis, cd_analysis, and transfer_suggestions.
+    """
+    if params is None:
+        params = SLOW_STOCK_PARAMS.copy()
+    
+    today = date.today()
+    
+    # Get latest stock snapshots
+    latest_store_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
+    latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar()
+    
+    if not latest_store_date or not latest_cd_date:
+        return {'store_analysis': [], 'cd_analysis': [], 'transfers': [], 'error': 'No stock data available'}
+    
+    # Build product and store lookups
+    products = {p.id: p for p in Product.query.all()}
+    stores = {s.id: s for s in Store.query.all()}
+    
+    # Get store stock (latest snapshot)
+    store_stock = {}
+    for ss in StockSnapshot.query.filter(StockSnapshot.as_of_date == latest_store_date).all():
+        store_stock[(ss.product_id, ss.store_id)] = ss.quantity
+    
+    # Get CD stock (latest snapshot)
+    cd_stock = {}
+    for cd in StockCD.query.filter(StockCD.as_of_date == latest_cd_date).all():
+        cd_stock[cd.product_id] = cd.quantity
+    
+    # Get lifecycle data
+    lifecycle_global = {lc.product_id: lc for lc in SkuLifecycle.query.all()}
+    lifecycle_store = {}
+    for lcs in SkuStoreLifecycle.query.all():
+        lifecycle_store[(lcs.product_id, lcs.store_id)] = lcs
+    
+    # Compute sales rates from DistributionRecord
+    recent_window = params['RECENT_WINDOW_WEEKS']
+    cutoff_date = today - timedelta(weeks=recent_window)
+    
+    # Sales rate per SKU-store (recent)
+    sales_query = db.session.query(
+        DistributionRecord.product_id,
+        DistributionRecord.store_id,
+        db.func.sum(DistributionRecord.quantity).label('total_qty')
+    ).filter(
+        DistributionRecord.event_date >= cutoff_date
+    ).group_by(
+        DistributionRecord.product_id,
+        DistributionRecord.store_id
+    ).all()
+    
+    sales_rate = {}
+    for row in sales_query:
+        weekly_rate = row.total_qty / recent_window if recent_window > 0 else 0
+        sales_rate[(row.product_id, row.store_id)] = weekly_rate
+    
+    # Compute last sale date from DistributionRecord if not in lifecycle
+    last_sale_computed = db.session.query(
+        DistributionRecord.product_id,
+        DistributionRecord.store_id,
+        db.func.max(DistributionRecord.event_date).label('last_date')
+    ).group_by(
+        DistributionRecord.product_id,
+        DistributionRecord.store_id
+    ).all()
+    
+    last_sale_store_fallback = {}
+    last_sale_global_fallback = {}
+    for row in last_sale_computed:
+        last_sale_store_fallback[(row.product_id, row.store_id)] = row.last_date
+        if row.product_id not in last_sale_global_fallback or row.last_date > last_sale_global_fallback[row.product_id]:
+            last_sale_global_fallback[row.product_id] = row.last_date
+    
+    # Classify store-level status
+    store_analysis = []
+    donors = {}  # product_id -> list of (store_id, status, stock)
+    
+    for (pid, sid), qty in store_stock.items():
+        if qty <= 0:
+            continue
+        
+        product = products.get(pid)
+        store = stores.get(sid)
+        if not product or not store:
+            continue
+        
+        # Get last sale date for this SKU-store
+        lcs = lifecycle_store.get((pid, sid))
+        if lcs and lcs.last_sale_date_store:
+            last_sale = lcs.last_sale_date_store
+        else:
+            last_sale = last_sale_store_fallback.get((pid, sid))
+        
+        days_since_last_sale = (today - last_sale).days if last_sale else 9999
+        rate = sales_rate.get((pid, sid), 0)
+        
+        # Classification
+        status = 'OK'
+        if days_since_last_sale >= params['DEAD_DAYS_STORE']:
+            status = 'DEAD_STORE'
+        elif rate <= params['SLOW_RATE_THRESHOLD'] and days_since_last_sale >= params['SLOW_MIN_DAYS_STORE']:
+            status = 'SLOW_STORE'
+        
+        if status in ['DEAD_STORE', 'SLOW_STORE']:
+            store_analysis.append({
+                'sku': product.sku,
+                'product_name': product.name,
+                'store': store.name,
+                'stock': qty,
+                'days_since_last_sale': days_since_last_sale,
+                'sales_rate': round(rate, 2),
+                'status': status,
+                'product_id': pid,
+                'store_id': sid
+            })
+            
+            # Track donors
+            if pid not in donors:
+                donors[pid] = []
+            donors[pid].append((sid, status, qty))
+    
+    # Classify CD-level status
+    cd_analysis = []
+    for pid, qty in cd_stock.items():
+        if qty <= 0:
+            continue
+        
+        product = products.get(pid)
+        if not product:
+            continue
+        
+        # Get global lifecycle data
+        lc = lifecycle_global.get(pid)
+        last_sale_global = lc.last_sale_date_global if lc and lc.last_sale_date_global else last_sale_global_fallback.get(pid)
+        last_purchase = lc.last_purchase_date if lc else None
+        
+        days_since_last_sale_global = (today - last_sale_global).days if last_sale_global else 9999
+        days_since_last_purchase = (today - last_purchase).days if last_purchase else 9999
+        
+        # Classification
+        status = 'OK'
+        if days_since_last_sale_global >= params['DEAD_DAYS_GLOBAL'] or days_since_last_purchase >= params['DEAD_PURCHASE_DAYS']:
+            status = 'DEAD_CD'
+        
+        # Check if there are active receivers for this SKU
+        has_receivers = any(
+            sales_rate.get((pid, sid), 0) >= params['RECEIVER_MIN_RATE']
+            for sid in stores.keys()
+        )
+        
+        recommendation = ''
+        if status == 'DEAD_CD':
+            if has_receivers:
+                recommendation = 'Redistribuir a tiendas'
+            else:
+                recommendation = 'Considerar liquidación'
+        
+        if status != 'OK':
+            cd_analysis.append({
+                'sku': product.sku,
+                'product_name': product.name,
+                'stock_cd': qty,
+                'days_since_last_sale_global': days_since_last_sale_global if days_since_last_sale_global < 9999 else None,
+                'days_since_last_purchase': days_since_last_purchase if days_since_last_purchase < 9999 else None,
+                'status': status,
+                'recommendation': recommendation,
+                'product_id': pid
+            })
+    
+    # Generate transfer suggestions
+    transfers = []
+    
+    for pid, donor_list in donors.items():
+        product = products.get(pid)
+        if not product:
+            continue
+        
+        # Find receivers for this SKU
+        receivers = []
+        for sid in stores.keys():
+            rate = sales_rate.get((pid, sid), 0)
+            stock = store_stock.get((pid, sid), 0)
+            woc = stock / max(rate, 0.01)
+            
+            # Qualify as receiver
+            if rate >= params['RECEIVER_MIN_RATE'] or (rate > 0 and woc < params['RECEIVER_WOC_MIN']):
+                need = max(int(params['TARGET_RECEIVER_WOC'] * rate) - stock, 0)
+                if need > 0:
+                    receivers.append((sid, rate, stock, woc, need))
+        
+        # Sort receivers by sales rate descending
+        receivers.sort(key=lambda x: -x[1])
+        
+        # Sort donors by available qty descending
+        donor_list.sort(key=lambda x: -x[2])
+        
+        for donor_sid, donor_status, donor_stock in donor_list:
+            available = max(donor_stock - params['DONOR_FLOOR'], 0)
+            if available < params['MIN_TRANSFER_QTY']:
+                continue
+            
+            for i, (recv_sid, recv_rate, recv_stock, recv_woc, recv_need) in enumerate(receivers):
+                if available <= 0:
+                    break
+                if recv_need <= 0:
+                    continue
+                if recv_sid == donor_sid:
+                    continue
+                
+                # Determine transfer qty
+                transfer_qty = min(available, recv_need)
+                if transfer_qty < params['MIN_TRANSFER_QTY']:
+                    # Allow qty 1 if receiver has 0 stock and has sales history
+                    if recv_stock == 0 and recv_rate > 0:
+                        transfer_qty = min(available, recv_need, 1) if transfer_qty >= 1 else 0
+                    else:
+                        continue
+                
+                if transfer_qty > 0:
+                    transfers.append({
+                        'sku': product.sku,
+                        'product_name': product.name,
+                        'from_store': stores[donor_sid].name,
+                        'to_store': stores[recv_sid].name,
+                        'qty': transfer_qty,
+                        'donor_status': donor_status,
+                        'receiver_sales_rate': round(recv_rate, 2),
+                        'receiver_woc': round(recv_woc, 2),
+                        'reason': f'{donor_status} → demanda activa',
+                        'product_id': pid,
+                        'from_store_id': donor_sid,
+                        'to_store_id': recv_sid
+                    })
+                    
+                    available -= transfer_qty
+                    receivers[i] = (recv_sid, recv_rate, recv_stock + transfer_qty, 
+                                   (recv_stock + transfer_qty) / max(recv_rate, 0.01),
+                                   max(recv_need - transfer_qty, 0))
+    
+    return {
+        'store_analysis': store_analysis,
+        'cd_analysis': cd_analysis,
+        'transfers': transfers
+    }
+
+
+@app.route('/slow_stock', methods=['GET', 'POST'])
+@login_required
+@require_permission('slow_stock:view')
+def slow_stock():
+    """Slow Stock & Smart Reallocation module."""
+    products = Product.query.order_by(Product.sku).all()
+    stores = Store.query.order_by(Store.name).all()
+    
+    # Get latest run
+    latest_run = SlowStockRun.query.order_by(SlowStockRun.created_at.desc()).first()
+    
+    results = None
+    run_info = None
+    
+    if request.method == 'POST' and current_user.has_permission('slow_stock:run'):
+        # Get parameters from form
+        params = SLOW_STOCK_PARAMS.copy()
+        try:
+            params['DEAD_DAYS_STORE'] = int(request.form.get('dead_days_store', 60))
+            params['SLOW_MIN_DAYS_STORE'] = int(request.form.get('slow_min_days_store', 21))
+            params['DEAD_DAYS_GLOBAL'] = int(request.form.get('dead_days_global', 90))
+            params['DEAD_PURCHASE_DAYS'] = int(request.form.get('dead_purchase_days', 120))
+            params['SLOW_RATE_THRESHOLD'] = float(request.form.get('slow_rate_threshold', 0.3))
+            params['RECEIVER_MIN_RATE'] = float(request.form.get('receiver_min_rate', 0.5))
+            params['TARGET_RECEIVER_WOC'] = float(request.form.get('target_receiver_woc', 2.5))
+        except ValueError:
+            flash('Parámetros inválidos.', 'warning')
+            return redirect(url_for('slow_stock'))
+        
+        # Run analysis
+        results = compute_slow_stock_analysis(params)
+        
+        if 'error' in results:
+            flash(results['error'], 'warning')
+            return redirect(url_for('slow_stock'))
+        
+        # Save run
+        run_id = str(uuid4())
+        new_run = SlowStockRun(
+            run_id=run_id,
+            created_by_user_id=current_user.id,
+            params_json=json.dumps(params),
+            dead_store_count=len([r for r in results['store_analysis'] if r['status'] == 'DEAD_STORE']),
+            slow_store_count=len([r for r in results['store_analysis'] if r['status'] == 'SLOW_STORE']),
+            transfer_count=len(results['transfers']),
+            dead_cd_count=len(results['cd_analysis'])
+        )
+        db.session.add(new_run)
+        
+        # Save suggestions
+        for t in results['transfers']:
+            sug = SlowStockSuggestion(
+                run_id=run_id,
+                product_id=t['product_id'],
+                from_store_id=t['from_store_id'],
+                to_store_id=t['to_store_id'],
+                qty=t['qty'],
+                donor_status=t['donor_status'],
+                receiver_sales_rate=t['receiver_sales_rate'],
+                receiver_woc=t['receiver_woc'],
+                reason=t['reason']
+            )
+            db.session.add(sug)
+        
+        db.session.commit()
+        
+        log_audit(
+            action='slow_stock.run',
+            status='success',
+            message=f'Analysis completed: {new_run.dead_store_count} dead, {new_run.slow_store_count} slow, {new_run.transfer_count} transfers',
+            run_id=run_id,
+            metadata=params
+        )
+        
+        run_info = {
+            'run_id': run_id,
+            'created_at': new_run.created_at,
+            'params': params
+        }
+        
+        flash(f'Análisis completado. {new_run.dead_store_count} muerto(s), {new_run.slow_store_count} lento(s), {new_run.transfer_count} transferencia(s).', 'success')
+    
+    elif latest_run:
+        # Load latest run results
+        params = latest_run.get_params() or SLOW_STOCK_PARAMS.copy()
+        results = compute_slow_stock_analysis(params)
+        run_info = {
+            'run_id': latest_run.run_id,
+            'created_at': latest_run.created_at,
+            'params': params
+        }
+    
+    return render_template('slow_stock.html',
+                           products=products,
+                           stores=stores,
+                           results=results,
+                           run_info=run_info,
+                           default_params=SLOW_STOCK_PARAMS)
+
+
+@app.route('/slow_stock/upload_lifecycle', methods=['POST'])
+@login_required
+@require_permission('slow_stock:run')
+def upload_lifecycle():
+    """Upload lifecycle data (last purchase/sale dates)."""
+    if 'file' not in request.files:
+        flash('No se seleccionó archivo.', 'warning')
+        return redirect(url_for('slow_stock'))
+    
+    file = request.files['file']
+    if file.filename == '':
+        flash('No se seleccionó archivo.', 'warning')
+        return redirect(url_for('slow_stock'))
+    
+    upload_type = request.form.get('upload_type', 'global')  # 'global' or 'store'
+    
+    try:
+        if file.filename.endswith('.csv'):
+            df = pd.read_csv(file, dtype={'sku': str})
+        else:
+            df = pd.read_excel(file, dtype={'sku': str})
+        
+        df.columns = [c.strip().lower() for c in df.columns]
+        
+        if 'sku' not in df.columns:
+            flash('El archivo debe contener la columna "sku".', 'warning')
+            return redirect(url_for('slow_stock'))
+        
+        # Build product lookup
+        products = {p.sku: p.id for p in Product.query.all()}
+        stores_lookup = {s.name: s.id for s in Store.query.all()}
+        
+        updated = 0
+        
+        if upload_type == 'global':
+            # Global lifecycle: sku, last_purchase_date, last_sale_date_global
+            for _, row in df.iterrows():
+                sku = str(row['sku']).strip()
+                if sku not in products:
+                    continue
+                
+                pid = products[sku]
+                
+                lc = SkuLifecycle.query.filter_by(product_id=pid).first()
+                if not lc:
+                    lc = SkuLifecycle(product_id=pid)
+                    db.session.add(lc)
+                
+                if 'last_purchase_date' in df.columns and pd.notna(row['last_purchase_date']):
+                    lc.last_purchase_date = pd.to_datetime(row['last_purchase_date']).date()
+                if 'last_sale_date_global' in df.columns and pd.notna(row['last_sale_date_global']):
+                    lc.last_sale_date_global = pd.to_datetime(row['last_sale_date_global']).date()
+                
+                updated += 1
+        
+        else:
+            # Store-level: sku, store, last_sale_date_store
+            if 'store' not in df.columns:
+                flash('El archivo debe contener la columna "store".', 'warning')
+                return redirect(url_for('slow_stock'))
+            
+            for _, row in df.iterrows():
+                sku = str(row['sku']).strip()
+                store_name = str(row['store']).strip()
+                
+                if sku not in products or store_name not in stores_lookup:
+                    continue
+                
+                pid = products[sku]
+                sid = stores_lookup[store_name]
+                
+                lcs = SkuStoreLifecycle.query.filter_by(product_id=pid, store_id=sid).first()
+                if not lcs:
+                    lcs = SkuStoreLifecycle(product_id=pid, store_id=sid)
+                    db.session.add(lcs)
+                
+                if 'last_sale_date_store' in df.columns and pd.notna(row['last_sale_date_store']):
+                    lcs.last_sale_date_store = pd.to_datetime(row['last_sale_date_store']).date()
+                
+                updated += 1
+        
+        db.session.commit()
+        
+        log_audit(
+            action='slow_stock.lifecycle_upload',
+            status='success',
+            message=f'Uploaded {upload_type} lifecycle data: {updated} records',
+            metadata={'upload_type': upload_type, 'records': updated}
+        )
+        
+        flash(f'Datos de ciclo de vida cargados: {updated} registros.', 'success')
+    
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error al procesar archivo: {str(e)}', 'danger')
+        log_audit(
+            action='slow_stock.lifecycle_upload',
+            status='fail',
+            message=str(e)
+        )
+    
+    return redirect(url_for('slow_stock'))
+
+
+@app.route('/export_slow_stock/<export_type>')
+@login_required
+@require_permission('slow_stock:view')
+def export_slow_stock(export_type):
+    """Export slow stock analysis results."""
+    params = SLOW_STOCK_PARAMS.copy()
+    results = compute_slow_stock_analysis(params)
+    
+    if 'error' in results:
+        flash(results['error'], 'warning')
+        return redirect(url_for('slow_stock'))
+    
+    if export_type == 'store':
+        data = results['store_analysis']
+        filename = f'stock_lento_tiendas_{date.today().isoformat()}.xlsx'
+        sheet_name = 'Stock Lento Tiendas'
+    elif export_type == 'transfers':
+        data = results['transfers']
+        filename = f'sugerencias_transferencia_{date.today().isoformat()}.xlsx'
+        sheet_name = 'Transferencias'
+    elif export_type == 'cd':
+        data = results['cd_analysis']
+        filename = f'stock_muerto_cd_{date.today().isoformat()}.xlsx'
+        sheet_name = 'Stock CD'
+    else:
+        flash('Tipo de exportación no válido.', 'warning')
+        return redirect(url_for('slow_stock'))
+    
+    # Remove internal IDs from export
+    export_data = []
+    for row in data:
+        clean_row = {k: v for k, v in row.items() if not k.endswith('_id')}
+        export_data.append(clean_row)
+    
+    df = pd.DataFrame(export_data)
+    
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+    output.seek(0)
+    
+    log_audit(
+        action='slow_stock.export',
+        status='success',
+        message=f'Exported {export_type}: {len(data)} rows',
+        metadata={'export_type': export_type, 'rows': len(data)}
+    )
+    
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
 
 
 def init_database():

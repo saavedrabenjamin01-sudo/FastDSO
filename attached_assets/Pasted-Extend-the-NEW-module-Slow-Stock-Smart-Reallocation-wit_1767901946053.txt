@@ -1,0 +1,119 @@
+Extend the NEW module “Slow Stock & Smart Reallocation” with CD dead-stock analysis and support for last purchase / last sale dates (global + per store). Do NOT modify the existing redistribution module. Keep everything as a separate module.
+
+HARD RULES
+- Do not change existing redistribution logic/routes/templates.
+- Add this as a separate module with its own routes, template, models, exports, audit logs.
+- Preserve SKU leading zeros everywhere.
+- UI must match Dashboard style.
+
+DATA INPUTS / SOURCES
+We already have:
+- DistributionRecord (sales history by sku-store-date)
+- StockSnapshot (store stock snapshot)
+- StockCD (CD stock snapshot)
+- Product, Store
+
+We can also provide these additional fields (must be supported):
+- last_purchase_date per SKU (global)
+- last_sale_date_global per SKU
+- last_sale_date_store per SKU-store
+If not already in DB, support loading them via a separate upload (CSV/XLSX) in this module.
+
+IMPLEMENTATION REQUIREMENT: DATA MODEL FOR LAST DATES
+Add a new table `SkuLifecycle` (or similar), keyed by SKU (product_id):
+- product_id (FK Product.id, unique)
+- last_purchase_date (date nullable)
+- last_sale_date_global (date nullable)
+
+Add a second table `SkuStoreLifecycle` keyed by (product_id, store_id):
+- product_id (FK)
+- store_id (FK)
+- last_sale_date_store (date nullable)
+
+Provide a small upload page or upload section inside /slow_stock to load lifecycle data:
+- File columns (minimum):
+  sku, last_purchase_date, last_sale_date_global
+- Optional store-level file columns:
+  sku, store, last_sale_date_store
+Dates in YYYY-MM-DD.
+
+If lifecycle data is missing, fallback to computing last_sale_date using DistributionRecord max(event_date).
+
+METRICS
+For each SKU-store:
+- sales_rate_recent = avg weekly units over recent_window_weeks (default 4)
+- weeks_since_last_sale_store = (today - last_sale_date_store)/7
+For each SKU global:
+- days_since_last_sale_global
+- days_since_last_purchase
+
+CLASSIFICATION RULES
+Parameters (defaults):
+- DEAD_DAYS_STORE = 60
+- SLOW_MIN_DAYS_STORE = 21
+- DEAD_DAYS_GLOBAL = 90
+- DEAD_PURCHASE_DAYS = 120
+- SLOW_RATE_THRESHOLD = 0.3 units/week
+
+Store-level status for SKU-store (only if stock > 0):
+- DEAD_STORE if days_since_last_sale_store >= DEAD_DAYS_STORE
+- SLOW_STORE if sales_rate_recent <= SLOW_RATE_THRESHOLD AND days_since_last_sale_store >= SLOW_MIN_DAYS_STORE
+- else OK
+
+CD-level status for SKU (only if stock_cd > 0):
+- DEAD_CD if days_since_last_sale_global >= DEAD_DAYS_GLOBAL OR days_since_last_purchase >= DEAD_PURCHASE_DAYS
+- SLOW_CD if recent global sales low but not dead (optional)
+
+SMART REALLOCATION (store-to-store) — V1
+For each SKU:
+- donors: stores with status DEAD_STORE or SLOW_STORE, stock > 0
+- receivers: stores where:
+   - receiver_sales_rate_recent >= receiver_min_rate (default 0.5) OR
+   - (receiver has historical sales and WOC < receiver_woc_min default 1.5)
+- WOC = receiver_stock / max(receiver_sales_rate_recent, 1)
+- donor_give = max(stock - donor_floor, 0), donor_floor default 1
+- receiver_need = max(ceil(target_receiver_woc * receiver_sales_rate_recent) - receiver_stock, 0),
+  target_receiver_woc default 2.5
+- allocate greedily:
+   receivers sorted by receiver_sales_rate_recent desc (store hierarchy)
+   donors sorted by donor_give desc
+- min_transfer_qty default 2 (allow 1 if receiver_stock == 0 and receiver has sales history)
+
+CD DEAD STOCK ANALYSIS (NEW SECTION)
+Add a section that lists “Dead stock in CD”:
+- For each SKU with stock_cd > 0:
+  show sku, product, cd_qty, days_since_last_sale_global, days_since_last_purchase, status (DEAD_CD/SLOW_CD)
+- Provide a recommendation column (simple rules):
+  - If there exist receiver stores with good sales rate -> "Reallocate to stores"
+  - Else -> "Consider liquidation / block purchase"
+This section is reporting-only in V1 (do not auto-distribute CD to stores here to avoid mixing with distribution module).
+
+UI REQUIREMENTS (/slow_stock)
+- Page contains tabs or sections:
+  A) Slow/Dead stock by store (table)
+  B) Reallocation suggestions (table)
+  C) Dead stock in CD (table)
+- KPI cards:
+  - Dead store locations
+  - Slow store locations
+  - Suggested transfers count
+  - Dead CD SKUs count
+- All tables:
+  - Dashboard-style table polish (zebra, hover, sticky header)
+- Export buttons:
+  - Export store slow/dead list
+  - Export transfer suggestions
+  - Export dead CD stock list
+- Include loader popup on submit.
+
+PERSISTENCE / TRACEABILITY
+- Store runs in SlowStockRun + SlowStockSuggestion (already planned).
+- Also store CD dead list results per run (optional; if heavy, compute on demand but export must be consistent).
+- Log audit events:
+  slow_stock.run, slow_stock.export, slow_stock.lifecycle_upload
+
+DELIVERABLES
+- Updated module code and templates
+- New lifecycle models + upload handling
+- No changes to existing redistribution module
+- Clear default parameter values
