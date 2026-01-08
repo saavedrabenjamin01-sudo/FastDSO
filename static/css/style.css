@@ -1508,3 +1508,39 @@ body{
   top: 10px;
   right: 10px;
 }
+
+/* === Quick reset actions toolbar === */
+.dash-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 8px;
+}
+
+.dash-quick-actions form {
+  margin: 0;
+  padding: 0;
+}
+
+.dash-quick-actions .qa-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(220, 53, 69, 0.25);
+  background: transparent;
+  color: #dc3545;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms;
+}
+
+.dash-quick-actions .qa-btn:hover {
+  background: rgba(220, 53, 69, 0.08);
+  border-color: #dc3545;
+}
+
+.dash-quick-actions .qa-btn i {
+  font-size: 1rem;
+}

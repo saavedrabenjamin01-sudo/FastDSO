@@ -145,19 +145,6 @@
         <div class="dashv1-kpi-sub">disponible</div>
       </div>
       <div class="dash-kpi-art"></div>
-      {% if current_user.has_permission('admin:reset') %}
-      <div class="dashv1-kpi-menu">
-        <div class="dropdown">
-          <button class="btn btn-link btn-sm text-muted p-0" type="button" data-bs-toggle="dropdown"><i class="bi bi-three-dots-vertical"></i></button>
-          <ul class="dropdown-menu dropdown-menu-end">
-            <li><form method="post" action="{{ url_for('reset_sales') }}" onsubmit="return confirm('¿Eliminar TODAS las ventas?')"><button class="dropdown-item text-danger" type="submit"><i class="bi bi-trash me-2"></i>Reset ventas</button></form></li>
-            <li><form method="post" action="{{ url_for('reset_predictions') }}" onsubmit="return confirm('¿Eliminar TODAS las distribuciones?')"><button class="dropdown-item text-danger" type="submit"><i class="bi bi-trash me-2"></i>Reset distribuciones</button></form></li>
-            <li><form method="post" action="{{ url_for('reset_store_stock') }}" onsubmit="return confirm('¿Eliminar TODO el stock de tiendas?')"><button class="dropdown-item text-danger" type="submit"><i class="bi bi-trash me-2"></i>Reset stock tiendas</button></form></li>
-            <li><form method="post" action="{{ url_for('reset_stock_cd') }}" onsubmit="return confirm('¿Eliminar TODO el stock del CD?')"><button class="dropdown-item text-danger" type="submit"><i class="bi bi-trash me-2"></i>Reset stock CD</button></form></li>
-          </ul>
-        </div>
-      </div>
-      {% endif %}
     </div>
   </div>
 
@@ -173,6 +160,14 @@
         {% endif %}
       </div>
       <div class="dashv1-panel-tools">
+        {% if current_user.has_permission('admin:reset') %}
+        <div class="dash-quick-actions">
+          <form method="post" action="{{ url_for('reset_sales') }}" onsubmit="return confirm('¿Eliminar TODAS las ventas?')"><button type="submit" class="qa-btn" title="Reset ventas"><i class="bi bi-trash3"></i></button></form>
+          <form method="post" action="{{ url_for('reset_predictions') }}" onsubmit="return confirm('¿Eliminar TODAS las distribuciones?')"><button type="submit" class="qa-btn" title="Reset distribuciones"><i class="bi bi-diagram-3"></i></button></form>
+          <form method="post" action="{{ url_for('reset_store_stock') }}" onsubmit="return confirm('¿Eliminar TODO el stock de tiendas?')"><button type="submit" class="qa-btn" title="Reset stock tiendas"><i class="bi bi-shop"></i></button></form>
+          <form method="post" action="{{ url_for('reset_stock_cd') }}" onsubmit="return confirm('¿Eliminar TODO el stock del CD?')"><button type="submit" class="qa-btn" title="Reset stock CD"><i class="bi bi-box-seam"></i></button></form>
+        </div>
+        {% endif %}
         <input class="form-control form-control-sm dashv1-search" placeholder="Buscar SKU" value="{{ pred_search if pred_search is defined else '' }}" onkeydown="if(event.key==='Enter'){event.preventDefault();updateParam('pred_search', this.value, 'pred_page');}">
         {% if selected_run_id %}
           <a class="btn btn-primary dashv1-btn-export" href="{{ url_for('export_predictions', run_id=selected_run_id) }}">Exportar</a>

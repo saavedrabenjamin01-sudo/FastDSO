@@ -1,0 +1,90 @@
+DASHBOARD – MOVE RESET ACTIONS OUT OF KPI CARD (FINAL, NO INTERPRETATION)
+
+Context:
+The reset dropdown inside the “Stock CD hoy” KPI card must be completely removed.
+Reset actions must be shown as small icon buttons outside the KPI cards to avoid visual conflict with decorative KPI backgrounds.
+
+Target location:
+Place the reset actions as a compact icon toolbar inside the “Distribución sugerida” panel header,
+aligned to the RIGHT side, BEFORE the search input and Export button.
+
+Rules (strict):
+1) Do NOT modify backend routes or logic.
+2) Do NOT change reset endpoints or confirmations.
+3) Only modify templates/dashboard.html and append CSS in style.css.
+4) Use Bootstrap Icons ONLY.
+5) Keep visual noise minimal (ghost buttons).
+
+------------------------------------------------
+A) REMOVE RESET FROM KPI CARD
+------------------------------------------------
+In dashboard.html:
+- Completely remove the block that renders reset actions inside the KPI card:
+  .dash-kpi-menu
+  including the three-dots dropdown.
+
+------------------------------------------------
+B) ADD QUICK RESET ICONS (ADMIN ONLY)
+------------------------------------------------
+In the “Distribución sugerida” panel header (.dash-panel-header),
+add a new container BEFORE the search input:
+
+<div class="dash-quick-actions">
+  (only render if current_user.has_permission('admin:reset'))
+</div>
+
+Inside this container, add FOUR icon-only buttons, each wrapped in its existing form
+with confirmation dialogs unchanged.
+
+Icons (MANDATORY):
+- Reset ventas            → bi-trash3
+- Reset distribuciones    → bi-diagram-3
+- Reset stock tiendas     → bi-shop
+- Reset stock CD          → bi-box-seam
+
+Each button must:
+- Be icon-only (no text)
+- Include title attribute for tooltip (e.g. title="Reset ventas")
+- Use existing POST forms and confirm() logic
+
+------------------------------------------------
+C) VISUAL STYLE (EXACT)
+------------------------------------------------
+Append to style.css:
+
+.dash-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 8px;
+}
+
+.dash-quick-actions .qa-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(220, 53, 69, 0.25); /* soft danger outline */
+  background: transparent;
+  color: #dc3545; /* bootstrap danger */
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.dash-quick-actions .qa-btn:hover {
+  background: rgba(220, 53, 69, 0.08);
+  border-color: #dc3545;
+}
+
+.dash-quick-actions .qa-btn i {
+  font-size: 1rem;
+}
+
+------------------------------------------------
+D) FINAL STATE CHECK
+------------------------------------------------
+- KPI cards contain NO reset actions.
+- Reset actions appear as subtle icons near distribution controls.
+- Export button remains visually dominant.
+- Layout matches soft, premium dashboard mockup style.
+- No backend or permission regressions.
