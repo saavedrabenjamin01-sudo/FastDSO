@@ -7,67 +7,115 @@
     <p class="query-subtitle">Stock por tienda para evitar sobre-asignación y detectar quiebres</p>
   </div>
 
-  <div class="query-card">
-    <form method="post" enctype="multipart/form-data" id="uploadForm"
-          data-loader="true"
-          data-loader-title="Cargando Stock Tiendas"
-          data-loader-msg="Guardando productos en el inventario de tiendas..."
-          data-loader-icon="store">
+  <div class="row g-3">
+    <div class="col-12 col-lg-8">
+      <div class="query-card">
+        <form method="post" enctype="multipart/form-data" id="uploadForm"
+              data-loader="true"
+              data-loader-title="Cargando Stock Tiendas"
+              data-loader-msg="Guardando productos en el inventario de tiendas..."
+              data-loader-icon="store">
 
-      <div class="upload-row-3">
-        <div class="upload-field upload-field-file">
-          <label class="query-label">Archivo de stock tiendas</label>
-          <input type="file" class="form-control" name="file"
-                 accept=".csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-                 required>
-          <small class="text-muted">Acepta <code>.csv</code> y <code>.xlsx</code></small>
-        </div>
+          <div class="upload-row-3">
+            <div class="upload-field upload-field-file">
+              <label class="query-label">Archivo de stock tiendas</label>
+              <input type="file" class="form-control" name="file"
+                     accept=".csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                     required>
+              <small class="text-muted">Acepta <code>.csv</code> y <code>.xlsx</code></small>
+            </div>
 
-        <div class="upload-field">
-          <label class="query-label">Fecha snapshot</label>
-          <input type="date" class="form-control" name="fecha_doc">
-        </div>
+            <div class="upload-field">
+              <label class="query-label">Fecha snapshot</label>
+              <input type="date" class="form-control" name="fecha_doc">
+            </div>
 
-        <div class="upload-field">
-          <label class="query-label">Responsable</label>
-          <input type="text" class="form-control" name="responsable" placeholder="Quién cargó el stock">
-        </div>
+            <div class="upload-field">
+              <label class="query-label">Responsable</label>
+              <input type="text" class="form-control" name="responsable" placeholder="Quién cargó el stock">
+            </div>
+          </div>
+
+          <div class="upload-actions">
+            <button type="submit" class="btn btn-primary query-btn" id="submitBtn">
+              <i class="bi bi-shop me-2"></i>Cargar stock tiendas
+            </button>
+          </div>
+        </form>
       </div>
 
-      <div class="upload-actions">
-        <button type="submit" class="btn btn-primary query-btn" id="submitBtn">
-          <i class="bi bi-shop me-2"></i>Cargar stock tiendas
+      <div class="upload-collapse-wrap">
+        <button class="btn btn-link upload-collapse-toggle" type="button" data-bs-toggle="collapse" data-bs-target="#fileReqCollapse">
+          <i class="bi bi-info-circle me-1"></i>Requisitos del archivo
         </button>
+        <div class="collapse" id="fileReqCollapse">
+          <div class="upload-collapse-body">
+            <p class="mb-2"><strong>Estructura requerida:</strong></p>
+            <ul class="upload-req-list">
+              <li><code>sku</code> — Código del producto (texto, ceros a la izquierda preservados)</li>
+              <li><code>product_name</code> — Nombre del producto</li>
+              <li><strong>Columnas de tiendas</strong> — Una columna por tienda con valores numéricos de stock</li>
+            </ul>
+            <p class="mb-1"><strong>Formatos aceptados:</strong> <code>.csv</code>, <code>.xlsx</code></p>
+            <p class="text-muted mb-0">Cada nueva carga reemplaza el snapshot anterior de la fecha seleccionada.</p>
+          </div>
+        </div>
       </div>
-    </form>
-  </div>
 
-  <div class="upload-info-box upload-info-box-blue">
-    <div class="upload-info-title"><i class="bi bi-file-earmark-spreadsheet me-2"></i>Formato del archivo</div>
-    <p class="upload-info-desc">El archivo debe tener una columna por tienda con el stock numérico.</p>
-    <div class="upload-format-example">
-      <span class="upload-format-col"><code>sku</code></span>
-      <span class="upload-format-col"><code>product_name</code></span>
-      <span class="upload-format-col"><code>Tienda_Norte</code></span>
-      <span class="upload-format-col"><code>Tienda_Sur</code></span>
-      <span class="upload-format-col"><code>...</code></span>
+      <div class="upload-impact-note upload-impact-note-blue">
+        <i class="bi bi-shield-check me-2"></i>
+        El stock de tiendas previene sobre-asignación y ayuda a detectar quiebres de inventario.
+      </div>
     </div>
-  </div>
 
-  <div class="upload-collapse-wrap">
-    <button class="btn btn-link upload-collapse-toggle" type="button" data-bs-toggle="collapse" data-bs-target="#fileReqCollapse">
-      <i class="bi bi-info-circle me-1"></i>Requisitos del archivo
-    </button>
-    <div class="collapse" id="fileReqCollapse">
-      <div class="upload-collapse-body">
-        <p class="mb-2"><strong>Estructura requerida:</strong></p>
-        <ul class="upload-req-list">
-          <li><code>sku</code> — Código del producto (texto, ceros a la izquierda preservados)</li>
-          <li><code>product_name</code> — Nombre del producto</li>
-          <li><strong>Columnas de tiendas</strong> — Una columna por tienda con valores numéricos de stock</li>
+    <div class="col-12 col-lg-4">
+      <div class="upload-sidecard">
+        <div class="upload-sidecard-title"><i class="bi bi-list-check me-2"></i>Guía rápida</div>
+        <ol class="upload-guide-list">
+          <li>Sube archivo de stock por tienda</li>
+          <li>Confirma fecha de snapshot</li>
+          <li>Revisa en Consulta Stock</li>
+        </ol>
+      </div>
+
+      <div class="upload-sidecard">
+        <div class="upload-sidecard-title"><i class="bi bi-table me-2"></i>Estructura del archivo</div>
+        <div class="upload-example-table-wrap">
+          <table class="upload-example-table">
+            <thead>
+              <tr>
+                <th>sku</th>
+                <th>product_name</th>
+                <th>Tienda_A</th>
+                <th>Tienda_B</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>000123</td>
+                <td>Producto A</td>
+                <td>10</td>
+                <td>5</td>
+              </tr>
+              <tr>
+                <td>000456</td>
+                <td>Producto B</td>
+                <td>8</td>
+                <td>12</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <small class="text-muted mt-2 d-block">Una columna por tienda con stock numérico</small>
+      </div>
+
+      <div class="upload-sidecard">
+        <div class="upload-sidecard-title"><i class="bi bi-lightbulb me-2"></i>Tips</div>
+        <ul class="upload-tips-list">
+          <li>Mantén nombres de tiendas consistentes con el catálogo</li>
+          <li>Evita columnas de tienda vacías</li>
+          <li>Carga una vez al día para snapshots limpios</li>
         </ul>
-        <p class="mb-1"><strong>Formatos aceptados:</strong> <code>.csv</code>, <code>.xlsx</code></p>
-        <p class="text-muted mb-0">Cada nueva carga reemplaza el snapshot anterior de la fecha seleccionada.</p>
       </div>
     </div>
   </div>
