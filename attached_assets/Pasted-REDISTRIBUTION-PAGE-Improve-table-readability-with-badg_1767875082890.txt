@@ -1,0 +1,57 @@
+REDISTRIBUTION PAGE — Improve table readability with badges and impact indicator (UI only)
+
+Scope:
+- Edit ONLY templates/rebalancing.html (redistribution results table)
+- Append CSS only if needed to static/css/style.css under comment “/* Redistribution table polish */”
+- Do NOT change backend logic, routes, or variable names.
+- Do NOT add new DB columns.
+
+Goal:
+Make the redistribution table more scannable:
+- Clearly show Donor vs Receiver stores visually
+- Add a simple impact indicator per row without backend computation
+
+Requirements:
+
+1) Donor/Receiver badges
+In each row:
+- Wrap the “From store” value with a badge class: .badge-donor (soft red)
+- Wrap the “To store” value with a badge class: .badge-receiver (soft green)
+If the current table does not have explicit From/To columns:
+- Identify the correct columns representing origin and destination stores and apply the badges there.
+- Do NOT change data, just wrap text in spans.
+
+Example:
+<span class="badge-donor">{{ from_store }}</span>
+<span class="badge-receiver">{{ to_store }}</span>
+
+2) Impact indicator (no backend)
+Add a small “Impact” column at the end of the table:
+- Compute impact class purely from qty in template:
+  - if qty >= 10 → “High”
+  - elif qty >= 5 → “Medium”
+  - else → “Low”
+Use a small pill badge:
+<span class="impact impact-high">High</span>
+<span class="impact impact-med">Medium</span>
+<span class="impact impact-low">Low</span>
+
+3) Table UX
+- Add zebra striping and hover highlight if not already present (reuse dash-table styles or define local ones).
+- Ensure numeric columns right-aligned.
+
+4) CSS (append-only)
+Add these classes:
+
+.badge-donor { background: rgba(220,53,69,.10); color:#b02a37; border:1px solid rgba(220,53,69,.18); padding:3px 8px; border-radius:999px; font-weight:700; font-size:.78rem; }
+.badge-receiver { background: rgba(25,135,84,.10); color:#0f5132; border:1px solid rgba(25,135,84,.18); padding:3px 8px; border-radius:999px; font-weight:700; font-size:.78rem; }
+
+.impact { padding:3px 10px; border-radius:999px; font-weight:800; font-size:.75rem; display:inline-block; }
+.impact-high { background: rgba(13,110,253,.12); color:#0b2b7a; border:1px solid rgba(13,110,253,.18); }
+.impact-med { background: rgba(255,193,7,.16); color:#664d03; border:1px solid rgba(255,193,7,.22); }
+.impact-low { background: rgba(108,117,125,.12); color:#343a40; border:1px solid rgba(108,117,125,.18); }
+
+Deliverables:
+- Show the updated table header and row snippet.
+- Show the appended CSS snippet only.
+- Confirm the table still renders without errors.

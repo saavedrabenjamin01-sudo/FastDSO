@@ -188,6 +188,7 @@
             <th class="text-end">WOC Dest</th>
             <th class="text-end">Score</th>
             <th>Razón</th>
+            <th class="text-center">Impacto</th>
           </tr>
         </thead>
         <tbody>
@@ -195,14 +196,19 @@
           <tr>
             <td><code class="rebal-sku">{{ s.sku }}</code></td>
             <td class="rebal-name">{{ s.name[:40] }}{% if s.name|length > 40 %}...{% endif %}</td>
-            <td>{{ s.from_store }}</td>
-            <td><strong>{{ s.to_store }}</strong></td>
+            <td><span class="badge-donor">{{ s.from_store }}</span></td>
+            <td><span class="badge-receiver">{{ s.to_store }}</span></td>
             <td class="text-end fw-bold">{{ s.qty }}</td>
             <td class="text-end">{{ "%.1f"|format(s.sales_rate_to) }}</td>
             <td class="text-end rebal-woc-high">{{ "%.1f"|format(s.woc_from) }}</td>
             <td class="text-end rebal-woc-low">{{ "%.1f"|format(s.woc_to) }}</td>
             <td class="text-end">{{ "%.1f"|format(s.score) }}</td>
             <td class="rebal-reason">{{ s.reason[:50] }}{% if s.reason|length > 50 %}...{% endif %}</td>
+            <td class="text-center">
+              {% if s.qty >= 10 %}<span class="impact impact-high">High</span>
+              {% elif s.qty >= 5 %}<span class="impact impact-med">Medium</span>
+              {% else %}<span class="impact impact-low">Low</span>{% endif %}
+            </td>
           </tr>
           {% endfor %}
         </tbody>
