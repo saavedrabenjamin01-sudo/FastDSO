@@ -1960,3 +1960,43 @@ body{
     flex: 1 1 100%;
   }
 }
+
+/* === Upload CD page additions === */
+.upload-row-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.upload-info-box {
+  background: linear-gradient(135deg, #fef3c7 0%, #fef9c3 100%);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  border-radius: 10px;
+  padding: 14px 18px;
+  margin-bottom: 12px;
+}
+
+.upload-info-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #92400e;
+  margin-bottom: 8px;
+}
+
+.upload-info-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.84rem;
+  color: #78350f;
+}
+
+.upload-info-list li {
+  margin-bottom: 4px;
+}
+
+@media (max-width: 768px) {
+  .upload-row-3 {
+    grid-template-columns: 1fr;
+  }
+}
