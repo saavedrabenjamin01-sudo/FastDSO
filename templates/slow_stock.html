@@ -1,0 +1,366 @@
+{% extends "base.html" %}
+
+{% block title %}Stock Lento & Reasignación{% endblock %}
+{% block page_title %}Stock Lento & Reasignación Inteligente{% endblock %}
+
+{% block content %}
+<div class="slow-wrap">
+  <div class="slow-header">
+    <h1 class="slow-title">Stock Lento & Reasignación Inteligente</h1>
+    <p class="slow-subtitle">Identifica inventario muerto o de baja rotación y genera transferencias óptimas</p>
+  </div>
+
+  {% if run_info %}
+  <div class="slow-alert slow-alert-info">
+    <div class="slow-alert-icon"><i class="bi bi-check-circle-fill"></i></div>
+    <div class="slow-alert-content">
+      <strong>Último análisis:</strong> {{ run_info.created_at.strftime('%Y-%m-%d %H:%M') if run_info.created_at else 'N/A' }}
+      <span class="slow-alert-meta">ID: {{ run_info.run_id[:8] }}...</span>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="slow-card slow-params-card">
+    <div class="slow-card-header">
+      <i class="bi bi-sliders me-2"></i>Parámetros de Análisis
+    </div>
+    <div class="slow-card-body">
+      <form method="POST" action="{{ url_for('slow_stock') }}" id="slowStockForm"
+            data-loader="true"
+            data-loader-title="Analizando Stock Lento"
+            data-loader-msg="Evaluando ciclo de vida de productos y generando sugerencias..."
+            data-loader-icon="store-transfer">
+        
+        <div class="slow-params-grid">
+          <div class="slow-field">
+            <label class="slow-label">Días muerto (tienda)</label>
+            <input type="number" name="dead_days_store" class="form-control" value="{{ default_params.DEAD_DAYS_STORE }}">
+            <small class="text-muted">Sin venta = muerto</small>
+          </div>
+          <div class="slow-field">
+            <label class="slow-label">Días mín lento (tienda)</label>
+            <input type="number" name="slow_min_days_store" class="form-control" value="{{ default_params.SLOW_MIN_DAYS_STORE }}">
+            <small class="text-muted">Para calificar lento</small>
+          </div>
+          <div class="slow-field">
+            <label class="slow-label">Días muerto (global)</label>
+            <input type="number" name="dead_days_global" class="form-control" value="{{ default_params.DEAD_DAYS_GLOBAL }}">
+            <small class="text-muted">Sin venta global = CD muerto</small>
+          </div>
+          <div class="slow-field">
+            <label class="slow-label">Días sin compra</label>
+            <input type="number" name="dead_purchase_days" class="form-control" value="{{ default_params.DEAD_PURCHASE_DAYS }}">
+            <small class="text-muted">Para calificar CD muerto</small>
+          </div>
+          <div class="slow-field">
+            <label class="slow-label">Umbral venta/sem lenta</label>
+            <input type="number" step="0.1" name="slow_rate_threshold" class="form-control" value="{{ default_params.SLOW_RATE_THRESHOLD }}">
+            <small class="text-muted">Menor = lento</small>
+          </div>
+        </div>
+
+        <div class="slow-params-grid slow-params-grid-row2">
+          <div class="slow-field">
+            <label class="slow-label">Tasa mín receptor</label>
+            <input type="number" step="0.1" name="receiver_min_rate" class="form-control" value="{{ default_params.RECEIVER_MIN_RATE }}">
+            <small class="text-muted">Ventas/sem para recibir</small>
+          </div>
+          <div class="slow-field">
+            <label class="slow-label">WOC objetivo receptor</label>
+            <input type="number" step="0.1" name="target_receiver_woc" class="form-control" value="{{ default_params.TARGET_RECEIVER_WOC }}">
+            <small class="text-muted">Semanas cobertura meta</small>
+          </div>
+        </div>
+
+        <div class="slow-actions">
+          {% if current_user.has_permission('slow_stock:run') %}
+          <button type="submit" class="btn slow-btn-primary">
+            <i class="bi bi-play-circle me-1"></i>Ejecutar Análisis
+          </button>
+          {% endif %}
+          
+          {% if results %}
+          <a href="{{ url_for('export_slow_stock', export_type='store') }}" class="btn slow-btn-secondary">
+            <i class="bi bi-download me-1"></i>Exportar Tiendas
+          </a>
+          <a href="{{ url_for('export_slow_stock', export_type='transfers') }}" class="btn slow-btn-secondary">
+            <i class="bi bi-download me-1"></i>Exportar Transferencias
+          </a>
+          <a href="{{ url_for('export_slow_stock', export_type='cd') }}" class="btn slow-btn-secondary">
+            <i class="bi bi-download me-1"></i>Exportar CD
+          </a>
+          {% endif %}
+        </div>
+      </form>
+    </div>
+    <div class="slow-params-hint">
+      <i class="bi bi-info-circle me-1"></i>Los parámetros determinan qué SKUs califican como muertos o lentos según días sin venta y velocidad.
+    </div>
+  </div>
+
+  {% if results %}
+  <div class="slow-kpi-row">
+    <div class="slow-kpi-card slow-kpi-red">
+      <div class="slow-kpi-badge">
+        <i class="bi bi-x-octagon"></i>
+      </div>
+      <div class="slow-kpi-content">
+        <div class="slow-kpi-value">{{ results.store_analysis|selectattr('status', 'equalto', 'DEAD_STORE')|list|length }}</div>
+        <div class="slow-kpi-label">SKU-Tienda Muertos</div>
+      </div>
+      <div class="slow-kpi-deco"></div>
+    </div>
+    <div class="slow-kpi-card slow-kpi-amber">
+      <div class="slow-kpi-badge">
+        <i class="bi bi-hourglass-split"></i>
+      </div>
+      <div class="slow-kpi-content">
+        <div class="slow-kpi-value">{{ results.store_analysis|selectattr('status', 'equalto', 'SLOW_STORE')|list|length }}</div>
+        <div class="slow-kpi-label">SKU-Tienda Lentos</div>
+      </div>
+      <div class="slow-kpi-deco"></div>
+    </div>
+    <div class="slow-kpi-card slow-kpi-green">
+      <div class="slow-kpi-badge">
+        <i class="bi bi-arrow-left-right"></i>
+      </div>
+      <div class="slow-kpi-content">
+        <div class="slow-kpi-value">{{ results.transfers|length }}</div>
+        <div class="slow-kpi-label">Transferencias Sugeridas</div>
+      </div>
+      <div class="slow-kpi-deco"></div>
+    </div>
+    <div class="slow-kpi-card slow-kpi-purple">
+      <div class="slow-kpi-badge">
+        <i class="bi bi-box-seam"></i>
+      </div>
+      <div class="slow-kpi-content">
+        <div class="slow-kpi-value">{{ results.cd_analysis|length }}</div>
+        <div class="slow-kpi-label">SKUs Muertos en CD</div>
+      </div>
+      <div class="slow-kpi-deco"></div>
+    </div>
+  </div>
+
+  <div class="slow-tabs">
+    <button class="slow-tab active" data-tab="stores">
+      <i class="bi bi-shop me-1"></i>Tiendas ({{ results.store_analysis|length }})
+    </button>
+    <button class="slow-tab" data-tab="transfers">
+      <i class="bi bi-arrow-left-right me-1"></i>Transferencias ({{ results.transfers|length }})
+    </button>
+    <button class="slow-tab" data-tab="cd">
+      <i class="bi bi-box-seam me-1"></i>CD ({{ results.cd_analysis|length }})
+    </button>
+  </div>
+
+  <div class="slow-tab-content" id="tab-stores">
+    <div class="slow-card slow-table-card">
+      <div class="slow-table-header">
+        <div class="slow-table-title-wrap">
+          <div class="slow-table-title">
+            <i class="bi bi-shop me-2"></i>Stock Muerto/Lento por Tienda
+          </div>
+        </div>
+        <span class="slow-table-badge">{{ results.store_analysis|length }} registros</span>
+      </div>
+      <div class="slow-table-wrap">
+        <table class="slow-table">
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Producto</th>
+              <th>Tienda</th>
+              <th class="text-center">Stock</th>
+              <th class="text-center">Días sin venta</th>
+              <th class="text-center">Venta/sem</th>
+              <th class="text-center">Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in results.store_analysis[:50] %}
+            <tr>
+              <td class="text-mono">{{ row.sku }}</td>
+              <td>{{ row.product_name[:30] }}{% if row.product_name|length > 30 %}...{% endif %}</td>
+              <td>{{ row.store }}</td>
+              <td class="text-center">{{ row.stock }}</td>
+              <td class="text-center">{{ row.days_since_last_sale if row.days_since_last_sale < 9999 else '—' }}</td>
+              <td class="text-center">{{ row.sales_rate }}</td>
+              <td class="text-center">
+                {% if row.status == 'DEAD_STORE' %}
+                <span class="slow-badge slow-badge-red">MUERTO</span>
+                {% else %}
+                <span class="slow-badge slow-badge-amber">LENTO</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7" class="text-center text-muted py-4">No hay resultados</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if results.store_analysis|length > 50 %}
+      <div class="slow-table-footer">
+        <span class="text-muted">Mostrando 50 de {{ results.store_analysis|length }} registros. Exporta para ver todos.</span>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="slow-tab-content" id="tab-transfers" style="display:none;">
+    <div class="slow-card slow-table-card">
+      <div class="slow-table-header">
+        <div class="slow-table-title-wrap">
+          <div class="slow-table-title">
+            <i class="bi bi-arrow-left-right me-2"></i>Sugerencias de Transferencia
+          </div>
+          <div class="slow-table-hint">
+            <i class="bi bi-arrow-right me-1"></i>De tiendas con stock muerto/lento → a tiendas con demanda activa
+          </div>
+        </div>
+        <span class="slow-table-badge">{{ results.transfers|length }} transferencias</span>
+      </div>
+      <div class="slow-table-wrap">
+        <table class="slow-table">
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Producto</th>
+              <th>De Tienda</th>
+              <th>A Tienda</th>
+              <th class="text-center">Cantidad</th>
+              <th class="text-center">Estado Origen</th>
+              <th class="text-center">Venta/sem Destino</th>
+              <th class="text-center">WOC Destino</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in results.transfers[:50] %}
+            <tr>
+              <td class="text-mono">{{ row.sku }}</td>
+              <td>{{ row.product_name[:25] }}{% if row.product_name|length > 25 %}...{% endif %}</td>
+              <td>{{ row.from_store }}</td>
+              <td>{{ row.to_store }}</td>
+              <td class="text-center fw-bold">{{ row.qty }}</td>
+              <td class="text-center">
+                {% if row.donor_status == 'DEAD_STORE' %}
+                <span class="slow-badge slow-badge-red">MUERTO</span>
+                {% else %}
+                <span class="slow-badge slow-badge-amber">LENTO</span>
+                {% endif %}
+              </td>
+              <td class="text-center">{{ row.receiver_sales_rate }}</td>
+              <td class="text-center">{{ row.receiver_woc }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="8" class="text-center text-muted py-4">No hay transferencias sugeridas</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if results.transfers|length > 50 %}
+      <div class="slow-table-footer">
+        <span class="text-muted">Mostrando 50 de {{ results.transfers|length }} transferencias. Exporta para ver todas.</span>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="slow-tab-content" id="tab-cd" style="display:none;">
+    <div class="slow-card slow-table-card">
+      <div class="slow-table-header">
+        <div class="slow-table-title-wrap">
+          <div class="slow-table-title">
+            <i class="bi bi-box-seam me-2"></i>Stock Muerto en Centro de Distribución
+          </div>
+        </div>
+        <span class="slow-table-badge">{{ results.cd_analysis|length }} SKUs</span>
+      </div>
+      <div class="slow-table-wrap">
+        <table class="slow-table">
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Producto</th>
+              <th class="text-center">Stock CD</th>
+              <th class="text-center">Días sin venta global</th>
+              <th class="text-center">Días sin compra</th>
+              <th class="text-center">Estado</th>
+              <th>Recomendación</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in results.cd_analysis[:50] %}
+            <tr>
+              <td class="text-mono">{{ row.sku }}</td>
+              <td>{{ row.product_name[:30] }}{% if row.product_name|length > 30 %}...{% endif %}</td>
+              <td class="text-center">{{ row.stock_cd }}</td>
+              <td class="text-center">{{ row.days_since_last_sale_global if row.days_since_last_sale_global else '—' }}</td>
+              <td class="text-center">{{ row.days_since_last_purchase if row.days_since_last_purchase else '—' }}</td>
+              <td class="text-center">
+                <span class="slow-badge slow-badge-purple">MUERTO CD</span>
+              </td>
+              <td>{{ row.recommendation }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7" class="text-center text-muted py-4">No hay SKUs muertos en CD</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if results.cd_analysis|length > 50 %}
+      <div class="slow-table-footer">
+        <span class="text-muted">Mostrando 50 de {{ results.cd_analysis|length }} SKUs. Exporta para ver todos.</span>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% else %}
+  <div class="slow-empty-state">
+    <div class="slow-empty-icon"><i class="bi bi-hourglass"></i></div>
+    <div class="slow-empty-title">Sin datos de análisis</div>
+    <div class="slow-empty-text">Haz clic en "Ejecutar Análisis" para identificar stock lento y muerto.</div>
+  </div>
+  {% endif %}
+
+  <div class="slow-card slow-upload-card">
+    <div class="slow-card-header">
+      <i class="bi bi-upload me-2"></i>Cargar Datos de Ciclo de Vida (Opcional)
+    </div>
+    <div class="slow-card-body">
+      <p class="slow-upload-hint">
+        Sube un archivo Excel/CSV con fechas de última compra o última venta para mejorar la precisión del análisis.
+      </p>
+      <form method="POST" action="{{ url_for('upload_lifecycle') }}" enctype="multipart/form-data" class="slow-upload-form">
+        <div class="slow-upload-row">
+          <select name="upload_type" class="form-select slow-upload-select">
+            <option value="global">Global (última compra/venta por SKU)</option>
+            <option value="store">Por tienda (última venta por SKU-tienda)</option>
+          </select>
+          <input type="file" name="file" accept=".csv,.xlsx,.xls" class="form-control slow-upload-file">
+          <button type="submit" class="btn slow-btn-secondary">
+            <i class="bi bi-upload me-1"></i>Subir
+          </button>
+        </div>
+      </form>
+      <div class="slow-upload-formats">
+        <strong>Formato Global:</strong> sku, last_purchase_date, last_sale_date_global<br>
+        <strong>Formato Por tienda:</strong> sku, store, last_sale_date_store
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.querySelectorAll('.slow-tab').forEach(tab => {
+  tab.addEventListener('click', function() {
+    document.querySelectorAll('.slow-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.slow-tab-content').forEach(c => c.style.display = 'none');
+    this.classList.add('active');
+    const tabId = this.getAttribute('data-tab');
+    document.getElementById('tab-' + tabId).style.display = 'block';
+  });
+});
+</script>
+{% endblock %}

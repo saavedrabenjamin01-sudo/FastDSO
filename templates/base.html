@@ -111,6 +111,13 @@
           <span class="nav-text">Redistribución</span>
         </a>
         {% endif %}
+
+        {% if current_user.has_permission('slow_stock:view') %}
+        <a class="nav-link" href="{{ url_for('slow_stock') }}">
+          <span class="nav-icon"><i class="bi bi-hourglass-split"></i></span>
+          <span class="nav-text">Stock Lento</span>
+        </a>
+        {% endif %}
       </div>
     </div>
     {% endif %}
