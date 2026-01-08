@@ -1,0 +1,80 @@
+STOCK QUERY PAGE — Visual upgrade to match Dashboard mockup (no backend changes)
+
+Context:
+We need the “Consulta stock” template to look consistent with the new Dashboard style: soft cards, compact filters, clear results, premium empty states. Backend logic must remain unchanged.
+
+Scope (strict):
+- Only edit templates/stock_query.html
+- Append CSS only to static/css/style.css (do not overwrite)
+- Do NOT change Python routes, query logic, or variable names.
+
+Visual goals:
+1) Wrap content in a centered container:
+- Add a wrapper div with max-width 1250px and auto margin (same as dashboard).
+- Use soft spacing and consistent gaps.
+
+2) Page header:
+- Title: “Consulta de stock”
+- Subtitle: “Consulta disponibilidad en CD o stock por tienda”
+- Keep it compact and aligned.
+
+3) Filters card (single compact card):
+- Put the form inside a card (white background, rounded, shadow).
+- Fields aligned in one row (responsive wrap):
+  - SKU input (monospace styling hint)
+  - Tipo selector (CD vs Tiendas)
+  - Tienda selector (optional)
+  - Consultar button aligned right
+- Use small labels (12px, bold, muted).
+
+4) Results section:
+When results exist:
+- Show an info strip like dashboard runstrip with:
+  - SKU + Product name
+  - Tipo consultado (CD / Tiendas)
+  - Snapshot date if available
+- Then show results:
+  - If type == CD: show a KPI-style card with big number “Stock CD disponible”
+  - If type == Tiendas: show a table with:
+    - zebra rows
+    - hover highlight
+    - sticky header
+    - right-aligned numeric stock
+
+5) Empty state:
+If no results:
+- Show a premium empty state block:
+  - icon (bi-search or bi-inbox)
+  - title “No results found”
+  - hint “Verify SKU format (leading zeros) and try again.”
+
+6) Loader:
+Add the existing loader trigger on the form tag:
+  data-loader="true"
+  data-loader-title="Consultando stock"
+  data-loader-msg="Buscando disponibilidad en CD / tiendas..."
+  data-loader-icon="warehouse"
+(If the form is GET, modal may be brief; that’s OK.)
+
+CSS requirements (append-only):
+Append a block at the end of style.css under:
+/* Stock query polish */
+
+Add classes:
+- .query-wrap (max-width, centered)
+- .query-header (title/subtitle)
+- .query-card (same card look as dashboard)
+- .query-strip (info strip)
+- .query-kpi-card (big number)
+- .query-empty (empty state)
+
+Re-use existing dash-table styles if available, otherwise add:
+- sticky header
+- zebra
+- hover
+- padding
+
+Deliverables:
+- Updated templates/stock_query.html (full file if needed)
+- Appended CSS snippet only
+- No backend changes

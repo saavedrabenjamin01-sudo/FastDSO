@@ -1644,3 +1644,222 @@ body{
   font-size: 0.82rem;
   color: #8e99a4;
 }
+
+/* === Stock query polish === */
+.query-wrap {
+  max-width: 1250px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+.query-header {
+  margin-bottom: 20px;
+}
+
+.query-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0 0 4px 0;
+}
+
+.query-subtitle {
+  font-size: 0.9rem;
+  color: #64748b;
+  margin: 0;
+}
+
+.query-card {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.query-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-end;
+}
+
+.query-field {
+  flex: 1 1 160px;
+  min-width: 140px;
+}
+
+.query-field-wide {
+  flex: 2 1 220px;
+}
+
+.query-field-btn {
+  flex: 0 0 auto;
+}
+
+.query-label {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.query-input-mono {
+  font-family: 'SF Mono', 'Consolas', monospace;
+  letter-spacing: 0.5px;
+}
+
+.query-btn {
+  padding: 8px 24px;
+  font-weight: 600;
+  border-radius: 8px;
+}
+
+/* Info strip */
+.query-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  background: linear-gradient(135deg, #e0e7ff 0%, #ede9fe 100%);
+  border-radius: 10px;
+  padding: 12px 18px;
+  margin-bottom: 16px;
+  font-size: 0.9rem;
+}
+
+.query-strip-sku {
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-weight: 700;
+  color: #3730a3;
+}
+
+.query-strip-sep {
+  color: #a5b4fc;
+}
+
+.query-strip-product {
+  color: #4338ca;
+  font-weight: 500;
+}
+
+.query-strip-badge {
+  background: #4f46e5;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 20px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.query-strip-date {
+  margin-left: auto;
+  font-size: 0.82rem;
+  color: #6366f1;
+}
+
+/* KPI card for CD stock */
+.query-kpi-card {
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+  padding: 28px 32px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.query-kpi-badge {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 4px 12px rgba(34,197,94,0.25);
+}
+
+.query-kpi-badge i {
+  font-size: 1.6rem;
+  color: #fff;
+}
+
+.query-kpi-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.query-kpi-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 4px;
+}
+
+.query-kpi-number {
+  font-size: 2.2rem;
+  font-weight: 700;
+  color: #1e293b;
+  line-height: 1;
+}
+
+/* Empty state */
+.query-empty {
+  text-align: center;
+  padding: 48px 24px;
+}
+
+.query-empty-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.query-empty-icon {
+  font-size: 2.5rem;
+  color: #b0bec5;
+  opacity: 0.7;
+}
+
+.query-empty-icon-warn {
+  color: #f59e0b;
+  opacity: 1;
+}
+
+.query-empty-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #5f6c7b;
+}
+
+.query-empty-hint {
+  font-size: 0.85rem;
+  color: #8e99a4;
+  max-width: 320px;
+}
+
+@media (max-width: 768px) {
+  .query-form {
+    flex-direction: column;
+  }
+  .query-field,
+  .query-field-wide,
+  .query-field-btn {
+    flex: 1 1 100%;
+  }
+  .query-btn {
+    width: 100%;
+  }
+  .query-kpi-card {
+    flex-direction: column;
+    text-align: center;
+  }
+}

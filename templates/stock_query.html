@@ -1,70 +1,109 @@
 {% extends 'base.html' %}
 {% block content %}
 
-<div class="card p-3 mb-3">
-  <form method="get" action="{{ url_for('stock_query') }}" class="row g-2 align-items-end">
-    <div class="col-12 col-md-3">
-      <label class="form-label">SKU</label>
-      <input class="form-control" name="sku" value="{{ sku }}" placeholder="Ej: 000123">
-    </div>
+<div class="query-wrap">
+  <div class="query-header">
+    <h1 class="query-title">Consulta de stock</h1>
+    <p class="query-subtitle">Consulta disponibilidad en CD o stock por tienda</p>
+  </div>
 
-    <div class="col-12 col-md-3">
-      <label class="form-label">Tipo</label>
-      <select class="form-select" name="scope">
-        <option value="cd" {% if selected_scope=='cd' %}selected{% endif %}>Stock CD</option>
-        <option value="tiendas" {% if selected_scope=='tiendas' %}selected{% endif %}>Stock Tiendas</option>
-      </select>
-    </div>
+  <div class="query-card">
+    <form method="get" action="{{ url_for('stock_query') }}" class="query-form" data-loader="true" data-loader-title="Consultando stock" data-loader-msg="Buscando disponibilidad en CD / tiendas..." data-loader-icon="warehouse">
+      <div class="query-field">
+        <label class="query-label">SKU</label>
+        <input class="form-control query-input-mono" name="sku" value="{{ sku }}" placeholder="Ej: 000123">
+      </div>
 
-    <div class="col-12 col-md-4">
-      <label class="form-label">Tienda (opcional)</label>
-      <select class="form-select" name="store">
-        <option value="">Todas</option>
-        {% for s in stores %}
-          <option value="{{ s.name }}" {% if selected_store==s.name %}selected{% endif %}>{{ s.name }}</option>
-        {% endfor %}
-      </select>
-    </div>
+      <div class="query-field">
+        <label class="query-label">Tipo</label>
+        <select class="form-select" name="scope">
+          <option value="cd" {% if selected_scope=='cd' %}selected{% endif %}>Stock CD</option>
+          <option value="tiendas" {% if selected_scope=='tiendas' %}selected{% endif %}>Stock Tiendas</option>
+        </select>
+      </div>
 
-    <div class="col-12 col-md-2">
-      <button class="btn btn-primary w-100">Consultar</button>
-    </div>
-  </form>
-</div>
+      <div class="query-field query-field-wide">
+        <label class="query-label">Tienda (opcional)</label>
+        <select class="form-select" name="store">
+          <option value="">Todas</option>
+          {% for s in stores %}
+            <option value="{{ s.name }}" {% if selected_store==s.name %}selected{% endif %}>{{ s.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
 
-{% if result %}
-  {% if result.error %}
-    <div class="alert alert-warning">{{ result.error }}</div>
-  {% else %}
-    <div class="card p-3">
-      <div class="fw-bold mb-2">{{ result.sku }} — {{ result.product }}</div>
+      <div class="query-field query-field-btn">
+        <button class="btn btn-primary query-btn">Consultar</button>
+      </div>
+    </form>
+  </div>
+
+  {% if result %}
+    {% if result.error %}
+      <div class="query-card query-empty">
+        <div class="query-empty-wrap">
+          <i class="bi bi-exclamation-circle query-empty-icon query-empty-icon-warn"></i>
+          <div class="query-empty-title">{{ result.error }}</div>
+          <div class="query-empty-hint">Verifica el formato del SKU (ceros a la izquierda) e intenta de nuevo.</div>
+        </div>
+      </div>
+    {% else %}
+      <div class="query-strip">
+        <span class="query-strip-sku">{{ result.sku }}</span>
+        <span class="query-strip-sep">—</span>
+        <span class="query-strip-product">{{ result.product }}</span>
+        <span class="query-strip-badge">{{ 'CD' if result.scope == 'cd' else 'Tiendas' }}</span>
+        {% if result.scope == 'cd' and result.as_of_date %}
+          <span class="query-strip-date">{{ result.as_of_date }}</span>
+        {% endif %}
+      </div>
 
       {% if result.scope == 'cd' %}
-        <div>Fecha: <b>{{ result.as_of_date or '—' }}</b></div>
-        <div>Disponible CD: <b>{{ result.quantity }}</b></div>
-      {% else %}
-        <div class="table-responsive">
-          <table class="table table-sm">
-            <thead>
-              <tr><th>Tienda</th><th>Fecha</th><th>Stock</th></tr>
-            </thead>
-            <tbody>
-              {% for r in result.stores %}
-                <tr>
-                  <td>{{ r.store }}</td>
-                  <td>{{ r.as_of_date }}</td>
-                  <td>{{ r.quantity }}</td>
-                </tr>
-              {% endfor %}
-              {% if not result.stores %}
-                <tr><td colspan="3" class="text-muted">Sin snapshots para este SKU.</td></tr>
-              {% endif %}
-            </tbody>
-          </table>
+        <div class="query-kpi-card">
+          <div class="query-kpi-badge">
+            <i class="bi bi-box-seam"></i>
+          </div>
+          <div class="query-kpi-body">
+            <div class="query-kpi-label">Stock CD disponible</div>
+            <div class="query-kpi-number">{{ "{:,}".format(result.quantity|int) }}</div>
+          </div>
         </div>
+      {% else %}
+        {% if result.stores and result.stores|length > 0 %}
+          <div class="query-card">
+            <div class="dash-table-scroll">
+              <table class="table table-sm mb-0 dash-table">
+                <thead>
+                  <tr>
+                    <th>Tienda</th>
+                    <th>Fecha</th>
+                    <th class="text-end">Stock</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for r in result.stores %}
+                    <tr>
+                      <td>{{ r.store }}</td>
+                      <td>{{ r.as_of_date }}</td>
+                      <td class="text-end">{{ "{:,}".format(r.quantity|int) }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        {% else %}
+          <div class="query-card query-empty">
+            <div class="query-empty-wrap">
+              <i class="bi bi-inbox query-empty-icon"></i>
+              <div class="query-empty-title">Sin snapshots para este SKU</div>
+              <div class="query-empty-hint">Carga stock de tiendas para ver disponibilidad.</div>
+            </div>
+          </div>
+        {% endif %}
       {% endif %}
-    </div>
+    {% endif %}
   {% endif %}
-{% endif %}
+</div>
 
 {% endblock %}
