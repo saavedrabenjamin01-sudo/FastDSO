@@ -1,0 +1,72 @@
+STEP 2 — KPI cards visual upgrade WITH illustration badge (Dashboard)
+
+Context:
+You are editing ONLY:
+- templates/dashboard.html (KPI section)
+- static/css/style.css (append-only styles)
+
+Goal:
+Make the KPI cards visually match the mockup, INCLUDING the small illustration/icon badge on the left side of each card.
+
+IMPORTANT:
+This step MUST include a visible circular icon badge per KPI card.
+If the badge is missing, the task is NOT complete.
+
+Rules (strict):
+1) Do NOT change backend logic, variables, or queries.
+2) Do NOT rename or remove any existing KPI variables.
+3) Do NOT add or remove KPI cards (still exactly 2).
+4) Do NOT affect filters, tables, pagination, or other sections.
+5) Only refine HTML structure inside the existing KPI cards.
+6) Existing admin dropdown (three dots) must remain functional.
+
+Required KPI card structure (HTML):
+Each KPI card must have this visual hierarchy:
+
+- Left: circular icon badge (soft background)
+  - Icon centered (Bootstrap Icon already used)
+- Right:
+  - Small muted label (top)
+  - Large bold number (main focus)
+  - Optional subtle subtext (very small)
+
+Example hierarchy (conceptual, not literal copy):
+[ ICON BADGE ]  Top products sold
+               38
+               last 7 days
+
+Specific requirements:
+- Icon badge:
+  - Perfect circle
+  - Soft background color (blue/green tint)
+  - Icon color slightly stronger than background
+- Number:
+  - Largest text in the card
+- Label:
+  - Smaller, muted, uppercase or letter-spaced
+- Card:
+  - Soft shadow
+  - Rounded corners
+  - Slight hover lift (translateY)
+
+CSS requirements (append at bottom of style.css under comment):
+/* Dashboard KPI polish */
+
+- Increase KPI number font-size to ~36px
+- Reduce label font-size to ~12px
+- Add letter-spacing to label
+- Add subtle gradient or background to card
+- Add hover effect:
+  transform: translateY(-1px);
+  transition: 150ms ease;
+
+Acceptance criteria (must all be true):
+- KPI cards visually resemble the mockup cards.
+- Each KPI clearly has a circular illustration badge.
+- Numbers visually dominate the card.
+- No layout breaks.
+- No loss of permissions or functionality.
+
+Deliverables:
+- Updated KPI section HTML (only that block).
+- Appended CSS snippet (only new styles).

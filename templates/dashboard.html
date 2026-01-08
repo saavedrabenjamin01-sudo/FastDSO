@@ -114,11 +114,12 @@
   {# C) KPI row (2 cards only) #}
   <div class="dashv1-kpis">
     <div class="dashv1-kpi">
-      <div class="dashv1-kpi-icon dashv1-kpi-icon-blue">
+      <div class="dashv1-kpi-badge dashv1-kpi-badge-blue">
         <i class="bi bi-box-seam"></i>
       </div>
       <div class="dashv1-kpi-body">
-        <div class="dashv1-kpi-value">
+        <div class="dashv1-kpi-label">Top productos vendidos</div>
+        <div class="dashv1-kpi-number">
           {% set top_units = namespace(value=0) %}
           {% if top_sales is defined and top_sales %}
             {% for r in top_sales %}
@@ -129,17 +130,18 @@
           {% endif %}
           {{ "{:,}".format(top_units.value|int) }}
         </div>
-        <div class="dashv1-kpi-title">Top productos vendidos</div>
+        <div class="dashv1-kpi-sub">últimos 7 días</div>
       </div>
     </div>
 
     <div class="dashv1-kpi">
-      <div class="dashv1-kpi-icon dashv1-kpi-icon-green">
+      <div class="dashv1-kpi-badge dashv1-kpi-badge-green">
         <i class="bi bi-archive"></i>
       </div>
       <div class="dashv1-kpi-body">
-        <div class="dashv1-kpi-value">{{ "{:,}".format(kpi_stock_cd_total|int if kpi_stock_cd_total is defined else 0) }}</div>
-        <div class="dashv1-kpi-title">Stock CD hoy</div>
+        <div class="dashv1-kpi-label">Stock CD hoy</div>
+        <div class="dashv1-kpi-number">{{ "{:,}".format(kpi_stock_cd_total|int if kpi_stock_cd_total is defined else 0) }}</div>
+        <div class="dashv1-kpi-sub">disponible</div>
       </div>
       {% if current_user.has_permission('admin:reset') %}
       <div class="dashv1-kpi-menu">
