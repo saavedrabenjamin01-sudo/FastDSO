@@ -24,16 +24,19 @@
   <aside class="sidebar">
 
     <!-- Brand -->
-    <div class="sidebar-header">
-      <div class="sidebar-logo-card">
-        <img 
-          src="{{ url_for('static', filename='img/logo/fastdso_logo_full.jpg') }}"
-          alt="FastDSO"
-          class="sidebar-logo"
-        >
+    <div class="sb-brand">
+      <div class="sb-brand-icon">
+        <i class="bi bi-grid-3x3-gap-fill"></i>
       </div>
-      <div class="sidebar-divider"></div>
+      <div class="sb-brand-text">
+        <div class="sb-brand-title">FastDSO</div>
+        <div class="sb-brand-subtitle">Fast Distribution & Sales Operation</div>
+      </div>
     </div>
+    <div class="sb-divider"></div>
+
+    <!-- Scrollable nav area -->
+    <div class="sb-scroll">
 
     <div class="sidebar-section-label">Panel</div>
 
@@ -159,6 +162,8 @@
       </div>
     </div>
     {% endif %}
+
+    </div><!-- end sb-scroll -->
 
     <!-- ===== Bottom ===== -->
     <div class="sidebar-bottom">
