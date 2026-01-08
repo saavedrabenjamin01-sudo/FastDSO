@@ -1,0 +1,112 @@
+HARD MODE — Fix templates/dashboard.html to match mockup layout (compact, clean, KPI cards + panel card). Do NOT change backend.
+
+You MUST edit ONLY: templates/dashboard.html (and optionally append minor CSS in style.css if needed). No Python changes.
+
+CONTEXT
+dashboard.html currently has:
+- dash-mock-wrap layout
+- runstrip + filters + 2 KPI cards + one dash-panel-card with predictions + remainder
+We will KEEP this structure, but correct the parts that are wrong and make it match the mockup.
+
+DO NOT REMOVE:
+- pagination_controls macro
+- updateParam() JS
+- export buttons and run_id in export URLs
+- simulation alert block
+- runstrip block
+- existing classes: dash-mock-wrap, dash-runstrip, dash-filters-card, dash-kpi-grid, dash-panel-card, dash-panel-header
+
+REQUIRED CHANGES (EXACT)
+
+1) FILTERS — must match mockup and be usable
+- In dash-filters-form, add a visible Run selector dropdown (Corrida) using existing variables runs + selected_run_id.
+- Keep store dropdown, folio input, responsable input visible (not hidden).
+- Remove the hidden responsable input and replace with a visible field like the mockup.
+- Keep Apply / Clear buttons right aligned.
+
+Implementation:
+- Add a new dash-filter-field at the start:
+  label “Corrida”
+  <select name="run_id"> with options from runs (use r.run_id as value and show r.label() if available, else r.run_id[:8]).
+- Keep existing store/folio/responsable fields as visible inputs.
+- Remove the two hidden inputs:
+  <input type="hidden" name="responsable"...>
+  <input type="hidden" name="run_id"...>
+
+2) KPI CARDS — must be exactly two and reflect mockup meaning
+- KPI 1 title stays “Top productos vendidos” BUT value must be TOTAL UNITS sold (not distinct SKUs).
+  Use:
+    if top_sales exists and has units field -> sum units
+    else fallback to kpi_units_suggested (as a safe approximation)
+- KPI 2 “Stock CD hoy” uses kpi_stock_cd_total (already correct).
+- Keep the menu dropdown for resets inside KPI 2 as-is (admin only).
+
+Example logic for KPI 1 inside template:
+{% set top_units = 0 %}
+{% if top_sales is defined and top_sales %}
+  {% for r in top_sales %}
+    {% set top_units = top_units + (r.units if r.units is defined else 0) %}
+  {% endfor %}
+{% else %}
+  {% set top_units = (kpi_units_suggested if kpi_units_suggested is defined else 0) %}
+{% endif %}
+Then render {{ "{:,}".format(top_units|int) }}
+
+3) DISTRIBUTION TABLE — fix columns and remove junk
+Replace the predictions table THEAD with exactly:
+SKU | Producto | Tienda | Cant.
+Remove duplicated “Tienda” and remove “SKU1.” index column.
+
+Fix tbody rows:
+- SKU: prod.sku
+- Producto: prod.name
+- Tienda: st.name
+- Cant.: p.quantity formatted
+
+IMPORTANT: predictions should respect pagination if provided:
+- If pred_pagination exists -> iterate pred_pagination.items
+- Else iterate predictions
+Also keep search input behavior as you have it (pred_search + updateParam).
+
+So:
+{% set pred_rows = pred_pagination.items if pred_pagination is defined and pred_pagination else predictions %}
+Then:
+{% for p, prod, st in pred_rows %}
+
+Also: Limit to 10 rows only for mockup density IF no pagination exists:
+- Use slice [:10] only when pred_pagination is not provided.
+
+4) PANEL HEADER — match mockup
+- Keep “Distribución sugerida — <model>”
+- Keep search input and Export button
+- Ensure Export button stays primary blue like mockup.
+
+5) REMANENTE TABLE — keep but align to mockup
+- Keep header + search + Export remanente button
+- Ensure table columns are:
+  SKU | Producto | Stock CD disponible
+- Use pagination if cd_pagination exists; else show first 10 only.
+Similar pattern:
+{% set cd_rows = cd_pagination.items if cd_pagination is defined and cd_pagination else stock_cd_filtered %}
+Iterate cd_rows. If no pagination, slice [:10].
+
+6) REMOVE VISUAL NOISE
+- Remove the column “SKU#” label and rename to “SKU” in headers.
+- Remove the weird placeholder labels like “Buscar (texto o títulos al folio)” -> use “Folio”
+- Ensure dash-runstrip line matches mockup: “Folio: XXX | Repo NOMBRE — YYYY-MM-DD HH:MM”
+
+7) VALIDATION
+After edits:
+- Dashboard must render with no Jinja errors.
+- Filters still submit correctly (GET) and preserve values.
+- Export links still include run_id.
+- Pagination controls still work (updateParam).
+- Tables look compact and correct.
+- No duplicated columns.
+- KPI “Top productos vendidos” shows a sensible number (units).
+
+DELIVERABLE
+- Show the updated templates/dashboard.html (full file) after applying changes.
+- If you add any CSS, append it at end of style.css under comment “Dashboard polish”.
+
+DO IT NOW.
