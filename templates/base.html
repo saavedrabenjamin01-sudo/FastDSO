@@ -55,14 +55,14 @@
 
         {% if current_user.has_permission('sales:upload') %}
         <a class="nav-link" href="{{ url_for('upload') }}">
-          <span class="nav-icon"><i class="bi bi-upload"></i></span>
+          <span class="nav-icon"><i class="bi bi-cloud-arrow-up"></i></span>
           <span class="nav-text">Carga ventas</span>
         </a>
         {% endif %}
 
         {% if current_user.has_permission('forecast_v2:view') %}
         <a class="nav-link" href="{{ url_for('purchase_forecast_v2') }}">
-          <span class="nav-icon"><i class="bi bi-cart-plus"></i></span>
+          <span class="nav-icon"><i class="bi bi-graph-up"></i></span>
           <span class="nav-text">Forecast compra</span>
         </a>
         {% endif %}
@@ -89,7 +89,7 @@
 
         {% if current_user.has_permission('stock_cd:upload') %}
         <a class="nav-link" href="{{ url_for('upload_stock_cd') }}">
-          <span class="nav-icon"><i class="bi bi-building"></i></span>
+          <span class="nav-icon"><i class="bi bi-box-seam"></i></span>
           <span class="nav-text">Stock CD</span>
         </a>
         {% endif %}
@@ -103,7 +103,7 @@
 
         {% if current_user.has_permission('rebalancing:view') %}
         <a class="nav-link" href="{{ url_for('rebalancing') }}">
-          <span class="nav-icon"><i class="bi bi-shuffle"></i></span>
+          <span class="nav-icon"><i class="bi bi-arrow-left-right"></i></span>
           <span class="nav-text">Redistribución</span>
         </a>
         {% endif %}
@@ -126,7 +126,7 @@
           <span class="nav-text">Centro de Corridas</span>
         </a>
         <a class="nav-link" href="{{ url_for('compare_runs') }}">
-          <span class="nav-icon"><i class="bi bi-arrow-left-right"></i></span>
+          <span class="nav-icon"><i class="bi bi-intersect"></i></span>
           <span class="nav-text">Comparar Corridas</span>
         </a>
       </div>
@@ -161,11 +161,6 @@
 
     <!-- ===== Bottom ===== -->
     <div class="sidebar-bottom">
-
-      <button class="btn btn-new-dist text-white">
-        <i class="bi bi-plus-circle"></i>
-        <span class="nav-text ms-1">Nueva distribución</span>
-      </button>
 
       <div class="user-chip">
         <div class="user-avatar">

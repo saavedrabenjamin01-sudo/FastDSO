@@ -1,0 +1,80 @@
+SIDEBAR POLISH — Improve visual quality without changing order or functionality
+
+Context:
+We have a working sidebar in templates/base.html with collapsible groups and Bootstrap Icons. We want a more premium SaaS feel, keeping the same blue/white scheme and the same menu order.
+
+Strict rules:
+1) Do NOT change routes, permissions, or menu order.
+2) Do NOT change group names (“Ventas y Compras”, “Stock General”, “Operaciones”, “Administración”).
+3) Only:
+   - remove the unused “Nueva distribución” button
+   - improve CSS styling/hover/active states
+   - optionally swap icons to better Bootstrap Icons (still using Bootstrap Icons CDN already included)
+
+Tasks:
+
+A) Remove unused button
+- In base.html sidebar bottom section, remove the button:
+  “Nueva distribución” (btn-new-dist)
+- Do not leave empty space; sidebar bottom should compact nicely.
+
+B) Sidebar item styling (CSS)
+Update static/css/style.css to polish:
+1) Sidebar container:
+- keep gradient background
+- add slightly more padding and consistent spacing
+- keep sticky behavior
+
+2) Nav links:
+- Increase border radius (14–16px)
+- Add smooth hover:
+  - background highlight: rgba(255,255,255,0.12)
+  - slight translateX(2px) or subtle lift
+  - transition 150ms
+- Active state:
+  - stronger background
+  - subtle left indicator bar or glow
+- Improve icon alignment and spacing:
+  - icons centered in a 32x32 soft square
+  - consistent icon size ~16px
+- Reduce “flat” feel with subtle borders:
+  border: 1px solid rgba(255,255,255,0.10)
+
+3) Group headers (nav-group-toggle):
+- Same radius and hover behavior as nav links
+- Show caret rotation smoothly
+- When expanded: slightly stronger background
+
+C) Icon upgrade (Bootstrap Icons only)
+Without changing menu order or routes, replace icons with more “pro” ones:
+Suggested mapping:
+- Dashboard: bi-speedometer2
+- Carga ventas: bi-cloud-arrow-up
+- Forecast compra: bi-graph-up
+- Stock tiendas: bi-shop
+- Stock CD: bi-box-seam
+- Consulta stock: bi-search
+- Redistribución: bi-arrow-left-right
+- Centro de Corridas: bi-clock-history
+- Comparar Corridas: bi-intersect
+- Gestión usuarios: bi-people
+- Audit trail: bi-journal-text
+
+Only replace icon class names; keep HTML structure.
+
+D) Active link highlight (optional but recommended)
+Add a left accent bar for active item using CSS:
+- Use ::before on .nav-link.active
+- small 4px bar in primary cyan/blue
+- Keep subtle
+
+E) Deliverables
+- Updated templates/base.html (only removal of “Nueva distribución” button + icon class swaps)
+- Updated static/css/style.css (append or modify sidebar section)
+- Confirm sidebar order unchanged and everything still clickable.
+
+Acceptance criteria:
+- Sidebar feels premium (rounded, smooth hover, clear active)
+- Icons consistent and sharper
+- No “Nueva distribución” button
+- Colors remain in the same brand palette
