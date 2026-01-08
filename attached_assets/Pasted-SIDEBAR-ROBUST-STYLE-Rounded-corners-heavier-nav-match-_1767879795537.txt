@@ -1,0 +1,72 @@
+SIDEBAR ROBUST STYLE — Rounded corners + heavier nav (match reference)
+
+Goal:
+Make the sidebar look more robust like the reference:
+- Sidebar container looks like a rounded panel (rounded outer corners).
+- Items have more presence (padding, icon containers, hover/active).
+- Keep the same menu order, links, permissions, and collapsible groups.
+- Do not change backend or routes.
+- Prefer CSS-only changes in static/css/style.css. Minimal HTML changes allowed only if necessary.
+
+Changes required:
+
+1) Sidebar container as rounded “panel”
+- Add rounded corners to the sidebar itself:
+  border-radius: 18px;
+- Add margin so the rounding is visible (not full height flush):
+  margin: 12px;
+- Ensure it still sticks and scrolls correctly:
+  height: calc(100vh - 24px);
+  overflow: hidden;
+- Keep the existing gradient background.
+
+2) Sidebar inner scroll
+- If sidebar content overflows, make inner scroll:
+  overflow-y: auto;
+  scrollbar subtle (optional).
+
+3) Nav group headers (Ventas y Compras / Stock General / Operaciones / Administración)
+- Make group toggles look like strong buttons:
+  - slightly larger height
+  - icon container on left
+  - background: rgba(255,255,255,0.10)
+  - border: 1px solid rgba(255,255,255,0.12)
+  - hover: increase background opacity
+  - active/expanded: slightly stronger background
+
+4) Nav links
+- Increase padding and make them pill-like:
+  padding: 11px 12px;
+  border-radius: 14px;
+- Add an icon container (already exists in HTML as nav-icon). Style it:
+  width: 34px; height: 34px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.10);
+  display:flex; align-items:center; justify-content:center;
+- Active state:
+  background: rgba(255,255,255,0.18);
+  border: 1px solid rgba(255,255,255,0.18);
+  add left accent bar using ::before (subtle cyan/blue)
+- Hover state:
+  background: rgba(255,255,255,0.12);
+  transform: translateX(2px);
+  transition: 150ms ease;
+
+5) Divider line under logo
+- Ensure there is a subtle divider line separating the header from nav (already added). Keep it.
+
+6) Do NOT change:
+- Base layout grid
+- Menu order
+- Permissions logic
+- Icons unless already decided
+
+Deliverable:
+- Provide the CSS changes added to style.css (append-only if possible).
+- If minimal HTML changes are required (rare), show exactly what changed.
+
+Acceptance:
+- Sidebar has visible rounded corners.
+- Sidebar feels like a panel separate from background.
+- Nav items look heavier and more premium.
+- Hover/active states feel robust and consistent.

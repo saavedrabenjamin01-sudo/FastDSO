@@ -3795,3 +3795,125 @@ body{
 .sidebar-collapsed .sidebar-logo-card .sidebar-logo {
   width: 36px;
 }
+
+/* =============================================
+   SIDEBAR ROBUST PANEL STYLING
+   ============================================= */
+
+/* Sidebar as rounded panel */
+.sidebar {
+  margin: 12px;
+  border-radius: 18px;
+  height: calc(100vh - 24px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Inner scrollable area */
+.sidebar-nav,
+.nav-group {
+  overflow-y: auto;
+}
+
+/* Scrollbar styling */
+.sidebar::-webkit-scrollbar,
+.sidebar-nav::-webkit-scrollbar {
+  width: 4px;
+}
+.sidebar::-webkit-scrollbar-thumb,
+.sidebar-nav::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.15);
+  border-radius: 4px;
+}
+
+/* Nav group toggles - stronger buttons */
+.nav-group-toggle {
+  padding: 12px 14px;
+  background: rgba(255,255,255,0.10);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 14px;
+  margin-bottom: 6px;
+}
+.nav-group-toggle:hover {
+  background: rgba(255,255,255,0.15);
+  border-color: rgba(255,255,255,0.18);
+}
+.nav-group-toggle[aria-expanded="true"] {
+  background: rgba(255,255,255,0.12);
+  border-color: rgba(255,255,255,0.16);
+}
+.nav-group-toggle .nav-icon {
+  width: 34px;
+  height: 34px;
+  background: rgba(255,255,255,0.12);
+  border-radius: 12px;
+}
+
+/* Nav links - heavier pill style */
+.sidebar .nav-link {
+  padding: 11px 12px;
+  border-radius: 14px;
+  margin: 3px 0;
+  border: 1px solid transparent;
+}
+.sidebar .nav-link .nav-icon {
+  width: 34px;
+  height: 34px;
+  background: rgba(255,255,255,0.10);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+}
+.sidebar .nav-link:hover {
+  background: rgba(255,255,255,0.12);
+  border-color: rgba(255,255,255,0.12);
+  transform: translateX(2px);
+}
+.sidebar .nav-link:hover .nav-icon {
+  background: rgba(255,255,255,0.16);
+}
+
+/* Active nav link - robust */
+.sidebar .nav-link.active {
+  background: rgba(255,255,255,0.18);
+  border: 1px solid rgba(255,255,255,0.18);
+}
+.sidebar .nav-link.active::before {
+  width: 4px;
+  height: 22px;
+  background: linear-gradient(180deg, #38bdf8 0%, #0ea5e9 100%);
+  border-radius: 0 4px 4px 0;
+}
+.sidebar .nav-link.active .nav-icon {
+  background: linear-gradient(135deg, rgba(56,189,248,0.3) 0%, rgba(14,165,233,0.3) 100%);
+  color: #38bdf8;
+}
+
+/* Sidebar header spacing */
+.sidebar-header {
+  padding: 18px 16px 14px;
+  flex-shrink: 0;
+}
+
+/* Section label */
+.sidebar-section-label {
+  padding: 10px 16px 8px;
+}
+
+/* Sidebar bottom */
+.sidebar-bottom {
+  flex-shrink: 0;
+  padding: 12px;
+  margin-top: auto;
+}
+
+/* User chip robust */
+.user-chip {
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.10);
+}
