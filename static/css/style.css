@@ -1589,3 +1589,58 @@ body{
     max-height: 260px;
   }
 }
+
+/* === Dashboard step 5 polish === */
+
+/* Subtitle truncation */
+.dash-subtitle-truncate {
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+@media (max-width: 992px) {
+  .dash-subtitle-truncate {
+    max-width: 200px;
+  }
+}
+
+@media (max-width: 576px) {
+  .dash-subtitle-truncate {
+    max-width: 120px;
+  }
+}
+
+/* Empty states */
+.dash-empty-cell {
+  padding: 32px 16px !important;
+  text-align: center;
+  background: rgba(245, 248, 255, 0.4);
+}
+
+.dash-empty-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.dash-empty-icon {
+  font-size: 2rem;
+  color: #b0bec5;
+  opacity: 0.7;
+}
+
+.dash-empty-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #5f6c7b;
+}
+
+.dash-empty-hint {
+  font-size: 0.82rem;
+  color: #8e99a4;
+}

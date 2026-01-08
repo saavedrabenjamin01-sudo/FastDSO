@@ -1,0 +1,78 @@
+STEP 5 — Dashboard headers + empty states polish (visual only)
+
+Context:
+Dashboard looks good. Now we polish:
+1) The long subtitle next to “Distribución sugerida” (truncate like mockup).
+2) Empty state for “Remanente CD” (and optionally predictions) to feel more premium.
+No backend changes. No route changes. No variable changes.
+
+Scope (strict):
+- templates/dashboard.html (minimal HTML changes only)
+- static/css/style.css (append-only CSS)
+
+A) Subtitle truncation (Distribución sugerida header)
+Goal:
+- The subtitle text after “Distribución sugerida” must NOT stretch the header.
+- It must truncate to one line with ellipsis and keep the full text accessible on hover.
+
+Implementation:
+1) In dashboard.html, wrap the subtitle span with a class:
+   <span class="dash-panel-subtitle dash-subtitle-truncate" title="FULL SUBTITLE HERE"> ... </span>
+
+- The title attribute must contain the same text shown (full model/folio/resp/cat).
+- Do not change what the subtitle displays, only wrap and add title.
+
+2) CSS (append):
+- .dash-subtitle-truncate must:
+  - max-width (e.g. 420px)
+  - overflow hidden
+  - text-overflow ellipsis
+  - white-space nowrap
+  - display inline-block
+- On smaller screens, reduce max-width.
+
+B) Empty states polish (Remanente CD + Predictions)
+Goal:
+- Replace “plain bootstrap empty row” with a clean empty-state row that looks like a SaaS dashboard:
+  - subtle icon
+  - short title
+  - secondary hint text
+  - optional action button remains (existing links)
+
+Implementation:
+1) In Remanente CD table empty case, replace the current empty <tr> content with:
+   - a centered block with:
+     icon (bi-box or bi-inboxes)
+     title: “No CD remainder for this run”
+     hint: “Load CD stock or run a new distribution.”
+     keep existing CTA button (Upload Stock CD) if present
+2) In Predictions table empty case, do similar:
+   - icon bi-inbox
+   - title “No predictions for selected filters”
+   - hint “Upload sales to generate distribution”
+   - keep existing CTA button
+
+3) CSS (append):
+- Create a class for empty-state cell:
+  .dash-empty-cell
+  .dash-empty-wrap
+  .dash-empty-icon
+  .dash-empty-title
+  .dash-empty-hint
+- Use muted colors consistent with theme.
+- Add spacing/padding to feel intentional.
+
+C) Do not break tables/pagination
+- Keep table structure unchanged (same <table>, same <thead>).
+- Only change empty <tbody> rendering blocks.
+- Pagination blocks remain as-is.
+
+Deliverables:
+- Show the updated header subtitle snippet from dashboard.html.
+- Show the updated empty-state HTML snippets (predictions + remanente).
+- Append-only CSS snippet to style.css under comment “/* Dashboard step 5 polish */”.
+
+Acceptance:
+- Subtitle truncates with ellipsis and full text available via tooltip.
+- Empty states look clean and modern, not “plain bootstrap”.
+- No functional regressions.

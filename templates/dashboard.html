@@ -156,7 +156,8 @@
       <div class="dashv1-panel-title-group">
         <span class="dashv1-panel-title">Distribución sugerida</span>
         {% if predictions and predictions|length > 0 %}
-          <span class="dashv1-subtitle">{{ predictions[0][0].model_name if predictions[0][0].model_name else '' }}</span>
+          {% set subtitle_text = predictions[0][0].model_name if predictions[0][0].model_name else '' %}
+          <span class="dashv1-subtitle dash-subtitle-truncate" title="{{ subtitle_text }}">{{ subtitle_text }}</span>
         {% endif %}
       </div>
       <div class="dashv1-panel-tools">
@@ -201,7 +202,13 @@
               </tr>
             {% endfor %}
           {% else %}
-            <tr><td colspan="4" class="dashv1-empty">Sin predicciones para los filtros seleccionados.</td></tr>
+            <tr><td colspan="4" class="dash-empty-cell">
+              <div class="dash-empty-wrap">
+                <i class="bi bi-inbox dash-empty-icon"></i>
+                <div class="dash-empty-title">Sin predicciones</div>
+                <div class="dash-empty-hint">Carga ventas para generar distribución</div>
+              </div>
+            </td></tr>
           {% endif %}
         </tbody>
       </table>
@@ -251,7 +258,13 @@
               </tr>
             {% endfor %}
           {% else %}
-            <tr><td colspan="3" class="dashv1-empty">Sin datos de Stock CD disponibles para este run.</td></tr>
+            <tr><td colspan="3" class="dash-empty-cell">
+              <div class="dash-empty-wrap">
+                <i class="bi bi-box dash-empty-icon"></i>
+                <div class="dash-empty-title">Sin remanente CD</div>
+                <div class="dash-empty-hint">Carga stock CD o ejecuta una nueva distribución</div>
+              </div>
+            </td></tr>
           {% endif %}
         </tbody>
       </table>
