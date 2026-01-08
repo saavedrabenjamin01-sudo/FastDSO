@@ -1,53 +1,30 @@
 {% extends 'base.html' %}
 {% block content %}
 
-<div class="d-flex justify-content-between align-items-center mb-2">
-  <div>
-    <h5 class="mb-0">Carga de ventas (CSV / Excel)</h5>
-    <small class="text-muted">
-      Archivo con historial de ventas por tienda para generar la distribución sugerida.
-    </small>
+<div class="query-wrap">
+  <div class="query-header">
+    <h1 class="query-title">Carga de ventas</h1>
+    <p class="query-subtitle">Sube ventas históricas para generar distribución sugerida</p>
   </div>
-</div>
 
-<div class="card mb-3">
-  <div class="card-body">
-    <p class="mb-1">
-      <strong>Columnas requeridas:</strong>
-      <code>sku</code>,
-      <code>product_name</code>,
-      <code>store</code>,
-      <code>quantity</code>,
-      <code>date</code> (YYYY-MM-DD)
-    </p>
-    <p class="text-muted mb-0">
-      El análisis se hace solo con este archivo + el stock de tiendas / CD que esté cargado.
-    </p>
-  </div>
-</div>
+  <div class="query-card">
+    <form method="post" enctype="multipart/form-data"
+          data-loader="true"
+          data-ajax="true"
+          data-loader-title="Procesando Ventas y Distribución"
+          data-loader-msg="Analizando ventas y preparando envíos sugeridos a tiendas..."
+          data-loader-icon="truck">
 
-<div class="card">
-  <div class="card-body">
-    <form method="post" enctype="multipart/form-data" class="row g-3"
-            data-loader="true"
-            data-ajax="true"
-            data-loader-title="Procesando Ventas y Distribución"
-            data-loader-msg="Analizando ventas y preparando envíos sugeridos a tiendas..."
-            data-loader-icon="truck">
-
-      <!-- alerta si no hay stock tiendas -->
       {% if require_stock_confirm %}
-      <div class="col-12">
-        <div class="alert alert-warning mb-1">
+      <div class="upload-alert-wrap">
+        <div class="alert alert-warning mb-2">
+          <i class="bi bi-exclamation-triangle me-2"></i>
           <strong>Atención:</strong>
           No se detecta stock de tienda cargado previamente.
           Si el producto es nuevo o deseas continuar sin stock, marca la casilla para confirmar.
         </div>
-        <div class="form-check">
-          <input class="form-check-input"
-                 type="checkbox"
-                 id="confirm_no_stock"
-                 name="confirm_no_stock">
+        <div class="form-check mb-3">
+          <input class="form-check-input" type="checkbox" id="confirm_no_stock" name="confirm_no_stock">
           <label class="form-check-label" for="confirm_no_stock">
             No hay registro de stock de tienda previo, quiero continuar igualmente.
           </label>
@@ -55,70 +32,76 @@
       </div>
       {% endif %}
 
-      <!-- archivo -->
-      <div class="col-md-6">
-        <label class="form-label fw-semibold">Archivo de ventas</label>
-        <input type="file"
-               class="form-control"
-               name="file"
-               accept=".csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-               required>
-        <small class="text-muted">
-          Acepta <code>.csv</code> y <code>.xlsx</code>.
-        </small>
+      <div class="upload-row">
+        <div class="upload-field upload-field-half">
+          <label class="query-label">Archivo de ventas</label>
+          <input type="file" class="form-control" name="file"
+                 accept=".csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                 required>
+          <small class="text-muted">Acepta <code>.csv</code> y <code>.xlsx</code></small>
+        </div>
+
+        <div class="upload-field upload-field-half">
+          <label class="query-label">Modo de análisis</label>
+          <select class="form-select" name="analysis_mode">
+            <option value="sma3_min3">Promedio 3 semanas (requiere 3, ajustado por stock)</option>
+            <option value="sma2_min2">Promedio 2 semanas (requiere 2, ajustado por stock)</option>
+            <option value="sma1_no_min">Última semana (mínimo 1 semana, ajustado por stock)</option>
+            <option value="sma3_ignore_stock">Promedio 3 semanas (ignorar stock de tienda)</option>
+          </select>
+        </div>
       </div>
 
-      <!-- modo de análisis -->
-      <div class="col-md-6">
-        <label class="form-label fw-semibold">Modo de análisis</label>
-        <select class="form-select" name="analysis_mode">
-          <option value="sma3_min3">Promedio 3 semanas (requiere 3, ajustado por stock)</option>
-          <option value="sma2_min2">Promedio 2 semanas (requiere 2, ajustado por stock)</option>
-          <option value="sma1_no_min">Última semana (mínimo 1 semana, ajustado por stock)</option>
-          <option value="sma3_ignore_stock">Promedio 3 semanas (ignorar stock de tienda)</option>
-        </select>
+      <hr class="upload-divider">
+
+      <div class="upload-row upload-row-4">
+        <div class="upload-field">
+          <label class="query-label">N° de folio</label>
+          <input type="text" class="form-control form-control-sm" name="folio" placeholder="Documento asignado">
+        </div>
+
+        <div class="upload-field">
+          <label class="query-label">Responsable</label>
+          <input type="text" class="form-control form-control-sm" name="responsable" placeholder="Nombre">
+        </div>
+
+        <div class="upload-field">
+          <label class="query-label">Categoría / campaña</label>
+          <input type="text" class="form-control form-control-sm" name="categoria" placeholder="Ej: Navidad">
+        </div>
+
+        <div class="upload-field">
+          <label class="query-label">Fecha documento</label>
+          <input type="date" class="form-control form-control-sm" name="fecha_doc">
+        </div>
       </div>
 
-      <hr class="mt-2 mb-1">
-
-      <!-- metadatos de la distribución -->
-      <div class="col-md-3">
-        <label class="form-label fw-semibold">N° de folio</label>
-        <input type="text"
-               class="form-control form-control-sm"
-               name="folio"
-               placeholder="Documento asignado a la distribución">
-      </div>
-
-      <div class="col-md-3">
-        <label class="form-label fw-semibold">Responsable</label>
-        <input type="text"
-               class="form-control form-control-sm"
-               name="responsable"
-               placeholder="Nombre del responsable">
-      </div>
-
-      <div class="col-md-3">
-        <label class="form-label fw-semibold">Categoría / campaña</label>
-        <input type="text"
-               class="form-control form-control-sm"
-               name="categoria"
-               placeholder="Ej: Navidad, Back to School…">
-      </div>
-
-      <div class="col-md-3">
-        <label class="form-label fw-semibold">Fecha documento</label>
-        <input type="date"
-               class="form-control form-control-sm"
-               name="fecha_doc">
-      </div>
-
-      <div class="col-12 d-flex justify-content-end mt-2">
-        <button type="submit" class="btn btn-primary">
-          Generar distribución sugerida
+      <div class="upload-actions">
+        <button type="submit" class="btn btn-primary query-btn">
+          <i class="bi bi-arrow-up-circle me-2"></i>Generar distribución sugerida
         </button>
       </div>
     </form>
+  </div>
+
+  <div class="upload-collapse-wrap">
+    <button class="btn btn-link upload-collapse-toggle" type="button" data-bs-toggle="collapse" data-bs-target="#fileReqCollapse">
+      <i class="bi bi-info-circle me-1"></i>Requisitos del archivo
+    </button>
+    <div class="collapse" id="fileReqCollapse">
+      <div class="upload-collapse-body">
+        <p class="mb-2"><strong>Columnas requeridas:</strong></p>
+        <ul class="upload-req-list">
+          <li><code>sku</code> — Código del producto (texto, ceros a la izquierda preservados)</li>
+          <li><code>product_name</code> — Nombre del producto</li>
+          <li><code>store</code> — Nombre de la tienda</li>
+          <li><code>quantity</code> — Cantidad vendida</li>
+          <li><code>date</code> — Fecha de venta (YYYY-MM-DD)</li>
+        </ul>
+        <p class="mb-1"><strong>Formatos aceptados:</strong> <code>.csv</code>, <code>.xlsx</code></p>
+        <p class="text-muted mb-0">El SKU debe ser texto para preservar ceros a la izquierda.</p>
+      </div>
+    </div>
   </div>
 </div>
 
