@@ -1,0 +1,60 @@
+UPLOAD SALES PAGE (templates/upload.html) — add 2-column layout + guide + file example (NO backend changes)
+
+Scope:
+- Edit ONLY templates/upload.html
+- Optional: append minimal CSS at end of static/css/style.css under comment /* Upload pages layout */
+- Do NOT modify routes, form fields, names, or loader attributes.
+
+Goal:
+Make the sales upload page feel “full” and aligned with Dashboard style:
+- Left column: existing form card (unchanged functionality)
+- Right column: “Quick guide”, “File example”, “Tips”
+- Add a collapsible “File requirements” section (Bootstrap collapse) below the form.
+
+Required changes:
+
+A) Wrap page content in a centered container (same width as dashboard):
+- Use a wrapper div class: upload-wrap (max-width 1250px, margin auto)
+
+B) Create a 2-column grid:
+- Use Bootstrap grid:
+  <div class="row g-3">
+    <div class="col-12 col-lg-8"> ...left... </div>
+    <div class="col-12 col-lg-4"> ...right... </div>
+  </div>
+
+C) Left column:
+- Keep your current header (title/subtitle).
+- Keep existing warning alert about missing store stock.
+- Keep the existing form exactly functional:
+  file, analysis_mode, confirm_no_stock, folio, responsable, categoria, fecha_doc
+  keep data-loader / data-ajax attributes unchanged.
+- Place the submit button right aligned (keep as-is if already).
+- Add below the form a collapsible section titled “File requirements” with:
+  - Required columns list: sku, product_name, store, quantity, date (YYYY-MM-DD)
+  - Formats: .csv, .xlsx
+  - Note: SKU must be text and preserve leading zeros
+  Use a small Bootstrap collapse button.
+
+D) Right column (add 3 cards):
+1) “Quick guide” card (5 steps):
+   1. Upload sales CSV/XLSX
+   2. Select analysis method
+   3. Fill folio/responsable/campaign
+   4. Generate suggested distribution
+   5. Export from Dashboard
+2) “File example” card:
+   show a small table example (HTML table with 2–3 rows) for the expected file structure.
+3) “Tips” card:
+   - Load Stock CD first, then Stock Stores, then Sales
+   - Avoid duplicate uploads unless needed
+   - Use campaigns (Categoria) for traceability
+
+E) Optional CSS (only if needed):
+- .upload-wrap { max-width: 1250px; margin: 0 auto; }
+- .upload-sidecard { border-radius: 14px; box-shadow: var(--shadow); border:1px solid var(--border); }
+
+Deliverable:
+- Updated templates/upload.html
+- Minimal CSS snippet appended if required
+- No backend changes

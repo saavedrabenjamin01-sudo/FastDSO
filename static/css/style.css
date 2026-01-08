@@ -2040,3 +2040,81 @@ body{
   color: #3730a3;
   padding: 0;
 }
+
+/* === Upload pages 2-column layout === */
+.upload-sidecard {
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  border: 1px solid rgba(0,0,0,0.06);
+  padding: 18px 20px;
+  margin-bottom: 16px;
+}
+
+.upload-sidecard-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+}
+
+.upload-sidecard-title i {
+  color: #3b82f6;
+}
+
+.upload-guide-list {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+.upload-guide-list li {
+  margin-bottom: 6px;
+  padding-left: 4px;
+}
+
+.upload-tips-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.84rem;
+  color: #475569;
+}
+
+.upload-tips-list li {
+  margin-bottom: 6px;
+}
+
+.upload-example-table-wrap {
+  overflow-x: auto;
+}
+
+.upload-example-table {
+  width: 100%;
+  font-size: 0.78rem;
+  border-collapse: collapse;
+}
+
+.upload-example-table th {
+  background: #f1f5f9;
+  font-weight: 600;
+  color: #475569;
+  padding: 6px 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.upload-example-table td {
+  padding: 5px 8px;
+  border-top: 1px solid #e2e8f0;
+  color: #64748b;
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.upload-example-table tbody tr:nth-child(even) {
+  background: #f8fafc;
+}
