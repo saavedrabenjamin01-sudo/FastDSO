@@ -1,70 +1,75 @@
 {% extends 'base.html' %}
 {% block content %}
 
-<div class="d-flex justify-content-between align-items-center mb-2">
-  <div>
-    <h5 class="mb-0">Carga de stock tiendas</h5>
-    <small class="text-muted">
-      Snapshot de stock por tienda. Se usa para evitar sobrecargar locales al sugerir la distribución.
-    </small>
+<div class="query-wrap">
+  <div class="query-header">
+    <h1 class="query-title">Carga de stock tiendas</h1>
+    <p class="query-subtitle">Stock por tienda para evitar sobre-asignación y detectar quiebres</p>
   </div>
-</div>
 
-<div class="card mb-3">
-  <div class="card-body">
-    <p class="mb-1">
-      <strong>Formato sugerido:</strong>
-      <code>sku</code>,
-      <code>product_name</code>, y una columna por tienda
-      (<code>B_p.oeste</code>, <code>B_p.sur</code>, etc.) con el stock numérico.
-    </p>
-    <p class="text-muted mb-0">
-      Cada nueva carga reemplaza el snapshot anterior (según la lógica que ya tienes en el backend).
-    </p>
-  </div>
-</div>
+  <div class="query-card">
+    <form method="post" enctype="multipart/form-data" id="uploadForm"
+          data-loader="true"
+          data-loader-title="Cargando Stock Tiendas"
+          data-loader-msg="Guardando productos en el inventario de tiendas..."
+          data-loader-icon="store">
 
-<div class="card">
-  <div class="card-body">
-    <form method="post" enctype="multipart/form-data" class="row g-3" id="uploadForm"
-            data-loader="true"
-            data-loader-title="Cargando Stock Tiendas"
-            data-loader-msg="Guardando productos en el inventario de tiendas..."
-            data-loader-icon="store">
+      <div class="upload-row-3">
+        <div class="upload-field upload-field-file">
+          <label class="query-label">Archivo de stock tiendas</label>
+          <input type="file" class="form-control" name="file"
+                 accept=".csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                 required>
+          <small class="text-muted">Acepta <code>.csv</code> y <code>.xlsx</code></small>
+        </div>
 
-      <div class="col-md-6">
-        <label class="form-label fw-semibold">Archivo de stock tiendas</label>
-        <input type="file"
-               class="form-control"
-               name="file"
-               accept=".csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-               required>
-        <small class="text-muted">
-          Acepta <code>.csv</code> y <code>.xlsx</code>.
-        </small>
+        <div class="upload-field">
+          <label class="query-label">Fecha snapshot</label>
+          <input type="date" class="form-control" name="fecha_doc">
+        </div>
+
+        <div class="upload-field">
+          <label class="query-label">Responsable</label>
+          <input type="text" class="form-control" name="responsable" placeholder="Quién cargó el stock">
+        </div>
       </div>
 
-      <div class="col-md-3">
-        <label class="form-label fw-semibold">Fecha snapshot</label>
-        <input type="date"
-               class="form-control form-control-sm"
-               name="fecha_doc">
-      </div>
-
-      <div class="col-md-3">
-        <label class="form-label fw-semibold">Responsable</label>
-        <input type="text"
-               class="form-control form-control-sm"
-               name="responsable"
-               placeholder="Quién cargó el stock">
-      </div>
-
-      <div class="col-12 d-flex justify-content-end mt-2">
-        <button type="submit" class="btn btn-primary" id="submitBtn">
-          Cargar stock tiendas
+      <div class="upload-actions">
+        <button type="submit" class="btn btn-primary query-btn" id="submitBtn">
+          <i class="bi bi-shop me-2"></i>Cargar stock tiendas
         </button>
       </div>
     </form>
+  </div>
+
+  <div class="upload-info-box upload-info-box-blue">
+    <div class="upload-info-title"><i class="bi bi-file-earmark-spreadsheet me-2"></i>Formato del archivo</div>
+    <p class="upload-info-desc">El archivo debe tener una columna por tienda con el stock numérico.</p>
+    <div class="upload-format-example">
+      <span class="upload-format-col"><code>sku</code></span>
+      <span class="upload-format-col"><code>product_name</code></span>
+      <span class="upload-format-col"><code>Tienda_Norte</code></span>
+      <span class="upload-format-col"><code>Tienda_Sur</code></span>
+      <span class="upload-format-col"><code>...</code></span>
+    </div>
+  </div>
+
+  <div class="upload-collapse-wrap">
+    <button class="btn btn-link upload-collapse-toggle" type="button" data-bs-toggle="collapse" data-bs-target="#fileReqCollapse">
+      <i class="bi bi-info-circle me-1"></i>Requisitos del archivo
+    </button>
+    <div class="collapse" id="fileReqCollapse">
+      <div class="upload-collapse-body">
+        <p class="mb-2"><strong>Estructura requerida:</strong></p>
+        <ul class="upload-req-list">
+          <li><code>sku</code> — Código del producto (texto, ceros a la izquierda preservados)</li>
+          <li><code>product_name</code> — Nombre del producto</li>
+          <li><strong>Columnas de tiendas</strong> — Una columna por tienda con valores numéricos de stock</li>
+        </ul>
+        <p class="mb-1"><strong>Formatos aceptados:</strong> <code>.csv</code>, <code>.xlsx</code></p>
+        <p class="text-muted mb-0">Cada nueva carga reemplaza el snapshot anterior de la fecha seleccionada.</p>
+      </div>
+    </div>
   </div>
 </div>
 

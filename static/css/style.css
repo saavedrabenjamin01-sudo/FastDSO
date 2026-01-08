@@ -2000,3 +2000,43 @@ body{
     grid-template-columns: 1fr;
   }
 }
+
+/* === Upload stores page additions === */
+.upload-field-file {
+  grid-column: span 1;
+}
+
+.upload-info-box-blue {
+  background: linear-gradient(135deg, #dbeafe 0%, #e0e7ff 100%);
+  border-color: rgba(59, 130, 246, 0.25);
+}
+
+.upload-info-box-blue .upload-info-title {
+  color: #1e40af;
+}
+
+.upload-info-box-blue .upload-info-desc {
+  font-size: 0.84rem;
+  color: #1e3a8a;
+  margin-bottom: 10px;
+}
+
+.upload-format-example {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.upload-format-col {
+  background: rgba(255,255,255,0.7);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 0.8rem;
+}
+
+.upload-format-col code {
+  background: transparent;
+  color: #3730a3;
+  padding: 0;
+}
