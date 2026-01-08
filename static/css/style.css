@@ -3771,3 +3771,27 @@ body{
   padding: 16px 12px 10px;
   align-items: center;
 }
+
+/* Sidebar logo card (rounded container) */
+.sidebar-logo-card {
+  background: #fff;
+  border-radius: 14px;
+  padding: 10px 14px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+  display: inline-block;
+}
+.sidebar-logo-card .sidebar-logo {
+  width: 140px;
+  height: auto;
+  display: block;
+  border-radius: 6px;
+}
+
+/* Collapsed state for logo card */
+.sidebar-collapsed .sidebar-logo-card {
+  padding: 6px;
+  border-radius: 10px;
+}
+.sidebar-collapsed .sidebar-logo-card .sidebar-logo {
+  width: 36px;
+}
