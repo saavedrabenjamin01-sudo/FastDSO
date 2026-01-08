@@ -56,16 +56,20 @@
 
   {# A) Run summary strip #}
   <div class="dashv1-runstrip">
-    <span class="dashv1-pill">Folio</span>
-    <span class="dashv1-runtext">
-      {{ folio if folio else '—' }} | {{ responsable if responsable else '—' }}
-      {% if runs is defined and runs and selected_run_id %}
-        {% set current_run = runs|selectattr('run_id', 'equalto', selected_run_id)|first %}
-        {% if current_run %}
-          — {{ current_run.created_at.strftime('%Y-%m-%d %H:%M') if current_run.created_at else '' }}
-        {% endif %}
+    {% if runs is defined and runs and selected_run_id %}
+      {% set current_run = runs|selectattr('run_id', 'equalto', selected_run_id)|first %}
+      {% if current_run %}
+        <span class="dashv1-runtext">
+          Folio: <strong>{{ folio if folio else 'N/A' }}</strong>
+          {% if responsable %} | Resp: <strong>{{ responsable }}</strong>{% endif %}
+          {% if current_run.created_at %} — <span class="text-muted">{{ current_run.created_at.strftime('%Y-%m-%d %H:%M') }}</span>{% endif %}
+        </span>
+      {% else %}
+        <span class="dashv1-runtext">Corrida activa: —</span>
       {% endif %}
-    </span>
+    {% else %}
+      <span class="dashv1-runtext">Corrida activa: —</span>
+    {% endif %}
   </div>
 
   {# B) Filters row #}
