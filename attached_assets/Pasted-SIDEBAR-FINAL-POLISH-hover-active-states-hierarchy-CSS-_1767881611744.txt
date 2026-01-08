@@ -1,0 +1,77 @@
+SIDEBAR FINAL POLISH — hover/active states + hierarchy (CSS-only, minimal HTML if needed)
+
+Context:
+Sidebar is already rounded and functional. We want the final premium polish:
+- Clear hover feedback
+- Clear active state (where the user is)
+- Better hierarchy: group headers > subitems
+- Subtle micro animations (not flashy)
+Keep colors within existing blue/white scheme.
+
+Strict rules:
+- Do NOT change menu order, routes, or permissions logic.
+- Prefer CSS-only changes in static/css/style.css.
+- Do NOT restructure sidebar HTML.
+- Keep collapse behavior intact.
+
+Tasks:
+
+1) Active state (nav-link.active)
+Make the active item clearly visible:
+- Slightly stronger background than hover
+- Add a subtle left accent bar (2–3px) using ::before
+- Keep rounded corners
+- Ensure active state does NOT look “overdone”
+
+2) Hover state (nav-link:hover)
+- Background increase slightly
+- Micro movement translateX(2px)
+- Smooth transition 150ms
+- Icon box slightly brightens
+
+3) Hierarchy
+- Group toggles (nav-group-toggle) should look heavier than subitems:
+  - slightly larger height
+  - font-weight 800
+  - icon container slightly larger than subitems
+- Subitems:
+  - font-weight 600–700
+  - slightly smaller text
+  - icon container smaller
+
+4) Icon containers
+- Style .nav-icon as a soft square:
+  width: 34px; height: 34px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.10)
+- On hover: background becomes rgba(255,255,255,0.16)
+- Keep icon centered
+
+5) Micro animation
+- Add transition to:
+  background, transform, border-color, box-shadow
+- Add minimal “lift” on hover (no more than 1px)
+
+6) Accessibility
+- Ensure focus-visible state for keyboard navigation:
+  outline or box-shadow in soft cyan/blue.
+
+Implementation:
+- Append CSS at end of style.css under comment:
+  /* === Sidebar final polish === */
+
+Provide CSS that targets:
+- .sidebar .nav-link
+- .sidebar .nav-link.active
+- .sidebar .nav-group-toggle
+- .sidebar .nav-icon
+- .sidebar .nav-link:focus-visible
+
+Acceptance:
+- Hover feels responsive and premium
+- Active item is obvious at a glance
+- Group headers visually stronger than subitems
+- No layout shifts or broken collapse behavior
+
+Deliverable:
+- Only the appended CSS snippet.
