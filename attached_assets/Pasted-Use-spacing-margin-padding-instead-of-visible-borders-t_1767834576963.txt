@@ -1,0 +1,94 @@
+Use spacing (margin / padding) instead of visible borders to separate sections.
+
+⸻
+
+2️⃣ Dashboard header (“Panel”)
+	•	Keep the title text “Panel”
+	•	Style it as:
+	•	font-size: 1.4rem
+	•	font-weight: 600
+	•	The global search input must:
+	•	Stay disabled (as currently)
+	•	Have rounded pill shape
+	•	Light gray background
+	•	Subtle border or no border
+
+⸻
+
+3️⃣ Active run strip (Folio / Responsable / Date)
+	•	Convert the run info strip into a soft info bar
+	•	Light background (#eef2f8)
+	•	Rounded corners
+	•	Smaller font, but clear hierarchy
+
+⸻
+
+4️⃣ Filters section
+	•	Convert filters into a single horizontal card
+	•	Each filter field must:
+	•	Have a small label (font-size ~0.75rem)
+	•	Uniform input height
+	•	Align buttons on the right:
+	•	“Apply filters” → primary
+	•	“Clear” → secondary / outline
+
+❗ Do NOT change form method, action, or input names.
+
+⸻
+
+5️⃣ KPI cards (Top products sold / Stock CD today)
+
+Redesign KPI cards to look like real KPIs, not plain labels:
+	•	Taller cards
+	•	Icon inside a soft circular background
+	•	Large number:
+	•	font-size: ~2rem
+	•	font-weight: 700
+	•	Label smaller and muted
+	•	Optional very subtle gradient (blue/gray)
+
+❗ The Jinja variables that render KPI values must remain untouched.
+
+⸻
+
+6️⃣ “Suggested Distribution” section
+	•	Split header clearly into:
+	•	Title (bold)
+	•	Subtitle (model name / run metadata) in muted text
+	•	Header background: #f0f3f8
+	•	Actions aligned right:
+	•	SKU search input
+	•	Export button (primary)
+
+Table styling
+	•	Header row with light gray background
+	•	More vertical padding in rows
+	•	Improve readability without changing data
+
+⸻
+
+7️⃣ “CD Remaining Stock” section
+	•	Use the exact same visual structure as “Suggested Distribution”
+	•	Same header style
+	•	Same table style
+	•	Same spacing logic
+
+⸻
+
+8️⃣ Strict rules
+	•	❌ Do NOT remove any existing block
+	•	❌ Do NOT rename Jinja variables
+	•	❌ Do NOT break pagination, searching, exporting
+	•	❌ Do NOT simplify logic
+	•	✅ Only visual and structural changes
+
+⸻
+
+9️⃣ Final requirement
+
+When finished:
+	•	Explicitly list what was changed in dashboard.html
+	•	Explicitly list what was added or modified in style.css
+	•	Confirm that no backend logic was altered
+
+The dashboard must visually resemble a modern SaaS analytics panel, similar to the provided reference image, while remaining fully functional.

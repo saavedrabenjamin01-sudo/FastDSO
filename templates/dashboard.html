@@ -38,13 +38,15 @@
 
   {# Simulation alerts #}
   {% if active_simulations is defined and active_simulations %}
-  <div class="alert alert-warning" style="border-radius:12px;margin-bottom:0;">
-    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-      <div>
-        <i class="bi bi-lightning-charge me-2"></i>
+  <div class="dashv1-alert dashv1-alert-warning">
+    <div class="dashv1-alert-content">
+      <div class="dashv1-alert-icon">
+        <i class="bi bi-lightning-charge"></i>
+      </div>
+      <div class="dashv1-alert-text">
         <strong>Simulaciones activas:</strong>
         {% for sim_type, sim_data in active_simulations.items() %}
-          <span class="badge bg-warning text-dark me-1">{{ sim_type|capitalize }}</span>
+          <span class="dashv1-badge-warning">{{ sim_type|capitalize }}</span>
         {% endfor %}
       </div>
       <a href="{{ url_for('clear_simulation_route', sim_type='all', redirect='dashboard') }}" class="btn btn-sm btn-outline-warning">Limpiar</a>
@@ -70,7 +72,7 @@
   <form class="dashv1-filters" method="get" action="{{ url_for('dashboard') }}">
     <div class="dashv1-filter">
       <label class="dashv1-label">Corrida</label>
-      <select class="form-select form-select-sm" name="run_id">
+      <select class="form-select form-select-sm dashv1-input" name="run_id">
         {% for r in runs %}
           <option value="{{ r.run_id }}" {% if selected_run_id == r.run_id %}selected{% endif %}>
             {{ r.label() if r.label is callable else r.run_id[:8] }}
@@ -81,7 +83,7 @@
 
     <div class="dashv1-filter">
       <label class="dashv1-label">Tiendas</label>
-      <select class="form-select form-select-sm" name="store">
+      <select class="form-select form-select-sm dashv1-input" name="store">
         <option value="">Todas las tiendas</option>
         {% for s in stores %}
           <option value="{{ s.name }}" {% if selected_store == s.name %}selected{% endif %}>{{ s.name }}</option>
@@ -91,40 +93,50 @@
 
     <div class="dashv1-filter">
       <label class="dashv1-label">Folio</label>
-      <input class="form-control form-control-sm" name="folio" value="{{ folio or '' }}" placeholder="Folio">
+      <input class="form-control form-control-sm dashv1-input" name="folio" value="{{ folio or '' }}" placeholder="Folio">
     </div>
 
     <div class="dashv1-filter">
       <label class="dashv1-label">Responsable</label>
-      <input class="form-control form-control-sm" name="responsable" value="{{ responsable or '' }}" placeholder="Responsable">
+      <input class="form-control form-control-sm dashv1-input" name="responsable" value="{{ responsable or '' }}" placeholder="Responsable">
     </div>
 
     <div class="dashv1-actions">
-      <button class="btn btn-primary btn-sm">Aplicar filtros</button>
-      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('dashboard') }}">Limpiar</a>
+      <button class="btn btn-primary dashv1-btn-apply">Aplicar filtros</button>
+      <a class="btn btn-outline-secondary dashv1-btn-clear" href="{{ url_for('dashboard') }}">Limpiar</a>
     </div>
   </form>
 
   {# C) KPI row (2 cards only) #}
   <div class="dashv1-kpis">
     <div class="dashv1-kpi">
-      <div class="dashv1-kpi-title">Top productos vendidos</div>
-      <div class="dashv1-kpi-value">
-        {% set top_units = namespace(value=0) %}
-        {% if top_sales is defined and top_sales %}
-          {% for r in top_sales %}
-            {% set top_units.value = top_units.value + (r.units if r.units is defined else 0) %}
-          {% endfor %}
-        {% else %}
-          {% set top_units.value = (kpi_units_suggested if kpi_units_suggested is defined else 0) %}
-        {% endif %}
-        {{ "{:,}".format(top_units.value|int) }}
+      <div class="dashv1-kpi-icon dashv1-kpi-icon-blue">
+        <i class="bi bi-box-seam"></i>
+      </div>
+      <div class="dashv1-kpi-body">
+        <div class="dashv1-kpi-value">
+          {% set top_units = namespace(value=0) %}
+          {% if top_sales is defined and top_sales %}
+            {% for r in top_sales %}
+              {% set top_units.value = top_units.value + (r.units if r.units is defined else 0) %}
+            {% endfor %}
+          {% else %}
+            {% set top_units.value = (kpi_units_suggested if kpi_units_suggested is defined else 0) %}
+          {% endif %}
+          {{ "{:,}".format(top_units.value|int) }}
+        </div>
+        <div class="dashv1-kpi-title">Top productos vendidos</div>
       </div>
     </div>
 
     <div class="dashv1-kpi">
-      <div class="dashv1-kpi-title">Stock CD hoy</div>
-      <div class="dashv1-kpi-value">{{ "{:,}".format(kpi_stock_cd_total|int if kpi_stock_cd_total is defined else 0) }}</div>
+      <div class="dashv1-kpi-icon dashv1-kpi-icon-green">
+        <i class="bi bi-archive"></i>
+      </div>
+      <div class="dashv1-kpi-body">
+        <div class="dashv1-kpi-value">{{ "{:,}".format(kpi_stock_cd_total|int if kpi_stock_cd_total is defined else 0) }}</div>
+        <div class="dashv1-kpi-title">Stock CD hoy</div>
+      </div>
       {% if current_user.has_permission('admin:reset') %}
       <div class="dashv1-kpi-menu">
         <div class="dropdown">
@@ -146,18 +158,18 @@
 
     {# Predictions header #}
     <div class="dashv1-panel-head">
-      <div class="dashv1-panel-title">
-        Distribución sugerida
+      <div class="dashv1-panel-title-group">
+        <span class="dashv1-panel-title">Distribución sugerida</span>
         {% if predictions and predictions|length > 0 %}
-          <span class="dashv1-subtitle">— {{ predictions[0][0].model_name if predictions[0][0].model_name else '' }}</span>
+          <span class="dashv1-subtitle">{{ predictions[0][0].model_name if predictions[0][0].model_name else '' }}</span>
         {% endif %}
       </div>
       <div class="dashv1-panel-tools">
         <input class="form-control form-control-sm dashv1-search" placeholder="Buscar SKU" value="{{ pred_search if pred_search is defined else '' }}" onkeydown="if(event.key==='Enter'){event.preventDefault();updateParam('pred_search', this.value, 'pred_page');}">
         {% if selected_run_id %}
-          <a class="btn btn-sm btn-primary" href="{{ url_for('export_predictions', run_id=selected_run_id) }}">Exportar</a>
+          <a class="btn btn-primary dashv1-btn-export" href="{{ url_for('export_predictions', run_id=selected_run_id) }}">Exportar</a>
         {% else %}
-          <button class="btn btn-sm btn-outline-secondary" disabled>Exportar</button>
+          <button class="btn btn-outline-secondary dashv1-btn-export" disabled>Exportar</button>
         {% endif %}
       </div>
     </div>
@@ -200,15 +212,16 @@
 
     {# Remanente header #}
     <div class="dashv1-panel-head">
-      <div class="dashv1-panel-title">
-        Remanente CD <span class="dashv1-subtitle">: saldo mínimo CD pos distribución seleccionada</span>
+      <div class="dashv1-panel-title-group">
+        <span class="dashv1-panel-title">Remanente CD</span>
+        <span class="dashv1-subtitle">saldo mínimo CD pos distribución seleccionada</span>
       </div>
       <div class="dashv1-panel-tools">
         <input class="form-control form-control-sm dashv1-search" placeholder="Buscar SKU..." value="{{ cd_search if cd_search is defined else '' }}" onkeydown="if(event.key==='Enter'){event.preventDefault();updateParam('cd_search', this.value, 'cd_page');}">
         {% if selected_run_id %}
-          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('export_cd_remanente', run_id=selected_run_id) }}">Exportar remanente</a>
+          <a class="btn btn-outline-secondary dashv1-btn-export" href="{{ url_for('export_cd_remanente', run_id=selected_run_id) }}">Exportar remanente</a>
         {% else %}
-          <button class="btn btn-sm btn-outline-secondary" disabled>Exportar remanente</button>
+          <button class="btn btn-outline-secondary dashv1-btn-export" disabled>Exportar remanente</button>
         {% endif %}
       </div>
     </div>
