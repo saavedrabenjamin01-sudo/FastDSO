@@ -1,0 +1,70 @@
+Refactor ONLY the visual layout and structure of the template `rebalancing.html`.
+Do NOT modify any backend logic, routes, variable names, or business rules.
+
+GOAL:
+Make the redistribution page visually consistent with the Dashboard and Upload pages
+(cards, spacing, hierarchy, modern SaaS look).
+
+REQUIRED CHANGES:
+
+1. PAGE HEADER
+- Add a clear page title at the top:
+  "Store-to-Store Redistribution"
+- Add a subtitle below:
+  "Optimize inventory balance between stores based on demand and WOC rules"
+- Use the same header style used in dashboard sections (light background, rounded container).
+
+2. PARAMETERS SECTION (Filters)
+- Wrap all redistribution parameters inside a single large CARD.
+- Split parameters into a 2-row grid layout:
+  Row 1: Target store, Historical weeks, WOC min, WOC target, WOC max
+  Row 2: Retain WOC, Minimum stock, Minimum transfer
+- Add a small section title inside the card:
+  "Redistribution Parameters"
+- Add subtle helper text below the card explaining:
+  "These parameters control donor and receiver store selection."
+
+3. ACTION BUTTONS
+- Align action buttons to the bottom-right of the parameters card.
+- Primary button: "Generate suggestions"
+- Secondary button: "Export to Excel"
+- Optional toggle: "Simulate (do not save)" should stay inline, subtle.
+
+4. KPI SUMMARY CARDS
+- Move KPIs into a dedicated section below parameters.
+- Display them as 4 KPI cards in one row:
+  - Units to transfer
+  - Suggested movements
+  - Affected SKUs
+  - Destination stores
+- Each KPI card must include:
+  - Icon (Bootstrap Icons)
+  - Large number
+  - Short label
+- Use soft color accents (blue / green / orange) consistent with Dashboard KPIs.
+
+5. REDISTRIBUTION RESULTS TABLE
+- Wrap the "Redistribution Suggestions" table inside a CARD.
+- Add a header bar with:
+  - Title on the left
+  - Optional future search input placeholder on the right (disabled for now)
+- Apply table styling consistent with Dashboard:
+  - Light header background
+  - Zebra rows
+  - Hover highlight
+- If no data:
+  - Show a centered empty state with icon and message:
+    "No redistribution suggestions yet. Adjust parameters and run the simulation."
+
+6. SPACING & DENSITY
+- Reduce empty vertical space.
+- Keep content centered and constrained (max-width similar to dashboard).
+- Ensure mobile-safe spacing but prioritize desktop layout.
+
+IMPORTANT:
+- Do NOT remove or rename existing form fields.
+- Do NOT change form submission behavior.
+- Do NOT change variable names.
+- This is a visual/layout refactor only.
+
+After applying changes, the page should feel like part of the same product as the Dashboard.
