@@ -3,133 +3,140 @@
 {% block page_title %}Proyeccion de Compras V2{% endblock %}
 {% block content %}
 
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <div>
-    <h5 class="mb-0">Forecast Compra V2</h5>
-    <small class="text-muted">Proyeccion de compras con lead time, safety stock y cobertura</small>
+<div class="forecast-wrap">
+  <div class="forecast-header">
+    <h1 class="forecast-title">Purchase Forecast (Weekly)</h1>
+    <p class="forecast-subtitle">Demand projection based on sales history, lead time and safety stock</p>
   </div>
-</div>
 
-<div class="card mb-3">
-  <div class="card-body">
-    <div class="row g-3 align-items-end">
-      <div class="col-md-3">
-        <label class="form-label fw-semibold">SKU</label>
-        <input type="text" id="skuInput" class="form-control form-control-sm" list="skuList" placeholder="Buscar SKU...">
-        <datalist id="skuList">
-          {% for p in products %}
-          <option value="{{ p.sku }}">{{ p.name }}</option>
-          {% endfor %}
-        </datalist>
-      </div>
+  <div class="forecast-params-card">
+    <div class="forecast-params-header">
+      <i class="bi bi-sliders me-2"></i>Forecast Parameters
+    </div>
+    <div class="forecast-params-body">
+      <div class="forecast-params-grid">
+        <div class="forecast-field forecast-field-lg">
+          <label class="forecast-label">SKU</label>
+          <input type="text" id="skuInput" class="form-control" list="skuList" placeholder="Search SKU...">
+          <datalist id="skuList">
+            {% for p in products %}
+            <option value="{{ p.sku }}">{{ p.name }}</option>
+            {% endfor %}
+          </datalist>
+        </div>
 
-      <div class="col-md-2">
-        <label class="form-label fw-semibold">Tienda</label>
-        <select id="storeSelect" class="form-select form-select-sm">
-          <option value="">Todas las tiendas</option>
-          {% for s in stores %}
-          <option value="{{ s.name }}">{{ s.name }}</option>
-          {% endfor %}
-        </select>
-      </div>
+        <div class="forecast-field">
+          <label class="forecast-label">Store</label>
+          <select id="storeSelect" class="form-select">
+            <option value="">All stores</option>
+            {% for s in stores %}
+            <option value="{{ s.name }}">{{ s.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
 
-      <div class="col-md-2">
-        <label class="form-label fw-semibold">Horizonte (sem)</label>
-        <select id="horizonSelect" class="form-select form-select-sm">
-          <option value="4">4 semanas</option>
-          <option value="8" selected>8 semanas</option>
-          <option value="12">12 semanas</option>
-        </select>
-      </div>
+        <div class="forecast-field">
+          <label class="forecast-label">Horizon (weeks)</label>
+          <select id="horizonSelect" class="form-select">
+            <option value="4">4 weeks</option>
+            <option value="8" selected>8 weeks</option>
+            <option value="12">12 weeks</option>
+          </select>
+        </div>
 
-      <div class="col-md-2">
-        <label class="form-label fw-semibold">Lead time (sem)</label>
-        <select id="leadTimeSelect" class="form-select form-select-sm">
-          <option value="2">2 semanas</option>
-          <option value="4" selected>4 semanas</option>
-          <option value="6">6 semanas</option>
-          <option value="8">8 semanas</option>
-        </select>
-      </div>
+        <div class="forecast-field">
+          <label class="forecast-label">Lead time (weeks)</label>
+          <select id="leadTimeSelect" class="form-select">
+            <option value="2">2 weeks</option>
+            <option value="4" selected>4 weeks</option>
+            <option value="6">6 weeks</option>
+            <option value="8">8 weeks</option>
+          </select>
+        </div>
 
-      <div class="col-md-2">
-        <label class="form-label fw-semibold">Safety: <span id="safetyLabel">10%</span></label>
-        <input type="range" id="safetySlider" class="form-range" min="0" max="30" value="10" step="1">
-      </div>
+        <div class="forecast-field">
+          <label class="forecast-label">Safety stock: <span id="safetyLabel" class="forecast-safety-val">10%</span></label>
+          <input type="range" id="safetySlider" class="form-range" min="0" max="30" value="10" step="1">
+        </div>
 
-      <div class="col-md-1">
-        <button type="button" id="btnRunForecast" class="btn btn-primary btn-sm w-100">
-          <i class="bi bi-play-fill"></i> Run
-        </button>
+        <div class="forecast-field forecast-field-btn">
+          <button type="button" id="btnRunForecast" class="btn forecast-btn-run">
+            <i class="bi bi-play-fill me-1"></i>Run Forecast
+          </button>
+        </div>
       </div>
     </div>
   </div>
-</div>
 
-<div class="row mb-3" id="kpiCards">
-  <div class="col-md-3">
-    <div class="card text-center">
-      <div class="card-body py-3">
-        <div class="text-muted small">Promedio 4 semanas</div>
-        <div class="fs-4 fw-bold text-primary" id="kpiAvgLast4">-</div>
+  <div class="forecast-kpi-row" id="kpiCards">
+    <div class="forecast-kpi forecast-kpi-blue">
+      <div class="forecast-kpi-badge"><i class="bi bi-graph-up"></i></div>
+      <div class="forecast-kpi-content">
+        <div class="forecast-kpi-value" id="kpiAvgLast4">-</div>
+        <div class="forecast-kpi-label">Avg weekly demand</div>
+        <div class="forecast-kpi-hint">Last 4 weeks average</div>
       </div>
+      <div class="forecast-kpi-deco"></div>
     </div>
-  </div>
-  <div class="col-md-3">
-    <div class="card text-center">
-      <div class="card-body py-3">
-        <div class="text-muted small">Forecast Total (horizonte)</div>
-        <div class="fs-4 fw-bold text-info" id="kpiForecastTotal">-</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-md-3">
-    <div class="card text-center">
-      <div class="card-body py-3">
-        <div class="text-muted small">Stock CD</div>
-        <div class="fs-4 fw-bold text-success" id="kpiStockCD">-</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-md-3">
-    <div class="card text-center">
-      <div class="card-body py-3">
-        <div class="text-muted small">Compra Sugerida</div>
-        <div class="fs-4 fw-bold text-warning" id="kpiSuggested">-</div>
-      </div>
-    </div>
-  </div>
-</div>
 
-<div class="row mb-3">
-  <div class="col-md-7">
-    <div class="card h-100">
-      <div class="card-header py-2">
-        <strong>Historial de Ventas + Forecast</strong>
+    <div class="forecast-kpi forecast-kpi-cyan">
+      <div class="forecast-kpi-badge"><i class="bi bi-calendar3"></i></div>
+      <div class="forecast-kpi-content">
+        <div class="forecast-kpi-value" id="kpiForecastTotal">-</div>
+        <div class="forecast-kpi-label">Forecast horizon demand</div>
+        <div class="forecast-kpi-hint">Projected total units</div>
       </div>
-      <div class="card-body">
+      <div class="forecast-kpi-deco"></div>
+    </div>
+
+    <div class="forecast-kpi forecast-kpi-green">
+      <div class="forecast-kpi-badge"><i class="bi bi-box-seam"></i></div>
+      <div class="forecast-kpi-content">
+        <div class="forecast-kpi-value" id="kpiStockCD">-</div>
+        <div class="forecast-kpi-label">Stock CD available</div>
+        <div class="forecast-kpi-hint">Current inventory</div>
+      </div>
+      <div class="forecast-kpi-deco"></div>
+    </div>
+
+    <div class="forecast-kpi forecast-kpi-amber">
+      <div class="forecast-kpi-badge"><i class="bi bi-cart-plus"></i></div>
+      <div class="forecast-kpi-content">
+        <div class="forecast-kpi-value" id="kpiSuggested">-</div>
+        <div class="forecast-kpi-label">Suggested purchase</div>
+        <div class="forecast-kpi-hint" id="purchaseHint">-</div>
+      </div>
+      <div class="forecast-kpi-deco"></div>
+    </div>
+  </div>
+
+  <div class="forecast-charts-row">
+    <div class="forecast-chart-card forecast-chart-main">
+      <div class="forecast-chart-header">
+        <i class="bi bi-activity me-2"></i>Sales history & forecast
+      </div>
+      <div class="forecast-chart-body">
         <div id="salesChart" style="height: 320px;"></div>
       </div>
     </div>
-  </div>
-  <div class="col-md-5">
-    <div class="card h-100">
-      <div class="card-header py-2">
-        <strong>Demanda vs Stock vs Compra</strong>
+
+    <div class="forecast-chart-card forecast-chart-side">
+      <div class="forecast-chart-header">
+        <i class="bi bi-bar-chart me-2"></i>Demand vs Stock vs Purchase
       </div>
-      <div class="card-body">
+      <div class="forecast-chart-body">
         <div id="purchaseChart" style="height: 320px;"></div>
       </div>
     </div>
   </div>
-</div>
 
-<div id="emptyState" class="alert alert-info d-none">
-  <i class="bi bi-info-circle"></i> Selecciona un SKU y haz clic en "Run" para ver el forecast.
-</div>
+  <div id="emptyState" class="forecast-alert forecast-alert-info d-none">
+    <i class="bi bi-info-circle me-2"></i>Select a SKU and click "Run Forecast" to generate projections.
+  </div>
 
-<div id="noDataState" class="alert alert-warning d-none">
-  <i class="bi bi-exclamation-triangle"></i> No se encontro historial de ventas para este SKU / filtro.
+  <div id="noDataState" class="forecast-alert forecast-alert-warning d-none">
+    <i class="bi bi-exclamation-triangle me-2"></i>No sales history found for this SKU / filter combination.
+  </div>
 </div>
 
 <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
@@ -147,6 +154,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const kpiForecastTotal = document.getElementById('kpiForecastTotal');
   const kpiStockCD = document.getElementById('kpiStockCD');
   const kpiSuggested = document.getElementById('kpiSuggested');
+  const purchaseHint = document.getElementById('purchaseHint');
 
   const salesChartEl = document.getElementById('salesChart');
   const purchaseChartEl = document.getElementById('purchaseChart');
@@ -169,6 +177,8 @@ document.addEventListener('DOMContentLoaded', function() {
     kpiForecastTotal.textContent = '-';
     kpiStockCD.textContent = '-';
     kpiSuggested.textContent = '-';
+    purchaseHint.textContent = '-';
+    purchaseHint.className = 'forecast-kpi-hint';
   }
 
   function showEmptyState() {
@@ -246,6 +256,14 @@ document.addEventListener('DOMContentLoaded', function() {
     kpiForecastTotal.textContent = kpis.forecast_total.toLocaleString();
     kpiStockCD.textContent = kpis.stock_cd.toLocaleString();
     kpiSuggested.textContent = kpis.suggested_purchase.toLocaleString();
+    
+    if (kpis.suggested_purchase > 0) {
+      purchaseHint.textContent = 'Purchase recommended';
+      purchaseHint.className = 'forecast-kpi-hint forecast-hint-recommend';
+    } else {
+      purchaseHint.textContent = 'No purchase needed';
+      purchaseHint.className = 'forecast-kpi-hint forecast-hint-ok';
+    }
   }
 
   function renderSalesChart(data) {
@@ -261,8 +279,8 @@ document.addEventListener('DOMContentLoaded', function() {
       y: historyUnits,
       type: 'scatter',
       mode: 'lines+markers',
-      name: 'Historial',
-      line: { color: '#0d6efd', width: 2 },
+      name: 'History',
+      line: { color: '#3b82f6', width: 2 },
       marker: { size: 6 }
     });
 
@@ -272,7 +290,7 @@ document.addEventListener('DOMContentLoaded', function() {
       type: 'scatter',
       mode: 'lines+markers',
       name: 'Forecast',
-      line: { color: '#fd7e14', width: 2, dash: 'dash' },
+      line: { color: '#f59e0b', width: 2, dash: 'dash' },
       marker: { size: 6 }
     });
 
@@ -281,9 +299,9 @@ document.addEventListener('DOMContentLoaded', function() {
         x: forecastWeeks.concat(forecastWeeks.slice().reverse()),
         y: data.bands.upper.concat(data.bands.lower.slice().reverse()),
         fill: 'toself',
-        fillcolor: 'rgba(253, 126, 20, 0.15)',
+        fillcolor: 'rgba(245, 158, 11, 0.12)',
         line: { color: 'transparent' },
-        name: 'Banda confianza',
+        name: 'Confidence band',
         showlegend: true,
         type: 'scatter'
       });
@@ -291,10 +309,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const layout = {
       margin: { t: 20, b: 50, l: 50, r: 20 },
-      xaxis: { title: 'Semana', tickangle: -45 },
-      yaxis: { title: 'Unidades' },
+      xaxis: { title: 'Week', tickangle: -45, gridcolor: '#f1f5f9' },
+      yaxis: { title: 'Units', gridcolor: '#f1f5f9' },
       legend: { orientation: 'h', y: -0.25 },
-      hovermode: 'x unified'
+      hovermode: 'x unified',
+      paper_bgcolor: 'transparent',
+      plot_bgcolor: 'transparent'
     };
 
     Plotly.newPlot(salesChartEl, traces, layout, { responsive: true });
@@ -306,21 +326,25 @@ document.addEventListener('DOMContentLoaded', function() {
     const demandLeadTime = Math.round(kpis.avg_last4 * leadTime);
 
     const trace = {
-      x: ['Demanda Lead Time', 'Stock CD', 'Compra Sugerida'],
+      x: ['Lead Time Demand', 'Stock CD', 'Suggested Purchase'],
       y: [demandLeadTime, kpis.stock_cd, kpis.suggested_purchase],
       type: 'bar',
       marker: {
-        color: ['#17a2b8', '#28a745', '#fd7e14']
+        color: ['#06b6d4', '#22c55e', '#f59e0b'],
+        borderRadius: 4
       },
       text: [demandLeadTime.toLocaleString(), kpis.stock_cd.toLocaleString(), kpis.suggested_purchase.toLocaleString()],
       textposition: 'outside'
     };
 
     const layout = {
-      margin: { t: 30, b: 60, l: 50, r: 20 },
-      yaxis: { title: 'Unidades' },
+      margin: { t: 30, b: 80, l: 50, r: 20 },
+      yaxis: { title: 'Units', gridcolor: '#f1f5f9' },
+      xaxis: { tickangle: -15 },
       showlegend: false,
-      hovermode: 'closest'
+      hovermode: 'closest',
+      paper_bgcolor: 'transparent',
+      plot_bgcolor: 'transparent'
     };
 
     Plotly.newPlot(purchaseChartEl, [trace], layout, { responsive: true });
