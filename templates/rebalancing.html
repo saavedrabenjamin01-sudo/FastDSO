@@ -163,8 +163,13 @@
 
   <div class="rebal-card rebal-table-card">
     <div class="rebal-table-header">
-      <div class="rebal-table-title">
-        <i class="bi bi-list-ul me-2"></i>Sugerencias de Redistribución
+      <div class="rebal-table-title-wrap">
+        <div class="rebal-table-title">
+          <i class="bi bi-list-ul me-2"></i>Sugerencias de Redistribución
+        </div>
+        <div class="rebal-table-hint">
+          <i class="bi bi-arrow-right me-1"></i>De tiendas con exceso → a tiendas con alta demanda (según WOC y velocidad de venta)
+        </div>
       </div>
       <span class="rebal-table-badge">Top 50 de {{ total_suggestions | default(0) }}</span>
     </div>
