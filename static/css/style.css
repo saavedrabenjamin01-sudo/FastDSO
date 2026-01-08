@@ -1453,3 +1453,27 @@ body{
 .dash-kpi-art-cd{
   background: linear-gradient(135deg, #ffffff 0%, rgba(236,253,245,0.6) 100%);
 }
+
+/* === KPI dropdown fix === */
+.dash-kpi-card{
+  position: relative;
+  isolation: isolate;
+}
+.dash-kpi-card .dashv1-kpi-menu{
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 10;
+}
+.dash-kpi-card .dropdown-menu{
+  z-index: 1050;
+  position: absolute;
+}
+.dash-kpi-card .dash-kpi-art{
+  z-index: 1;
+}
+.dash-kpi-card .dashv1-kpi-badge,
+.dash-kpi-card .dashv1-kpi-body{
+  position: relative;
+  z-index: 5;
+}
