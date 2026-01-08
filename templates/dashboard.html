@@ -113,7 +113,7 @@
 
   {# C) KPI row (2 cards only) #}
   <div class="dashv1-kpis">
-    <div class="dashv1-kpi">
+    <div class="dashv1-kpi dash-kpi-card dash-kpi-art-sales">
       <div class="dashv1-kpi-badge dashv1-kpi-badge-blue">
         <i class="bi bi-box-seam"></i>
       </div>
@@ -132,9 +132,10 @@
         </div>
         <div class="dashv1-kpi-sub">últimos 7 días</div>
       </div>
+      <div class="dash-kpi-art"></div>
     </div>
 
-    <div class="dashv1-kpi">
+    <div class="dashv1-kpi dash-kpi-card dash-kpi-art-cd">
       <div class="dashv1-kpi-badge dashv1-kpi-badge-green">
         <i class="bi bi-archive"></i>
       </div>
@@ -143,6 +144,7 @@
         <div class="dashv1-kpi-number">{{ "{:,}".format(kpi_stock_cd_total|int if kpi_stock_cd_total is defined else 0) }}</div>
         <div class="dashv1-kpi-sub">disponible</div>
       </div>
+      <div class="dash-kpi-art"></div>
       {% if current_user.has_permission('admin:reset') %}
       <div class="dashv1-kpi-menu">
         <div class="dropdown">

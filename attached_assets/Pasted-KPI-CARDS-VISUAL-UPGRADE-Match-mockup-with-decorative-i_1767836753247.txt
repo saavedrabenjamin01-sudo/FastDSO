@@ -1,0 +1,70 @@
+KPI CARDS VISUAL UPGRADE — Match mockup with decorative illustration (Dashboard only)
+
+Context:
+We already have 2 KPI cards in dashboard.html:
+- “Top productos vendidos”
+- “Stock CD hoy”
+They work functionally. We need to upgrade ONLY their visual design to match the mockup style:
+- soft gradient background
+- large number on the left
+- decorative illustration/shape on the right side inside the card (like a mini dashboard/warehouse illustration)
+- keep the admin “three dots” dropdown for resets inside the Stock CD card (no need for reset icons on the card)
+
+Scope (strict):
+- Only edit KPI card HTML block inside templates/dashboard.html
+- Append CSS only to static/css/style.css (do not overwrite)
+- No backend changes, no variable changes, no other sections touched.
+
+Design requirements (must match mockup):
+1) Card layout:
+- Left side: label (small), big number (dominant)
+- Right side: decorative illustration area (non-interactive) with soft shapes
+- Card must have rounded corners and subtle shadow
+- Background must be a very subtle gradient (blue tint for Top Sales, blue/teal tint for Stock CD)
+
+2) Decorative illustration:
+- Use pure CSS + simple inline SVG OR CSS pseudo-elements (preferred: pseudo-elements so it’s lightweight).
+- Create a “card-art” container positioned absolute on the right:
+  - soft rectangles/lines like a mini chart/document for “Top productos vendidos”
+  - warehouse/building + small boxes feel for “Stock CD hoy”
+- Must not affect the card height or push content.
+- Should be subtle, not too saturated.
+
+3) Typography:
+- Label: 12–13px, muted
+- Number: 34–40px, bold, strong contrast
+- Optional small subtext under number (e.g., “últimos 7 días” / “disponible”) but keep it subtle.
+
+4) Keep existing dropdown:
+- Keep the three-dots dropdown menu on Stock CD card as-is and aligned top-right.
+- Ensure it stays clickable above the decorative art (z-index).
+
+Implementation instructions:
+A) dashboard.html changes:
+- For each KPI card add a class:
+  - Top sales card: dash-kpi-card dash-kpi-art-sales
+  - Stock CD card: dash-kpi-card dash-kpi-art-cd
+- Add an empty div inside each card for the illustration:
+  <div class="dash-kpi-art"></div>
+- Do not remove the existing icon badge if present, but you may reduce its visual weight or hide it if it conflicts (preferred: keep a small badge on left, mockup uses art on right).
+
+B) style.css changes (append):
+Add a new block under:
+  /* === KPI mockup art === */
+Define:
+- .dash-kpi-card { position: relative; overflow: hidden; }
+- .dash-kpi-art { position:absolute; right:10px; top:50%; transform:translateY(-50%); width:180px; height:70px; opacity:.9; pointer-events:none; }
+- For sales art:
+  - use :before/:after gradients and small bars/lines
+- For cd art:
+  - use :before/:after to draw a simple “warehouse” silhouette + small box shapes
+- Ensure numbers/text remain fully readable (z-index above art).
+
+Acceptance criteria:
+- KPI cards visually resemble the reference: big number left, soft illustration on right, clean minimal label.
+- No functional change.
+- Dropdown menu still works and is not blocked by art.
+
+Deliverables:
+- Show the updated KPI HTML snippet in dashboard.html.
+- Show appended CSS only.
