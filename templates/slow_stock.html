@@ -31,11 +31,24 @@
 </div>
 {% endmacro %}
 
+{# Status badge macro #}
+{% macro status_badge(status) %}
+{% if status == 'DEAD_STORE' or status == 'DEAD' or status == 'DEAD_CD' %}
+<span class="slow-badge slow-badge-red">MUERTO</span>
+{% elif status == 'SLOW_STORE' or status == 'SLOW' %}
+<span class="slow-badge slow-badge-amber">LENTO</span>
+{% elif status == 'HEALTHY' %}
+<span class="slow-badge slow-badge-green">SALUDABLE</span>
+{% else %}
+<span class="slow-badge slow-badge-gray">{{ status }}</span>
+{% endif %}
+{% endmacro %}
+
 {% block content %}
 <div class="slow-wrap">
   <div class="slow-header">
     <h1 class="slow-title">Stock Lento & Reasignación Inteligente</h1>
-    <p class="slow-subtitle">Identifica inventario muerto o de baja rotación y genera transferencias óptimas</p>
+    <p class="slow-subtitle">Identifica inventario muerto, lento o saludable y genera transferencias óptimas</p>
   </div>
 
   {% if run_info %}
@@ -73,17 +86,17 @@
           <div class="slow-field">
             <label class="slow-label">Días muerto (global)</label>
             <input type="number" name="dead_days_global" class="form-control" value="{{ default_params.DEAD_DAYS_GLOBAL }}">
-            <small class="text-muted">Sin venta global = CD muerto</small>
+            <small class="text-muted">Sin venta global = muerto</small>
           </div>
           <div class="slow-field">
-            <label class="slow-label">Días sin compra</label>
-            <input type="number" name="dead_purchase_days" class="form-control" value="{{ default_params.DEAD_PURCHASE_DAYS }}">
-            <small class="text-muted">Para calificar CD muerto</small>
+            <label class="slow-label">Cobertura mín (semanas)</label>
+            <input type="number" step="0.5" name="min_woc" class="form-control" value="{{ default_params.MIN_WOC }}">
+            <small class="text-muted">WOC mínimo saludable</small>
           </div>
           <div class="slow-field">
-            <label class="slow-label">Umbral venta/sem lenta</label>
-            <input type="number" step="0.1" name="slow_rate_threshold" class="form-control" value="{{ default_params.SLOW_RATE_THRESHOLD }}">
-            <small class="text-muted">Menor = lento</small>
+            <label class="slow-label">Cobertura máx (semanas)</label>
+            <input type="number" step="0.5" name="max_woc" class="form-control" value="{{ default_params.MAX_WOC }}">
+            <small class="text-muted">WOC máximo saludable</small>
           </div>
         </div>
 
@@ -122,7 +135,7 @@
       </form>
     </div>
     <div class="slow-params-hint">
-      <i class="bi bi-info-circle me-1"></i>Los parámetros determinan qué SKUs califican como muertos o lentos según días sin venta y velocidad.
+      <i class="bi bi-info-circle me-1"></i>Los parámetros determinan qué SKUs califican como muertos, lentos o saludables según días sin venta y cobertura.
     </div>
   </div>
 
@@ -150,6 +163,16 @@
     </div>
     <div class="slow-kpi-card slow-kpi-green">
       <div class="slow-kpi-badge">
+        <i class="bi bi-check-circle"></i>
+      </div>
+      <div class="slow-kpi-content">
+        <div class="slow-kpi-value">{{ results.store_analysis|selectattr('status', 'equalto', 'HEALTHY')|list|length }}</div>
+        <div class="slow-kpi-label">SKU-Tienda Saludables</div>
+      </div>
+      <div class="slow-kpi-deco"></div>
+    </div>
+    <div class="slow-kpi-card slow-kpi-purple">
+      <div class="slow-kpi-badge">
         <i class="bi bi-arrow-left-right"></i>
       </div>
       <div class="slow-kpi-content">
@@ -158,21 +181,49 @@
       </div>
       <div class="slow-kpi-deco"></div>
     </div>
-    <div class="slow-kpi-card slow-kpi-purple">
-      <div class="slow-kpi-badge">
-        <i class="bi bi-box-seam"></i>
+  </div>
+
+  <div class="slow-filter-card">
+    <div class="slow-filter-row">
+      <div class="slow-filter-field">
+        <label class="slow-filter-label">Buscar SKU/Producto</label>
+        <input type="text" class="form-control form-control-sm" id="skuSearch" placeholder="Buscar..." value="{{ sku_search }}">
       </div>
-      <div class="slow-kpi-content">
-        <div class="slow-kpi-value">{{ results.cd_analysis|length }}</div>
-        <div class="slow-kpi-label">SKUs Muertos en CD</div>
+      <div class="slow-filter-field">
+        <label class="slow-filter-label">Tienda</label>
+        <select class="form-select form-select-sm" id="storeFilter">
+          <option value="">Todas</option>
+          {% for store in stores %}
+          <option value="{{ store.name }}" {% if store_filter == store.name %}selected{% endif %}>{{ store.name }}</option>
+          {% endfor %}
+        </select>
       </div>
-      <div class="slow-kpi-deco"></div>
+      <div class="slow-filter-field">
+        <label class="slow-filter-label">Clasificación</label>
+        <select class="form-select form-select-sm" id="statusFilter">
+          <option value="">Todas</option>
+          <option value="DEAD_STORE" {% if status_filter == 'DEAD_STORE' %}selected{% endif %}>Muerto</option>
+          <option value="SLOW_STORE" {% if status_filter == 'SLOW_STORE' %}selected{% endif %}>Lento</option>
+          <option value="HEALTHY" {% if status_filter == 'HEALTHY' %}selected{% endif %}>Saludable</option>
+        </select>
+      </div>
+      <div class="slow-filter-actions">
+        <button type="button" class="btn btn-sm slow-btn-primary" onclick="applyFilters()">
+          <i class="bi bi-funnel me-1"></i>Filtrar
+        </button>
+        <button type="button" class="btn btn-sm slow-btn-secondary" onclick="clearFilters()">
+          <i class="bi bi-x-circle me-1"></i>Limpiar
+        </button>
+      </div>
     </div>
   </div>
 
   <div class="slow-tabs">
     <button class="slow-tab active" data-tab="stores">
       <i class="bi bi-shop me-1"></i>Tiendas ({{ results.store_analysis|length }})
+    </button>
+    <button class="slow-tab" data-tab="global">
+      <i class="bi bi-globe me-1"></i>Global ({{ results.global_analysis|length if results.global_analysis else 0 }})
     </button>
     <button class="slow-tab" data-tab="transfers">
       <i class="bi bi-arrow-left-right me-1"></i>Transferencias ({{ results.transfers|length }})
@@ -187,7 +238,7 @@
       <div class="slow-table-header">
         <div class="slow-table-title-wrap">
           <div class="slow-table-title">
-            <i class="bi bi-shop me-2"></i>Stock Muerto/Lento por Tienda
+            <i class="bi bi-shop me-2"></i>Análisis por Tienda
           </div>
         </div>
         <a href="{{ url_for('export_slow_stock', export_type='store') }}" class="btn btn-sm slow-btn-export">
@@ -204,6 +255,7 @@
               <th class="text-end">Stock</th>
               <th class="text-end">Días sin venta</th>
               <th class="text-end">Venta/sem</th>
+              <th class="text-end">Cobertura (sem)</th>
               <th class="text-center">Estado</th>
             </tr>
           </thead>
@@ -217,22 +269,17 @@
               <td class="text-end">{{ row.stock }}</td>
               <td class="text-end">{{ row.days_since_last_sale if row.days_since_last_sale < 9999 else '—' }}</td>
               <td class="text-end">{{ row.sales_rate }}</td>
-              <td class="text-center">
-                {% if row.status == 'DEAD_STORE' %}
-                <span class="slow-badge slow-badge-red">MUERTO</span>
-                {% else %}
-                <span class="slow-badge slow-badge-amber">LENTO</span>
-                {% endif %}
-              </td>
+              <td class="text-end">{{ row.coverage_weeks if row.coverage_weeks else '—' }}</td>
+              <td class="text-center">{{ status_badge(row.status) }}</td>
             </tr>
             {% endfor %}
             {% else %}
             <tr>
-              <td colspan="7">
+              <td colspan="8">
                 <div class="slow-empty-table">
                   <i class="bi bi-inbox"></i>
                   <div class="slow-empty-table-title">Sin resultados</div>
-                  <div class="slow-empty-table-hint">No hay SKUs muertos o lentos en tiendas</div>
+                  <div class="slow-empty-table-hint">No hay SKUs que coincidan con los filtros aplicados</div>
                 </div>
               </td>
             </tr>
@@ -243,6 +290,70 @@
       {% if slow_pag and slow_pag.total > 0 %}
       <div class="slow-table-footer">
         {{ pagination_controls(slow_pag, 'slow_page') }}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="slow-tab-content" id="tab-global" style="display:none;">
+    <div class="slow-card slow-table-card">
+      <div class="slow-table-header">
+        <div class="slow-table-title-wrap">
+          <div class="slow-table-title">
+            <i class="bi bi-globe me-2"></i>Análisis Global por SKU
+          </div>
+          <div class="slow-table-hint">
+            <i class="bi bi-info-circle me-1"></i>Agregado de todas las tiendas + CD
+          </div>
+        </div>
+      </div>
+      <div class="slow-table-wrap">
+        <table class="slow-table">
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Producto</th>
+              <th class="text-end">Stock Total</th>
+              <th class="text-end">Stock CD</th>
+              <th class="text-end">Stock Tiendas</th>
+              <th class="text-end">Días sin venta</th>
+              <th class="text-end">Venta/sem</th>
+              <th class="text-end">Cobertura (sem)</th>
+              <th class="text-center">Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if global_pag and global_pag.items %}
+            {% for row in global_pag.items %}
+            <tr>
+              <td class="text-mono">{{ row.sku }}</td>
+              <td>{{ row.product_name[:30] }}{% if row.product_name|length > 30 %}...{% endif %}</td>
+              <td class="text-end fw-bold">{{ row.stock }}</td>
+              <td class="text-end">{{ row.stock_cd }}</td>
+              <td class="text-end">{{ row.stock_stores }}</td>
+              <td class="text-end">{{ row.days_since_last_sale if row.days_since_last_sale else '—' }}</td>
+              <td class="text-end">{{ row.sales_rate }}</td>
+              <td class="text-end">{{ row.coverage_weeks if row.coverage_weeks else '—' }}</td>
+              <td class="text-center">{{ status_badge(row.status) }}</td>
+            </tr>
+            {% endfor %}
+            {% else %}
+            <tr>
+              <td colspan="9">
+                <div class="slow-empty-table">
+                  <i class="bi bi-globe"></i>
+                  <div class="slow-empty-table-title">Sin resultados</div>
+                  <div class="slow-empty-table-hint">No hay SKUs que coincidan con los filtros aplicados</div>
+                </div>
+              </td>
+            </tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+      {% if global_pag and global_pag.total > 0 %}
+      <div class="slow-table-footer">
+        {{ pagination_controls(global_pag, 'global_page') }}
       </div>
       {% endif %}
     </div>
@@ -286,13 +397,7 @@
               <td>{{ row.from_store }}</td>
               <td>{{ row.to_store }}</td>
               <td class="text-end fw-bold">{{ row.qty }}</td>
-              <td class="text-center">
-                {% if row.donor_status == 'DEAD_STORE' %}
-                <span class="slow-badge slow-badge-red">MUERTO</span>
-                {% else %}
-                <span class="slow-badge slow-badge-amber">LENTO</span>
-                {% endif %}
-              </td>
+              <td class="text-center">{{ status_badge(row.donor_status) }}</td>
               <td class="text-end">{{ row.receiver_sales_rate }}</td>
               <td class="text-end">{{ row.receiver_woc }}</td>
             </tr>
@@ -353,9 +458,7 @@
               <td class="text-end">{{ row.stock_cd }}</td>
               <td class="text-end">{{ row.days_since_last_sale_global if row.days_since_last_sale_global else '—' }}</td>
               <td class="text-end">{{ row.days_since_last_purchase if row.days_since_last_purchase else '—' }}</td>
-              <td class="text-center">
-                <span class="slow-badge slow-badge-purple">MUERTO CD</span>
-              </td>
+              <td class="text-center">{{ status_badge(row.status) }}</td>
               <td>{{ row.recommendation }}</td>
             </tr>
             {% endfor %}
@@ -384,7 +487,7 @@
   <div class="slow-empty-state">
     <div class="slow-empty-icon"><i class="bi bi-hourglass"></i></div>
     <div class="slow-empty-title">Sin datos de análisis</div>
-    <div class="slow-empty-text">Haz clic en "Ejecutar Análisis" para identificar stock lento y muerto.</div>
+    <div class="slow-empty-text">Haz clic en "Ejecutar Análisis" para identificar stock muerto, lento y saludable.</div>
   </div>
   {% endif %}
 
@@ -423,6 +526,26 @@ function updateParam(param, value) {
   window.location.href = url.toString();
 }
 
+function applyFilters() {
+  const url = new URL(window.location.href);
+  url.searchParams.set('sku_search', document.getElementById('skuSearch').value);
+  url.searchParams.set('store_filter', document.getElementById('storeFilter').value);
+  url.searchParams.set('status_filter', document.getElementById('statusFilter').value);
+  url.searchParams.set('slow_page', 1);
+  url.searchParams.set('global_page', 1);
+  window.location.href = url.toString();
+}
+
+function clearFilters() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('sku_search');
+  url.searchParams.delete('store_filter');
+  url.searchParams.delete('status_filter');
+  url.searchParams.set('slow_page', 1);
+  url.searchParams.set('global_page', 1);
+  window.location.href = url.toString();
+}
+
 function switchTab(tabId) {
   document.querySelectorAll('.slow-tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.slow-tab-content').forEach(c => c.style.display = 'none');
@@ -437,6 +560,13 @@ document.querySelectorAll('.slow-tab').forEach(tab => {
   tab.addEventListener('click', function() {
     switchTab(this.getAttribute('data-tab'));
   });
+});
+
+document.getElementById('skuSearch')?.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    applyFilters();
+  }
 });
 
 (function() {

@@ -4754,20 +4754,45 @@ def slow_stock():
             'params': params
         }
     
+    # Filter parameters
+    sku_search = request.args.get('sku_search', '').strip()
+    store_filter = request.args.get('store_filter', '').strip()
+    status_filter = request.args.get('status_filter', '').strip()
+    
     # Pagination parameters (fixed 10 per page)
     slow_page = request.args.get('slow_page', 1, type=int)
     sug_page = request.args.get('sug_page', 1, type=int)
     cd_page = request.args.get('cd_page', 1, type=int)
+    global_page = request.args.get('global_page', 1, type=int)
     
-    # Paginate results
+    # Paginate results with filters
     slow_pag = None
     sug_pag = None
     cd_pag = None
+    global_pag = None
     
     if results:
-        slow_pag = paginate_list(results.get('store_analysis', []), slow_page, 10)
+        # Apply filters to store analysis
+        store_data = results.get('store_analysis', [])
+        if sku_search:
+            store_data = [r for r in store_data if sku_search.lower() in r['sku'].lower() or sku_search.lower() in r['product_name'].lower()]
+        if store_filter:
+            store_data = [r for r in store_data if r['store'] == store_filter]
+        if status_filter:
+            store_data = [r for r in store_data if r['status'] == status_filter]
+        
+        slow_pag = paginate_list(store_data, slow_page, 10)
         sug_pag = paginate_list(results.get('transfers', []), sug_page, 10)
         cd_pag = paginate_list(results.get('cd_analysis', []), cd_page, 10)
+        
+        # Apply filters to global analysis
+        global_data = results.get('global_analysis', [])
+        if sku_search:
+            global_data = [r for r in global_data if sku_search.lower() in r['sku'].lower() or sku_search.lower() in r['product_name'].lower()]
+        if status_filter and status_filter in ['DEAD', 'SLOW', 'HEALTHY']:
+            global_data = [r for r in global_data if r['status'] == status_filter]
+        
+        global_pag = paginate_list(global_data, global_page, 10)
     
     return render_template('slow_stock.html',
                            products=products,
@@ -4778,9 +4803,14 @@ def slow_stock():
                            slow_pag=slow_pag,
                            sug_pag=sug_pag,
                            cd_pag=cd_pag,
+                           global_pag=global_pag,
                            slow_page=slow_page,
                            sug_page=sug_page,
-                           cd_page=cd_page)
+                           cd_page=cd_page,
+                           global_page=global_page,
+                           sku_search=sku_search,
+                           store_filter=store_filter,
+                           status_filter=status_filter)
 
 
 @app.route('/slow_stock/upload_lifecycle', methods=['POST'])
