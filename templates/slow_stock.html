@@ -423,14 +423,28 @@ function updateParam(param, value) {
   window.location.href = url.toString();
 }
 
+function switchTab(tabId) {
+  document.querySelectorAll('.slow-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.slow-tab-content').forEach(c => c.style.display = 'none');
+  document.querySelector('.slow-tab[data-tab="' + tabId + '"]').classList.add('active');
+  document.getElementById('tab-' + tabId).style.display = 'block';
+  const url = new URL(window.location.href);
+  url.searchParams.set('tab', tabId);
+  history.replaceState(null, '', url.toString());
+}
+
 document.querySelectorAll('.slow-tab').forEach(tab => {
   tab.addEventListener('click', function() {
-    document.querySelectorAll('.slow-tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.slow-tab-content').forEach(c => c.style.display = 'none');
-    this.classList.add('active');
-    const tabId = this.getAttribute('data-tab');
-    document.getElementById('tab-' + tabId).style.display = 'block';
+    switchTab(this.getAttribute('data-tab'));
   });
 });
+
+(function() {
+  const params = new URLSearchParams(window.location.search);
+  const tab = params.get('tab');
+  if (tab && document.getElementById('tab-' + tab)) {
+    switchTab(tab);
+  }
+})();
 </script>
 {% endblock %}
