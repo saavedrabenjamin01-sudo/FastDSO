@@ -3,6 +3,34 @@
 {% block title %}Stock Lento & Reasignación{% endblock %}
 {% block page_title %}Stock Lento & Reasignación Inteligente{% endblock %}
 
+{# Pagination controls macro (matches Dashboard style, no size dropdown) #}
+{% macro pagination_controls(pag, page_param) %}
+<div class="slow-pagination">
+  <small class="text-muted">{{ pag.total }} registros</small>
+  {% if pag.pages > 1 %}
+    <nav>
+      <ul class="pagination pagination-sm mb-0">
+        <li class="page-item {% if not pag.has_prev %}disabled{% endif %}">
+          <a class="page-link" href="javascript:void(0)" onclick="updateParam('{{ page_param }}', {{ pag.prev_num or 1 }})">Ant</a>
+        </li>
+        {% for p in pag.iter_pages() %}
+          {% if p %}
+            <li class="page-item {% if p == pag.page %}active{% endif %}">
+              <a class="page-link" href="javascript:void(0)" onclick="updateParam('{{ page_param }}', {{ p }})">{{ p }}</a>
+            </li>
+          {% else %}
+            <li class="page-item disabled"><span class="page-link">…</span></li>
+          {% endif %}
+        {% endfor %}
+        <li class="page-item {% if not pag.has_next %}disabled{% endif %}">
+          <a class="page-link" href="javascript:void(0)" onclick="updateParam('{{ page_param }}', {{ pag.next_num or pag.pages }})">Sig</a>
+        </li>
+      </ul>
+    </nav>
+  {% endif %}
+</div>
+{% endmacro %}
+
 {% block content %}
 <div class="slow-wrap">
   <div class="slow-header">
@@ -162,7 +190,9 @@
             <i class="bi bi-shop me-2"></i>Stock Muerto/Lento por Tienda
           </div>
         </div>
-        <span class="slow-table-badge">{{ results.store_analysis|length }} registros</span>
+        <a href="{{ url_for('export_slow_stock', export_type='store') }}" class="btn btn-sm slow-btn-export">
+          <i class="bi bi-download me-1"></i>Exportar
+        </a>
       </div>
       <div class="slow-table-wrap">
         <table class="slow-table">
@@ -171,21 +201,22 @@
               <th>SKU</th>
               <th>Producto</th>
               <th>Tienda</th>
-              <th class="text-center">Stock</th>
-              <th class="text-center">Días sin venta</th>
-              <th class="text-center">Venta/sem</th>
+              <th class="text-end">Stock</th>
+              <th class="text-end">Días sin venta</th>
+              <th class="text-end">Venta/sem</th>
               <th class="text-center">Estado</th>
             </tr>
           </thead>
           <tbody>
-            {% for row in results.store_analysis[:50] %}
+            {% if slow_pag and slow_pag.items %}
+            {% for row in slow_pag.items %}
             <tr>
               <td class="text-mono">{{ row.sku }}</td>
               <td>{{ row.product_name[:30] }}{% if row.product_name|length > 30 %}...{% endif %}</td>
               <td>{{ row.store }}</td>
-              <td class="text-center">{{ row.stock }}</td>
-              <td class="text-center">{{ row.days_since_last_sale if row.days_since_last_sale < 9999 else '—' }}</td>
-              <td class="text-center">{{ row.sales_rate }}</td>
+              <td class="text-end">{{ row.stock }}</td>
+              <td class="text-end">{{ row.days_since_last_sale if row.days_since_last_sale < 9999 else '—' }}</td>
+              <td class="text-end">{{ row.sales_rate }}</td>
               <td class="text-center">
                 {% if row.status == 'DEAD_STORE' %}
                 <span class="slow-badge slow-badge-red">MUERTO</span>
@@ -194,15 +225,24 @@
                 {% endif %}
               </td>
             </tr>
-            {% else %}
-            <tr><td colspan="7" class="text-center text-muted py-4">No hay resultados</td></tr>
             {% endfor %}
+            {% else %}
+            <tr>
+              <td colspan="7">
+                <div class="slow-empty-table">
+                  <i class="bi bi-inbox"></i>
+                  <div class="slow-empty-table-title">Sin resultados</div>
+                  <div class="slow-empty-table-hint">No hay SKUs muertos o lentos en tiendas</div>
+                </div>
+              </td>
+            </tr>
+            {% endif %}
           </tbody>
         </table>
       </div>
-      {% if results.store_analysis|length > 50 %}
+      {% if slow_pag and slow_pag.total > 0 %}
       <div class="slow-table-footer">
-        <span class="text-muted">Mostrando 50 de {{ results.store_analysis|length }} registros. Exporta para ver todos.</span>
+        {{ pagination_controls(slow_pag, 'slow_page') }}
       </div>
       {% endif %}
     </div>
@@ -219,7 +259,9 @@
             <i class="bi bi-arrow-right me-1"></i>De tiendas con stock muerto/lento → a tiendas con demanda activa
           </div>
         </div>
-        <span class="slow-table-badge">{{ results.transfers|length }} transferencias</span>
+        <a href="{{ url_for('export_slow_stock', export_type='transfers') }}" class="btn btn-sm slow-btn-export">
+          <i class="bi bi-download me-1"></i>Exportar
+        </a>
       </div>
       <div class="slow-table-wrap">
         <table class="slow-table">
@@ -229,20 +271,21 @@
               <th>Producto</th>
               <th>De Tienda</th>
               <th>A Tienda</th>
-              <th class="text-center">Cantidad</th>
+              <th class="text-end">Cantidad</th>
               <th class="text-center">Estado Origen</th>
-              <th class="text-center">Venta/sem Destino</th>
-              <th class="text-center">WOC Destino</th>
+              <th class="text-end">Venta/sem Destino</th>
+              <th class="text-end">WOC Destino</th>
             </tr>
           </thead>
           <tbody>
-            {% for row in results.transfers[:50] %}
+            {% if sug_pag and sug_pag.items %}
+            {% for row in sug_pag.items %}
             <tr>
               <td class="text-mono">{{ row.sku }}</td>
               <td>{{ row.product_name[:25] }}{% if row.product_name|length > 25 %}...{% endif %}</td>
               <td>{{ row.from_store }}</td>
               <td>{{ row.to_store }}</td>
-              <td class="text-center fw-bold">{{ row.qty }}</td>
+              <td class="text-end fw-bold">{{ row.qty }}</td>
               <td class="text-center">
                 {% if row.donor_status == 'DEAD_STORE' %}
                 <span class="slow-badge slow-badge-red">MUERTO</span>
@@ -250,18 +293,27 @@
                 <span class="slow-badge slow-badge-amber">LENTO</span>
                 {% endif %}
               </td>
-              <td class="text-center">{{ row.receiver_sales_rate }}</td>
-              <td class="text-center">{{ row.receiver_woc }}</td>
+              <td class="text-end">{{ row.receiver_sales_rate }}</td>
+              <td class="text-end">{{ row.receiver_woc }}</td>
             </tr>
-            {% else %}
-            <tr><td colspan="8" class="text-center text-muted py-4">No hay transferencias sugeridas</td></tr>
             {% endfor %}
+            {% else %}
+            <tr>
+              <td colspan="8">
+                <div class="slow-empty-table">
+                  <i class="bi bi-arrow-left-right"></i>
+                  <div class="slow-empty-table-title">Sin transferencias</div>
+                  <div class="slow-empty-table-hint">No hay transferencias sugeridas en este análisis</div>
+                </div>
+              </td>
+            </tr>
+            {% endif %}
           </tbody>
         </table>
       </div>
-      {% if results.transfers|length > 50 %}
+      {% if sug_pag and sug_pag.total > 0 %}
       <div class="slow-table-footer">
-        <span class="text-muted">Mostrando 50 de {{ results.transfers|length }} transferencias. Exporta para ver todas.</span>
+        {{ pagination_controls(sug_pag, 'sug_page') }}
       </div>
       {% endif %}
     </div>
@@ -275,7 +327,9 @@
             <i class="bi bi-box-seam me-2"></i>Stock Muerto en Centro de Distribución
           </div>
         </div>
-        <span class="slow-table-badge">{{ results.cd_analysis|length }} SKUs</span>
+        <a href="{{ url_for('export_slow_stock', export_type='cd') }}" class="btn btn-sm slow-btn-export">
+          <i class="bi bi-download me-1"></i>Exportar
+        </a>
       </div>
       <div class="slow-table-wrap">
         <table class="slow-table">
@@ -283,35 +337,45 @@
             <tr>
               <th>SKU</th>
               <th>Producto</th>
-              <th class="text-center">Stock CD</th>
-              <th class="text-center">Días sin venta global</th>
-              <th class="text-center">Días sin compra</th>
+              <th class="text-end">Stock CD</th>
+              <th class="text-end">Días sin venta global</th>
+              <th class="text-end">Días sin compra</th>
               <th class="text-center">Estado</th>
               <th>Recomendación</th>
             </tr>
           </thead>
           <tbody>
-            {% for row in results.cd_analysis[:50] %}
+            {% if cd_pag and cd_pag.items %}
+            {% for row in cd_pag.items %}
             <tr>
               <td class="text-mono">{{ row.sku }}</td>
               <td>{{ row.product_name[:30] }}{% if row.product_name|length > 30 %}...{% endif %}</td>
-              <td class="text-center">{{ row.stock_cd }}</td>
-              <td class="text-center">{{ row.days_since_last_sale_global if row.days_since_last_sale_global else '—' }}</td>
-              <td class="text-center">{{ row.days_since_last_purchase if row.days_since_last_purchase else '—' }}</td>
+              <td class="text-end">{{ row.stock_cd }}</td>
+              <td class="text-end">{{ row.days_since_last_sale_global if row.days_since_last_sale_global else '—' }}</td>
+              <td class="text-end">{{ row.days_since_last_purchase if row.days_since_last_purchase else '—' }}</td>
               <td class="text-center">
                 <span class="slow-badge slow-badge-purple">MUERTO CD</span>
               </td>
               <td>{{ row.recommendation }}</td>
             </tr>
-            {% else %}
-            <tr><td colspan="7" class="text-center text-muted py-4">No hay SKUs muertos en CD</td></tr>
             {% endfor %}
+            {% else %}
+            <tr>
+              <td colspan="7">
+                <div class="slow-empty-table">
+                  <i class="bi bi-box-seam"></i>
+                  <div class="slow-empty-table-title">Sin SKUs muertos en CD</div>
+                  <div class="slow-empty-table-hint">No hay productos clasificados como muertos en el centro de distribución</div>
+                </div>
+              </td>
+            </tr>
+            {% endif %}
           </tbody>
         </table>
       </div>
-      {% if results.cd_analysis|length > 50 %}
+      {% if cd_pag and cd_pag.total > 0 %}
       <div class="slow-table-footer">
-        <span class="text-muted">Mostrando 50 de {{ results.cd_analysis|length }} SKUs. Exporta para ver todos.</span>
+        {{ pagination_controls(cd_pag, 'cd_page') }}
       </div>
       {% endif %}
     </div>
@@ -353,6 +417,12 @@
 </div>
 
 <script>
+function updateParam(param, value) {
+  const url = new URL(window.location.href);
+  url.searchParams.set(param, value);
+  window.location.href = url.toString();
+}
+
 document.querySelectorAll('.slow-tab').forEach(tab => {
   tab.addEventListener('click', function() {
     document.querySelectorAll('.slow-tab').forEach(t => t.classList.remove('active'));
