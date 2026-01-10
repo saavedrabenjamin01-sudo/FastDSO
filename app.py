@@ -4309,7 +4309,9 @@ SLOW_STOCK_PARAMS = {
     'RECEIVER_WOC_MIN': 1.5,
     'TARGET_RECEIVER_WOC': 2.5,
     'DONOR_FLOOR': 1,
-    'MIN_TRANSFER_QTY': 2
+    'MIN_TRANSFER_QTY': 2,
+    'MIN_WOC': 2.0,
+    'MAX_WOC': 8.0
 }
 
 
@@ -4411,27 +4413,36 @@ def compute_slow_stock_analysis(params=None):
         days_since_last_sale = (today - last_sale).days if last_sale else 9999
         rate = sales_rate.get((pid, sid), 0)
         
-        # Classification
-        status = 'OK'
+        # Calculate weeks of coverage (WOC)
+        woc = qty / max(rate, 0.01) if rate > 0 else 9999
+        
+        # Classification with DEAD, SLOW, HEALTHY
+        status = 'HEALTHY'
         if days_since_last_sale >= params['DEAD_DAYS_STORE']:
             status = 'DEAD_STORE'
         elif rate <= params['SLOW_RATE_THRESHOLD'] and days_since_last_sale >= params['SLOW_MIN_DAYS_STORE']:
             status = 'SLOW_STORE'
+        elif woc > params['MAX_WOC']:
+            status = 'SLOW_STORE'
+        elif woc < params['MIN_WOC'] and rate > 0:
+            status = 'HEALTHY'
         
+        # Include all SKU-store pairs with stock
+        store_analysis.append({
+            'sku': product.sku,
+            'product_name': product.name,
+            'store': store.name,
+            'stock': qty,
+            'days_since_last_sale': days_since_last_sale,
+            'sales_rate': round(rate, 2),
+            'coverage_weeks': round(woc, 1) if woc < 9999 else None,
+            'status': status,
+            'product_id': pid,
+            'store_id': sid
+        })
+        
+        # Track donors (DEAD or SLOW only)
         if status in ['DEAD_STORE', 'SLOW_STORE']:
-            store_analysis.append({
-                'sku': product.sku,
-                'product_name': product.name,
-                'store': store.name,
-                'stock': qty,
-                'days_since_last_sale': days_since_last_sale,
-                'sales_rate': round(rate, 2),
-                'status': status,
-                'product_id': pid,
-                'store_id': sid
-            })
-            
-            # Track donors
             if pid not in donors:
                 donors[pid] = []
             donors[pid].append((sid, status, qty))
@@ -4554,10 +4565,61 @@ def compute_slow_stock_analysis(params=None):
                                    (recv_stock + transfer_qty) / max(recv_rate, 0.01),
                                    max(recv_need - transfer_qty, 0))
     
+    # Build global-level analysis (aggregated per SKU)
+    global_analysis = []
+    sku_global_data = {}
+    
+    # Aggregate store stock and sales per SKU
+    for (pid, sid), qty in store_stock.items():
+        if pid not in sku_global_data:
+            sku_global_data[pid] = {'store_stock': 0, 'total_sales_rate': 0}
+        sku_global_data[pid]['store_stock'] += qty
+        sku_global_data[pid]['total_sales_rate'] += sales_rate.get((pid, sid), 0)
+    
+    for pid, data in sku_global_data.items():
+        product = products.get(pid)
+        if not product:
+            continue
+        
+        cd_qty = cd_stock.get(pid, 0)
+        total_stock = data['store_stock'] + cd_qty
+        total_rate = data['total_sales_rate']
+        
+        if total_stock <= 0:
+            continue
+        
+        last_sale_global = last_sale_global_fallback.get(pid)
+        days_since_last_sale = (today - last_sale_global).days if last_sale_global else 9999
+        woc = total_stock / max(total_rate, 0.01) if total_rate > 0 else 9999
+        
+        # Global classification
+        status = 'HEALTHY'
+        if days_since_last_sale >= params['DEAD_DAYS_GLOBAL']:
+            status = 'DEAD'
+        elif woc > params['MAX_WOC']:
+            status = 'SLOW'
+        elif total_rate <= 0:
+            status = 'DEAD'
+        
+        global_analysis.append({
+            'sku': product.sku,
+            'product_name': product.name,
+            'store': 'GLOBAL',
+            'stock': total_stock,
+            'stock_cd': cd_qty,
+            'stock_stores': data['store_stock'],
+            'days_since_last_sale': days_since_last_sale if days_since_last_sale < 9999 else None,
+            'sales_rate': round(total_rate, 2),
+            'coverage_weeks': round(woc, 1) if woc < 9999 else None,
+            'status': status,
+            'product_id': pid
+        })
+    
     return {
         'store_analysis': store_analysis,
         'cd_analysis': cd_analysis,
-        'transfers': transfers
+        'transfers': transfers,
+        'global_analysis': global_analysis
     }
 
 
