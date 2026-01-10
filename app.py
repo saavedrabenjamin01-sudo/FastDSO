@@ -4561,6 +4561,45 @@ def compute_slow_stock_analysis(params=None):
     }
 
 
+def paginate_list(items, page, per_page=10):
+    """
+    Paginate a Python list, returning a dict with pagination metadata.
+    Compatible with SQLAlchemy pagination interface for template consistency.
+    """
+    total = len(items)
+    pages = max((total + per_page - 1) // per_page, 1)
+    page = max(1, min(page, pages))
+    start = (page - 1) * per_page
+    end = start + per_page
+    sliced = items[start:end]
+    
+    class ListPagination:
+        def __init__(self, items, page, pages, total, per_page):
+            self.items = items
+            self.page = page
+            self.pages = pages
+            self.total = total
+            self.per_page = per_page
+            self.has_prev = page > 1
+            self.has_next = page < pages
+            self.prev_num = page - 1 if page > 1 else None
+            self.next_num = page + 1 if page < pages else None
+        
+        def iter_pages(self, left_edge=2, left_current=2, right_current=3, right_edge=2):
+            """Generate page numbers for pagination display."""
+            last = 0
+            for num in range(1, self.pages + 1):
+                if num <= left_edge or \
+                   (self.page - left_current <= num <= self.page + right_current) or \
+                   num > self.pages - right_edge:
+                    if last + 1 != num:
+                        yield None
+                    yield num
+                    last = num
+    
+    return ListPagination(sliced, page, pages, total, per_page)
+
+
 @app.route('/slow_stock', methods=['GET', 'POST'])
 @login_required
 @require_permission('slow_stock:view')
@@ -4653,12 +4692,33 @@ def slow_stock():
             'params': params
         }
     
+    # Pagination parameters (fixed 10 per page)
+    slow_page = request.args.get('slow_page', 1, type=int)
+    sug_page = request.args.get('sug_page', 1, type=int)
+    cd_page = request.args.get('cd_page', 1, type=int)
+    
+    # Paginate results
+    slow_pag = None
+    sug_pag = None
+    cd_pag = None
+    
+    if results:
+        slow_pag = paginate_list(results.get('store_analysis', []), slow_page, 10)
+        sug_pag = paginate_list(results.get('transfers', []), sug_page, 10)
+        cd_pag = paginate_list(results.get('cd_analysis', []), cd_page, 10)
+    
     return render_template('slow_stock.html',
                            products=products,
                            stores=stores,
                            results=results,
                            run_info=run_info,
-                           default_params=SLOW_STOCK_PARAMS)
+                           default_params=SLOW_STOCK_PARAMS,
+                           slow_pag=slow_pag,
+                           sug_pag=sug_pag,
+                           cd_pag=cd_pag,
+                           slow_page=slow_page,
+                           sug_page=sug_page,
+                           cd_page=cd_page)
 
 
 @app.route('/slow_stock/upload_lifecycle', methods=['POST'])

@@ -1,0 +1,129 @@
+STANDARDIZE “Slow Stock & Smart Reallocation” MODULE (UI + pagination) — match Dashboard style
+
+Context:
+We have a NEW module page (slow stock) that currently renders large tables without pagination and feels visually inconsistent vs Dashboard. We want to standardize it:
+- Same card styling, spacing, typography
+- Zebra rows + hover highlight + sticky headers
+- Pagination controls (10 rows per page) like Dashboard
+- Clean empty states
+- Export buttons aligned and consistent
+
+STRICT RULES
+- Do NOT change business logic outputs (classification, suggestion allocation, CD dead stock logic).
+- Do NOT change database schema.
+- Minimal backend changes only to enable pagination inputs and slicing.
+- Keep all existing filters/parameters intact.
+- Preserve SKU leading zeros everywhere.
+
+SCOPE
+- Update the slow stock route handler (only enough to paginate results).
+- Update the slow stock template (layout + macros + tables).
+- Append CSS only if needed, scoped to this module (avoid global breakage).
+
+TARGET UX (like Dashboard)
+Page layout:
+A) Header (title + subtitle)
+B) Parameter card (inputs + run button)
+C) KPI row (4 cards)
+D) Tabs/sections in cards:
+   1) Slow/Dead Stock List (paginated)
+   2) Reallocation Suggestions (paginated)
+   3) Dead Stock in CD (paginated)
+Each table shows 10 rows per page.
+
+BACKEND REQUIREMENTS (minimal)
+We may have results as:
+- SQLAlchemy queries OR
+- Python lists computed in memory
+
+Implement pagination for each dataset:
+- slow_list: param slow_page
+- suggestions: param sug_page
+- cd_dead_list: param cd_page
+Per-page fixed = 10.
+
+If dataset is SQLAlchemy query:
+- use .paginate(page=..., per_page=10, error_out=False)
+
+If dataset is a list:
+- implement a small helper function paginate_list(items, page, per_page) returning:
+  {
+    "items": sliced_items,
+    "page": page,
+    "pages": total_pages,
+    "total": total_count,
+    "has_prev": page > 1,
+    "has_next": page < total_pages,
+    "prev_num": page-1,
+    "next_num": page+1
+  }
+
+Pass these objects to the template:
+- slow_pag
+- sug_pag
+- cd_pag
+Each contains .items plus pagination metadata.
+
+TEMPLATE REQUIREMENTS
+In the slow stock template:
+1) Create a Jinja macro pagination_controls identical in behavior and look to dashboard:
+- prev/next
+- page numbers
+- uses updateParam() JS helper
+- show “X registros”
+- For this module: no page-size dropdown (fixed 10)
+- Macro signature:
+  pagination_controls(pag, page_param)
+Where page_param is one of: "slow_page", "sug_page", "cd_page"
+
+2) Add one updateParam() JS helper (same as dashboard):
+- updates URL query param and reloads
+
+3) For each table:
+- Render only pag.items (10 rows)
+- Add pagination controls below each table using correct page param
+- Use sticky table header + zebra + hover (reuse dash-table CSS if available, or add scoped CSS)
+
+4) Table headers:
+- Keep columns exactly as currently shown (do not alter meaning)
+- Ensure numeric columns right aligned
+- Ensure SKU columns use monospace class
+
+5) Empty states:
+- If no rows, show a premium empty state (icon + title + hint) consistent with dashboard.
+
+6) Visual alignment:
+- Export buttons aligned right in card header.
+- Search inputs (if any) aligned like dashboard (optional).
+
+CSS
+Append CSS under comment:
+/* Slow Stock module polish */
+Scope selectors to avoid breaking other pages:
+- .slow-wrap
+- .slow-card
+- .slow-table
+- .slow-pagination
+
+Include:
+- max-width container like dashboard (1250px)
+- cards with rounded corners, shadow, soft headers
+- table zebra + hover + sticky headers
+- empty state styling
+
+DELIVERABLES
+- Updated route code (only the pagination portion)
+- Updated template with:
+  - pagination macro
+  - 3 paginated tables
+  - updateParam JS
+- App still works with existing logic
+- All three tables show 10 rows per page and paginate independently
+
+ACCEPTANCE TEST
+- Run module with >10 rows in each list:
+  - Slow list paginates with slow_page
+  - Suggestions paginate with sug_page
+  - Dead CD list paginates with cd_page
+- Changing page in one table does not break others.
+- Exports still export full dataset (not just page slice).
