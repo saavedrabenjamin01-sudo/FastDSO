@@ -41,7 +41,13 @@ Do not make changes to the folder `Excel tipo/`.
 - **Inventory Optimization**:
     - **Store-to-Store Rebalancing**: Suggests optimal stock transfers between stores based on Weeks of Cover (WOC) and sales velocity.
     - **Stock-out Replenishment (BREAK_REPLENISH)**: Automatically identifies and suggests replenishment for out-of-stock SKU-Store pairs with historical demand.
-    - **Slow Stock & Smart Reallocation**: Identifies dead/slow-moving inventory at store and CD levels and proposes transfers to active demand points.
+    - **Slow Stock & Smart Reallocation**: Identifies dead/slow-moving/healthy inventory with configurable thresholds (MIN_WOC: 2.0, MAX_WOC: 8.0). Features include:
+        - Store-level analysis with DEAD, SLOW, and HEALTHY classifications
+        - Global-level analysis aggregating stock and sales across all stores + CD
+        - Coverage weeks (WOC) calculation for each SKU-store pair
+        - Filter controls (SKU search, store dropdown, classification filter)
+        - Smart transfer suggestions from DEAD/SLOW donors to active receivers
+        - 4-tab layout: Tiendas, Global, Transferencias, CD
 - **Run Management**: Centralized "Runs Center" for managing, activating, comparing, and tracking the status of various data processing runs.
 - **User & Access Management**: Admin users can manage other users and their roles, with permissions governing feature access.
 - **Reporting & Exports**: Export predictions, forecasts, and analysis results to Excel.
