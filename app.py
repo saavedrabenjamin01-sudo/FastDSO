@@ -4569,12 +4569,24 @@ def compute_slow_stock_analysis(params=None):
     global_analysis = []
     sku_global_data = {}
     
+    # Get all unique product IDs from both store_stock and cd_stock
+    all_pids = set()
+    for (pid, sid) in store_stock.keys():
+        all_pids.add(pid)
+    for pid in cd_stock.keys():
+        all_pids.add(pid)
+    
     # Aggregate store stock and sales per SKU
     for (pid, sid), qty in store_stock.items():
         if pid not in sku_global_data:
             sku_global_data[pid] = {'store_stock': 0, 'total_sales_rate': 0}
         sku_global_data[pid]['store_stock'] += qty
         sku_global_data[pid]['total_sales_rate'] += sales_rate.get((pid, sid), 0)
+    
+    # Ensure CD-only SKUs are included in global data
+    for pid in all_pids:
+        if pid not in sku_global_data:
+            sku_global_data[pid] = {'store_stock': 0, 'total_sales_rate': 0}
     
     for pid, data in sku_global_data.items():
         product = products.get(pid)
@@ -4789,8 +4801,11 @@ def slow_stock():
         global_data = results.get('global_analysis', [])
         if sku_search:
             global_data = [r for r in global_data if sku_search.lower() in r['sku'].lower() or sku_search.lower() in r['product_name'].lower()]
-        if status_filter and status_filter in ['DEAD', 'SLOW', 'HEALTHY']:
-            global_data = [r for r in global_data if r['status'] == status_filter]
+        if status_filter:
+            # Normalize filter values: DEAD_STORE/DEAD_CD -> DEAD, SLOW_STORE -> SLOW
+            global_status_map = {'DEAD_STORE': 'DEAD', 'DEAD_CD': 'DEAD', 'SLOW_STORE': 'SLOW', 'HEALTHY': 'HEALTHY', 'DEAD': 'DEAD', 'SLOW': 'SLOW'}
+            normalized_status = global_status_map.get(status_filter, status_filter)
+            global_data = [r for r in global_data if r['status'] == normalized_status]
         
         global_pag = paginate_list(global_data, global_page, 10)
     
