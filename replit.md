@@ -51,6 +51,12 @@ Do not make changes to the folder `Excel tipo/`.
 - **Run Management**: Centralized "Runs Center" for managing, activating, comparing, and tracking the status of various data processing runs.
 - **User & Access Management**: Admin users can manage other users and their roles, with permissions governing feature access.
 - **Reporting & Exports**: Export predictions, forecasts, and analysis results to Excel.
+- **Store Health Index**: Diagnostic scoring module (0-100) per store with:
+    - Weighted health formula: Fill Rate (30%), Stockout Rate (30%), Overstock Rate (20%), Sales Velocity (20%)
+    - Status badges: Green (≥80 Saludable), Yellow (50-79 Atención), Red (<50 Crítico)
+    - Edge case handling: Redistributes velocity weight when no sales data chain-wide
+    - KPI summary cards, paginated table with sorting, weights configuration form, Excel export
+    - Access via "Salud Tiendas" link under Operaciones (requires store_health:view permission)
 
 ## External Dependencies
 - **Database**: SQLite (for `app.db`)
