@@ -247,6 +247,7 @@
             <th>Producto</th>
             <th>Tienda</th>
             <th class="text-end">Cant.</th>
+            <th style="width:50px;"></th>
           </tr>
         </thead>
         <tbody>
@@ -259,10 +260,15 @@
                 <td>{{ prod.name }}</td>
                 <td>{{ st.name }}</td>
                 <td class="text-end">{{ "{:,}".format(p.quantity|int) }}</td>
+                <td class="text-center">
+                  <button class="explain-btn" onclick="showDistExplanation({{ prod.id }}, {{ st.id }}, {{ p.quantity }}, '{{ selected_run_id or '' }}')" title="¿Por qué?">
+                    <i class="bi bi-question-circle"></i>
+                  </button>
+                </td>
               </tr>
             {% endfor %}
           {% else %}
-            <tr><td colspan="4" class="dash-empty-cell">
+            <tr><td colspan="5" class="dash-empty-cell">
               <div class="dash-empty-wrap">
                 <i class="bi bi-inbox dash-empty-icon"></i>
                 <div class="dash-empty-title">Sin predicciones</div>
@@ -337,6 +343,29 @@
   </div>
 </div>
 
+<div class="modal fade" id="explainModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content explain-modal-content">
+      <div class="modal-header explain-modal-header">
+        <h5 class="modal-title"><i class="bi bi-lightbulb me-2"></i>¿Por qué esta sugerencia?</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body explain-modal-body">
+        <div class="explain-header">
+          <div class="explain-sku" id="explainSku"></div>
+          <div class="explain-product" id="explainProduct"></div>
+          <div class="explain-store" id="explainStore"></div>
+        </div>
+        <div class="explain-qty">
+          <span class="explain-qty-label">Cantidad sugerida:</span>
+          <span class="explain-qty-value" id="explainQty"></span>
+        </div>
+        <ul class="explain-bullets" id="explainBullets"></ul>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 function updateParam(param, value, resetPageParam) {
   const url = new URL(window.location.href);
@@ -344,5 +373,156 @@ function updateParam(param, value, resetPageParam) {
   if (resetPageParam && param !== resetPageParam) url.searchParams.set(resetPageParam, 1);
   window.location.href = url.toString();
 }
+
+let explainModal = null;
+document.addEventListener('DOMContentLoaded', function() {
+  const modalEl = document.getElementById('explainModal');
+  if (modalEl && typeof bootstrap !== 'undefined') {
+    explainModal = new bootstrap.Modal(modalEl);
+  }
+});
+
+async function showDistExplanation(productId, storeId, qty, runId) {
+  if (!explainModal) {
+    const modalEl = document.getElementById('explainModal');
+    if (modalEl && typeof bootstrap !== 'undefined') {
+      explainModal = new bootstrap.Modal(modalEl);
+    } else {
+      alert('Error: No se puede mostrar la explicación');
+      return;
+    }
+  }
+  
+  document.getElementById('explainSku').textContent = 'Cargando...';
+  document.getElementById('explainProduct').textContent = '';
+  document.getElementById('explainStore').textContent = '';
+  document.getElementById('explainQty').textContent = qty;
+  document.getElementById('explainBullets').innerHTML = '<li>Cargando explicación...</li>';
+  explainModal.show();
+  
+  try {
+    const params = new URLSearchParams({
+      product_id: productId,
+      store_id: storeId,
+      qty: qty,
+      run_id: runId || ''
+    });
+    const resp = await fetch('/api/explain/distribution?' + params);
+    const data = await resp.json();
+    
+    if (!resp.ok || data.error) {
+      document.getElementById('explainBullets').innerHTML = '<li>' + (data.error || 'Error al cargar explicación') + '</li>';
+      return;
+    }
+    
+    document.getElementById('explainSku').textContent = 'SKU: ' + (data.sku || 'N/A');
+    document.getElementById('explainProduct').textContent = data.product_name || 'Producto desconocido';
+    document.getElementById('explainStore').textContent = 'Tienda: ' + (data.store_name || 'N/A');
+    document.getElementById('explainQty').textContent = data.quantity || qty;
+    
+    const bullets = data.bullets || [];
+    const bulletsHtml = bullets.length > 0 
+      ? bullets.map(b => '<li>' + b + '</li>').join('')
+      : '<li>Sin información disponible</li>';
+    document.getElementById('explainBullets').innerHTML = bulletsHtml;
+  } catch (err) {
+    document.getElementById('explainBullets').innerHTML = '<li>Error al cargar explicación: ' + err.message + '</li>';
+  }
+}
 </script>
+
+<style>
+.explain-btn {
+  background: transparent;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+}
+.explain-btn:hover {
+  background: #f1f5f9;
+  color: #3b82f6;
+}
+.explain-modal-content {
+  border-radius: 16px;
+  border: none;
+  box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+}
+.explain-modal-header {
+  background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+  color: #fff;
+  border-radius: 16px 16px 0 0;
+  padding: 16px 20px;
+}
+.explain-modal-header .btn-close {
+  filter: brightness(0) invert(1);
+}
+.explain-modal-body {
+  padding: 20px;
+}
+.explain-header {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.explain-sku {
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 0.875rem;
+  color: #3b82f6;
+  font-weight: 600;
+}
+.explain-product {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #1e293b;
+  margin-top: 4px;
+}
+.explain-store {
+  font-size: 0.875rem;
+  color: #64748b;
+  margin-top: 4px;
+}
+.explain-qty {
+  background: #f0fdf4;
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.explain-qty-label {
+  font-size: 0.875rem;
+  color: #15803d;
+}
+.explain-qty-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #15803d;
+}
+.explain-bullets {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.explain-bullets li {
+  padding: 8px 0 8px 24px;
+  position: relative;
+  font-size: 0.875rem;
+  color: #334155;
+  border-bottom: 1px solid #f1f5f9;
+}
+.explain-bullets li:last-child {
+  border-bottom: none;
+}
+.explain-bullets li::before {
+  content: '•';
+  position: absolute;
+  left: 8px;
+  color: #3b82f6;
+  font-weight: bold;
+}
+</style>
 {% endblock %}

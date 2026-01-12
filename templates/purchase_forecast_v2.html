@@ -103,7 +103,7 @@
       <div class="forecast-kpi-badge"><i class="bi bi-cart-plus"></i></div>
       <div class="forecast-kpi-content">
         <div class="forecast-kpi-value" id="kpiSuggested">-</div>
-        <div class="forecast-kpi-label">Compra sugerida</div>
+        <div class="forecast-kpi-label">Compra sugerida <button class="forecast-explain-btn" id="btnWhyPurchase" title="¿Por qué?"><i class="bi bi-question-circle"></i></button></div>
         <div class="forecast-kpi-hint" id="purchaseHint">-</div>
       </div>
       <div class="forecast-kpi-deco"></div>
@@ -358,8 +358,163 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   });
 
+  const btnWhyPurchase = document.getElementById('btnWhyPurchase');
+  let fcExplainModal = null;
+  
+  btnWhyPurchase.addEventListener('click', showForecastExplanation);
+
+  async function showForecastExplanation() {
+    const sku = String(skuInput.value).trim();
+    if (!sku) {
+      alert('Selecciona un SKU primero');
+      return;
+    }
+
+    if (!fcExplainModal) {
+      const modalEl = document.getElementById('forecastExplainModal');
+      if (modalEl && typeof bootstrap !== 'undefined') {
+        fcExplainModal = new bootstrap.Modal(modalEl);
+      } else {
+        alert('Error: No se puede mostrar la explicación');
+        return;
+      }
+    }
+    
+    document.getElementById('fcExplainSku').textContent = 'Cargando...';
+    document.getElementById('fcExplainProduct').textContent = '';
+    document.getElementById('fcExplainBullets').innerHTML = '<li>Cargando explicación...</li>';
+    fcExplainModal.show();
+
+    try {
+      const params = new URLSearchParams({
+        sku: sku,
+        horizon_weeks: horizonSelect.value,
+        lead_time_weeks: leadTimeSelect.value,
+        safety_pct: safetySlider.value / 100,
+        store: storeSelect.value || ''
+      });
+      const resp = await fetch('/api/explain/forecast?' + params);
+      const data = await resp.json();
+
+      if (!resp.ok || data.error) {
+        document.getElementById('fcExplainBullets').innerHTML = '<li>' + (data.error || 'Error al cargar explicación') + '</li>';
+        return;
+      }
+
+      document.getElementById('fcExplainSku').textContent = 'SKU: ' + (data.sku || 'N/A');
+      document.getElementById('fcExplainProduct').textContent = data.product_name || 'Producto desconocido';
+      document.getElementById('fcExplainStore').textContent = 'Tienda: ' + (data.store || 'Todas');
+
+      const bullets = data.bullets || [];
+      const bulletsHtml = bullets.length > 0 
+        ? bullets.map(b => '<li>' + b + '</li>').join('')
+        : '<li>Sin información disponible</li>';
+      document.getElementById('fcExplainBullets').innerHTML = bulletsHtml;
+    } catch (err) {
+      document.getElementById('fcExplainBullets').innerHTML = '<li>Error al cargar explicación: ' + err.message + '</li>';
+    }
+  }
+
   showEmptyState();
 });
 </script>
+
+<div class="modal fade" id="forecastExplainModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content fc-explain-modal-content">
+      <div class="modal-header fc-explain-modal-header">
+        <h5 class="modal-title"><i class="bi bi-lightbulb me-2"></i>¿Por qué esta compra sugerida?</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body fc-explain-modal-body">
+        <div class="fc-explain-header">
+          <div class="fc-explain-sku" id="fcExplainSku"></div>
+          <div class="fc-explain-product" id="fcExplainProduct"></div>
+          <div class="fc-explain-store" id="fcExplainStore"></div>
+        </div>
+        <ul class="fc-explain-bullets" id="fcExplainBullets"></ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+.forecast-explain-btn {
+  background: transparent;
+  border: none;
+  color: #f59e0b;
+  cursor: pointer;
+  padding: 2px 6px;
+  margin-left: 4px;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+  font-size: 0.9rem;
+}
+.forecast-explain-btn:hover {
+  background: rgba(245, 158, 11, 0.15);
+  color: #d97706;
+}
+.fc-explain-modal-content {
+  border-radius: 16px;
+  border: none;
+  box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+}
+.fc-explain-modal-header {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  color: #fff;
+  border-radius: 16px 16px 0 0;
+  padding: 16px 20px;
+}
+.fc-explain-modal-header .btn-close {
+  filter: brightness(0) invert(1);
+}
+.fc-explain-modal-body {
+  padding: 20px;
+}
+.fc-explain-header {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.fc-explain-sku {
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 0.875rem;
+  color: #f59e0b;
+  font-weight: 600;
+}
+.fc-explain-product {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #1e293b;
+  margin-top: 4px;
+}
+.fc-explain-store {
+  font-size: 0.875rem;
+  color: #64748b;
+  margin-top: 4px;
+}
+.fc-explain-bullets {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.fc-explain-bullets li {
+  padding: 8px 0 8px 24px;
+  position: relative;
+  font-size: 0.875rem;
+  color: #334155;
+  border-bottom: 1px solid #f1f5f9;
+}
+.fc-explain-bullets li:last-child {
+  border-bottom: none;
+}
+.fc-explain-bullets li::before {
+  content: '•';
+  position: absolute;
+  left: 8px;
+  color: #f59e0b;
+  font-weight: bold;
+}
+</style>
 
 {% endblock %}

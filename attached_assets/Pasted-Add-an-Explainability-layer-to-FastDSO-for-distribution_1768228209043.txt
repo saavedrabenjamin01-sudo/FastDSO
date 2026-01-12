@@ -1,0 +1,75 @@
+Add an Explainability layer to FastDSO for distribution and forecast outputs. Use MIN_WOC and MAX_WOC consistently.
+
+Goal:
+For each suggested row, provide a human-readable explanation of WHY the system suggested that quantity, without changing the quantity itself.
+
+Scope:
+- Distribution suggestions (Prediction rows)
+- Forecast purchase results (Forecast V2 outputs)
+- Optional: redistribution suggestions (store-to-store) if available
+
+Definitions:
+- MIN_WOC / MAX_WOC are the coverage thresholds used in logic.
+- WOC = stock / max(avg_weekly_sales, 1)
+
+Requirements:
+
+1) Distribution (Prediction) explainability
+For each prediction row (SKU-store):
+Provide explanation bullets based on data already available:
+- Sales driver:
+  - avg_weekly_sales used (method: SMA3/SMA2/Last week)
+  - history window applied (e.g., last 3 weeks)
+- Stock driver:
+  - current store stock used
+  - store WOC estimated
+  - whether store was below MIN_WOC (risk)
+- Constraint driver:
+  - CD stock availability (snapshot date)
+  - whether the suggestion was capped/limited by CD stock
+- If stockout replenishment layer exists:
+  - explicitly state “Stockout replenishment applied” and why (store stock 0 + historical sales)
+
+Output format (example):
+"Suggested because:
+ • Store stock is 0 units (WOC below MIN_WOC)
+ • Avg weekly sales (last 3 weeks): 5
+ • Target coverage: 2.5 weeks
+ • CD stock available: 20 (snapshot 2026-01-07)
+ • Final assigned quantity after constraints: 8"
+
+2) Forecast (Purchase Forecast V2) explainability
+For each SKU:
+Explain using:
+- avg weekly demand
+- horizon_weeks
+- lead_time_weeks
+- safety_stock_pct
+- CD stock
+- suggested_purchase formula result
+Example:
+"Suggested purchase because:
+ • Avg weekly demand: 12
+ • Horizon: 8 weeks, Lead time: 4 weeks
+ • Safety stock: 10%
+ • Current CD stock: 30
+ • Required units: 144, Suggested purchase: 114"
+
+3) UI
+- Add a small “Why?” icon/button per row in tables:
+  - Distribution table rows
+  - Forecast table rows (mass result)
+- Clicking opens a Bootstrap modal showing the bullet explanation.
+- Do NOT clutter the table; keep it minimal.
+- Explanations are generated at runtime, no DB persistence needed.
+
+4) Safety / robustness
+- If any data is missing, explanation must say “Data not available” instead of crashing.
+- Preserve leading zeros in SKU display.
+- Do NOT change calculation outputs.
+
+Deliverables:
+- Helper functions to generate explanation text (distribution + forecast)
+- Template changes adding “Why?” buttons and modal
+- Minimal JS to populate modal content
+- Confirm no functional regressions.

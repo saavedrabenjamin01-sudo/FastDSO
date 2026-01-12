@@ -67,6 +67,13 @@ Do not make changes to the folder `Excel tipo/`.
     - KPI cards: High/Medium/Low counts, Quiebres, Sobrestock, Sin movimiento
     - Suggested actions: Reponer, Redistribuir, Revisar, Liquidar
     - Access via "Alertas" link under Operaciones (requires alerts:view permission)
+- **Explainability Layer**: Transparent explanation system for distribution and forecast suggestions:
+    - Distribution explanations: Shows SMA3 calculation, store stock adjustment, and suggested quantity derivation
+    - Forecast explanations: Details avg_last4, demand projection, lead time, safety stock, and purchase calculation
+    - API endpoints: `/api/explain/distribution`, `/api/explain/forecast`
+    - Dashboard integration: "Why?" button (?) on each prediction row with modal showing bullet-point explanation
+    - Forecast V2 integration: "Why?" button on purchase suggested KPI with detailed calculation breakdown
+    - Helper functions: `explain_distribution_suggestion()`, `explain_forecast_purchase()` for generating explanations
 
 ## External Dependencies
 - **Database**: SQLite (for `app.db`)

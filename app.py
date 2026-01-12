@@ -5334,6 +5334,296 @@ def export_store_health():
     )
 
 
+# ------------------ Explainability Module ------------------
+
+EXPLAINABILITY_PARAMS = {
+    'MIN_WOC': 1.5,
+    'MAX_WOC': 6.0
+}
+
+
+def explain_distribution(product_id, store_id, prediction_qty, run_id=None):
+    """
+    Generate human-readable explanation for a distribution suggestion.
+    Uses the same calculation logic as generate_predictions (SMA with optional stock adjustment).
+    Returns a list of bullet points explaining the suggestion.
+    """
+    try:
+        bullets = []
+        
+        product = Product.query.get(product_id)
+        store = Store.query.get(store_id)
+        
+        if not product or not store:
+            return ["Error: Producto o tienda no encontrados"]
+        
+        run_mode = "sma3_min3"
+        run_meta = None
+        use_stock = True
+        if run_id:
+            run_obj = Run.query.filter_by(run_id=run_id).first()
+            if run_obj:
+                run_mode = run_obj.mode or "sma3_min3"
+                run_meta = f"{run_obj.folio or ''} {run_obj.responsable or ''} {run_obj.categoria or ''}".strip()
+        
+        if "ignore_stock" in run_mode:
+            use_stock = False
+        
+        if run_mode.startswith("sma3"):
+            win = 3
+            if use_stock:
+                method_label = "Promedio móvil 3 semanas (SMA3) ajustado por stock"
+            else:
+                method_label = "Promedio móvil 3 semanas (SMA3) sin ajuste de stock"
+        elif run_mode.startswith("sma2"):
+            win = 2
+            if use_stock:
+                method_label = "Promedio móvil 2 semanas (SMA2) ajustado por stock"
+            else:
+                method_label = "Promedio móvil 2 semanas (SMA2) sin ajuste de stock"
+        else:
+            win = 1
+            if use_stock:
+                method_label = "Última semana ajustado por stock"
+            else:
+                method_label = "Última semana sin ajuste de stock"
+        
+        sales_q = (
+            db.session.query(
+                db.func.strftime('%Y-%W', DistributionRecord.event_date).label('week'),
+                db.func.sum(DistributionRecord.quantity).label('qty')
+            )
+            .filter(
+                DistributionRecord.product_id == product_id,
+                DistributionRecord.store_id == store_id
+            )
+            .group_by(db.func.strftime('%Y-%W', DistributionRecord.event_date))
+            .order_by(db.func.strftime('%Y-%W', DistributionRecord.event_date).desc())
+            .limit(win)
+            .all()
+        )
+        
+        weekly_totals = [int(r.qty) for r in sales_q]
+        total_weeks = len(weekly_totals)
+        total_sales = sum(weekly_totals) if weekly_totals else 0
+        sma_value = round(total_sales / max(total_weeks, 1), 1)
+        
+        store_stock = 0
+        stock_date = "N/A"
+        if use_stock:
+            latest_stock = (
+                StockSnapshot.query
+                .filter(
+                    StockSnapshot.product_id == product_id,
+                    StockSnapshot.store_id == store_id
+                )
+                .order_by(StockSnapshot.as_of_date.desc())
+                .first()
+            )
+            store_stock = latest_stock.quantity if latest_stock else 0
+            stock_date = latest_stock.as_of_date if latest_stock else "N/A"
+        
+        latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar()
+        cd_stock = 0
+        if latest_cd_date:
+            cd_row = StockCD.query.filter(
+                StockCD.product_id == product_id,
+                StockCD.as_of_date == latest_cd_date
+            ).first()
+            cd_stock = cd_row.quantity if cd_row else 0
+        
+        if use_stock:
+            raw_suggested = max(int(round(sma_value)) - store_stock, 0)
+        else:
+            raw_suggested = int(round(sma_value))
+        
+        bullets.append(f"Método: {method_label}")
+        if run_meta:
+            bullets.append(f"Run: {run_meta}")
+        
+        if total_weeks > 0:
+            weeks_str = ", ".join([str(w) for w in weekly_totals])
+            bullets.append(f"Ventas últimas {total_weeks} semanas: [{weeks_str}]")
+            bullets.append(f"Promedio semanal (SMA{win}): {sma_value} unidades")
+        else:
+            bullets.append("Sin historial de ventas reciente")
+        
+        if use_stock:
+            bullets.append(f"Stock tienda actual: {store_stock} unidades (fecha: {stock_date})")
+            bullets.append(f"Cálculo: SMA{win} ({sma_value}) - Stock tienda ({store_stock}) = {raw_suggested}")
+        else:
+            bullets.append("Ajuste de stock: desactivado para este run")
+            bullets.append(f"Cálculo: SMA{win} ({sma_value}) = {raw_suggested}")
+        
+        bullets.append(f"Stock CD disponible: {cd_stock} unidades")
+        
+        if cd_stock > 0:
+            if prediction_qty < raw_suggested:
+                bullets.append(f"Limitado por disponibilidad CD: {prediction_qty} de {raw_suggested} unidades asignadas")
+            elif prediction_qty == 0 and raw_suggested > 0:
+                bullets.append("Sin stock disponible en CD para cubrir sugerencia")
+        elif cd_stock == 0 and raw_suggested > 0:
+            bullets.append("Sin stock en CD - no se puede enviar mercancía")
+        
+        bullets.append(f"Cantidad final sugerida: {prediction_qty} unidades")
+        
+        return bullets
+    except Exception as e:
+        return [f"Error generando explicación: {str(e)}"]
+
+
+def explain_forecast(sku, horizon_weeks=8, lead_time_weeks=4, safety_pct=0.1, store_filter=None):
+    """
+    Generate human-readable explanation for a forecast purchase suggestion.
+    Uses the same calculation logic as Forecast V2 page (avg_last4 weeks).
+    Returns a list of bullet points explaining the suggestion.
+    """
+    try:
+        today = date.today()
+        bullets = []
+        
+        product = Product.query.filter_by(sku=sku).first()
+        if not product:
+            return ["Error: SKU no encontrado"]
+        
+        week_expr = db.func.strftime('%Y-%W', DistributionRecord.event_date)
+        
+        weekly_q = (
+            db.session.query(
+                week_expr.label('week'),
+                db.func.sum(DistributionRecord.quantity).label('qty')
+            )
+            .filter(DistributionRecord.product_id == product.id)
+        )
+        
+        store_name = store_filter
+        if store_filter:
+            store = Store.query.filter_by(name=store_filter).first()
+            if store:
+                weekly_q = weekly_q.filter(DistributionRecord.store_id == store.id)
+        
+        weekly_q = (
+            weekly_q
+            .group_by(week_expr)
+            .order_by(week_expr.desc())
+            .limit(4)
+            .all()
+        )
+        
+        weekly_values = [int(r.qty) for r in weekly_q]
+        num_weeks = len(weekly_values)
+        total_last4 = sum(weekly_values) if weekly_values else 0
+        avg_last4 = round(total_last4 / max(num_weeks, 1), 1)
+        
+        latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar() or today
+        cd_stock = db.session.query(
+            db.func.coalesce(db.func.sum(StockCD.quantity), 0)
+        ).filter(
+            StockCD.product_id == product.id,
+            StockCD.as_of_date == latest_cd_date
+        ).scalar() or 0
+        
+        forecast_total = avg_last4 * horizon_weeks
+        demand_lead_time = avg_last4 * lead_time_weeks
+        safety_units = int(round(avg_last4 * lead_time_weeks * safety_pct))
+        
+        total_required = forecast_total + demand_lead_time + safety_units
+        suggested_purchase = max(0, int(round(total_required - cd_stock)))
+        
+        woc_cd = round(cd_stock / max(avg_last4, 0.01), 1) if avg_last4 > 0 else 0
+        
+        bullets.append(f"SKU: {sku}")
+        if store_name:
+            bullets.append(f"Tienda: {store_name}")
+        else:
+            bullets.append("Todas las tiendas")
+        
+        if num_weeks > 0:
+            weeks_str = ", ".join([str(w) for w in weekly_values])
+            bullets.append(f"Ventas últimas {num_weeks} semanas: [{weeks_str}]")
+        else:
+            bullets.append("Sin historial de ventas reciente")
+        
+        bullets.append(f"Promedio semanal (últimas 4 sem): {avg_last4} unidades")
+        bullets.append(f"Horizonte de cobertura: {horizon_weeks} semanas")
+        bullets.append(f"Forecast horizonte: {avg_last4} × {horizon_weeks} = {int(forecast_total)} unidades")
+        
+        bullets.append(f"Lead time: {lead_time_weeks} semanas")
+        bullets.append(f"Demanda lead time: {avg_last4} × {lead_time_weeks} = {int(demand_lead_time)} unidades")
+        
+        bullets.append(f"Stock de seguridad: {int(safety_pct * 100)}%")
+        bullets.append(f"Unidades de seguridad: {safety_units} unidades")
+        
+        bullets.append(f"Stock CD actual: {cd_stock} unidades")
+        bullets.append(f"Cobertura CD: {woc_cd} semanas")
+        
+        bullets.append(f"Requerimiento total: {int(total_required)} unidades")
+        bullets.append(f"Cálculo compra: {int(total_required)} - {cd_stock} = {suggested_purchase}")
+        bullets.append(f"Compra sugerida: {suggested_purchase} unidades")
+        
+        return bullets
+    except Exception as e:
+        return [f"Error generando explicación: {str(e)}"]
+
+
+@app.route('/api/explain/distribution')
+@login_required
+def api_explain_distribution():
+    """API endpoint for distribution explainability."""
+    product_id = request.args.get('product_id', type=int)
+    store_id = request.args.get('store_id', type=int)
+    qty = request.args.get('qty', 0, type=int)
+    run_id = request.args.get('run_id', '')
+    
+    if not product_id or not store_id:
+        return jsonify({'error': 'Se requiere product_id y store_id', 'bullets': []}), 400
+    
+    product = Product.query.get(product_id)
+    store = Store.query.get(store_id)
+    
+    if not product:
+        return jsonify({'error': 'Producto no encontrado', 'bullets': []}), 404
+    if not store:
+        return jsonify({'error': 'Tienda no encontrada', 'bullets': []}), 404
+    
+    bullets = explain_distribution(product_id, store_id, qty, run_id)
+    
+    return jsonify({
+        'sku': product.sku,
+        'product_name': product.name,
+        'store_name': store.name,
+        'quantity': qty,
+        'bullets': bullets
+    })
+
+
+@app.route('/api/explain/forecast')
+@login_required
+def api_explain_forecast():
+    """API endpoint for forecast explainability."""
+    sku = request.args.get('sku', '').strip()
+    horizon_weeks = request.args.get('horizon_weeks', 8, type=int)
+    lead_time_weeks = request.args.get('lead_time_weeks', 4, type=float)
+    safety_pct = request.args.get('safety_pct', 0.1, type=float)
+    store_filter = request.args.get('store', '').strip() or None
+    
+    if not sku:
+        return jsonify({'error': 'Se requiere SKU', 'bullets': []}), 400
+    
+    product = Product.query.filter_by(sku=sku).first()
+    if not product:
+        return jsonify({'error': 'SKU no encontrado', 'bullets': []}), 404
+    
+    bullets = explain_forecast(sku, horizon_weeks, lead_time_weeks, safety_pct, store_filter)
+    
+    return jsonify({
+        'sku': sku,
+        'product_name': product.name,
+        'store': store_filter or 'Todas',
+        'bullets': bullets
+    })
+
+
 # ------------------ Alerts Module ------------------
 
 ALERT_PARAMS = {
