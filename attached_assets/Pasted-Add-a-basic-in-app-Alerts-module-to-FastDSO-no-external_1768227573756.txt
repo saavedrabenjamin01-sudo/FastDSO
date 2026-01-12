@@ -1,0 +1,64 @@
+Add a basic in-app Alerts module to FastDSO (no external notifications). Use MAX_WOC and MIN_WOC consistently.
+
+Goal:
+Provide proactive alerts based on stock + sales velocity, without modifying any stock quantities or forecasts. This is read-only, computed dynamically.
+
+Definitions:
+- WOC (Weeks of Coverage) = stock / max(avg_weekly_sales, 1)
+- MIN_WOC = minimum desired coverage (risk threshold)
+- MAX_WOC = maximum tolerated coverage (overstock threshold)
+
+Alert types (V01):
+1) PROJECTED STOCKOUT (Store-level)
+- Trigger if WOC_store < MIN_WOC and store has sales history.
+- Severity:
+  High: WOC < 0.5
+  Medium: 0.5 <= WOC < MIN_WOC
+  Low: MIN_WOC <= WOC < MIN_WOC + 0.5 (optional)
+
+2) OVERSTOCK (Store-level and/or CD-level)
+- Trigger if WOC_store > MAX_WOC (store) or WOC_global > MAX_WOC (global).
+- Severity:
+  High: WOC > MAX_WOC * 2
+  Medium: WOC > MAX_WOC
+  Low: WOC within 10% above MAX_WOC (optional)
+
+3) SILENT SKU (Dead / no movement)
+- Trigger if stock > 0 and days_since_last_sale >= DEAD_DAYS threshold:
+  - Store-level: DEAD_DAYS_STORE default 60
+  - CD-level: DEAD_DAYS_GLOBAL default 90
+- Severity based on days since last sale.
+
+Data sources:
+- DistributionRecord (sales history by sku-store-date)
+- StockSnapshot (store stock)
+- StockCD (CD stock)
+- Product, Store
+- Lifecycle tables if present (last_sale_date_store/global). If missing, compute last sale date from DistributionRecord.
+
+UI:
+- Add a new page: /alerts
+- Also add an Alerts panel on Dashboard (top section) showing top 10 alerts (highest severity first).
+- Each alert row must include:
+  - Severity badge (High/Medium/Low)
+  - SKU + product name
+  - Location (Store name or CD)
+  - Reason (short)
+  - Suggested action (short): e.g. “Replenish”, “Redistribute”, “Review purchase”, “Liquidate”
+- Include filters on /alerts:
+  - type, severity, store, sku contains
+- Keep it consistent with Dashboard tables (zebra, hover, sticky header).
+
+No schema changes required:
+- Alerts should be computed on the fly.
+- Do NOT store alerts permanently.
+
+Safety:
+- Do NOT change any inventory.
+- Do NOT require background jobs.
+
+Deliverables:
+- Alert generation function(s)
+- /alerts route + template
+- Dashboard integration panel (read-only)
+- Ensure no backend regressions and preserve SKU leading zeros.

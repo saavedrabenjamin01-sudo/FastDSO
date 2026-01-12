@@ -26,23 +26,23 @@ ROLE_PERMISSIONS = {
         'dashboard:view', 'sales:upload', 'stock_store:upload', 'stock_cd:upload',
         'stock:query', 'distribution:generate', 'distribution:export',
         'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'admin:users', 'admin:reset', 'audit:view',
-        'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view'
+        'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view'
     ],
     'Management': [
         'dashboard:view', 'stock:query', 'distribution:export',
-        'forecast_v2:view', 'runs:view', 'audit:view', 'rebalancing:view', 'slow_stock:view', 'store_health:view'
+        'forecast_v2:view', 'runs:view', 'audit:view', 'rebalancing:view', 'slow_stock:view', 'store_health:view', 'alerts:view'
     ],
     'CategoryManager': [
         'dashboard:view', 'sales:upload', 'distribution:generate', 'distribution:export',
         'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'rebalancing:view', 'rebalancing:run',
-        'slow_stock:view', 'slow_stock:run', 'store_health:view'
+        'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view'
     ],
     'WarehouseOps': [
         'dashboard:view', 'stock_store:upload', 'stock_cd:upload', 'stock:query',
-        'distribution:export', 'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view'
+        'distribution:export', 'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view'
     ],
     'Viewer': [
-        'dashboard:view', 'stock:query'
+        'dashboard:view', 'stock:query', 'alerts:view'
     ]
 }
 MIN_WEEKS = 3  # mínimo de semanas de historia requeridas por SKU–Tienda
@@ -1506,6 +1506,15 @@ def dashboard():
 
     # --- Lista de tiendas para el select ---
     stores = Store.query.order_by(Store.name.asc()).all()
+    
+    # --- Top 10 alerts for dashboard panel ---
+    try:
+        all_alerts = compute_alerts()
+        top_alerts = all_alerts[:10]
+        alerts_count_high = sum(1 for a in all_alerts if a['severity'] == 'HIGH')
+    except Exception:
+        top_alerts = []
+        alerts_count_high = 0
 
     return render_template(
         "dashboard.html",
@@ -1541,6 +1550,10 @@ def dashboard():
             for sim_type in ['distribution', 'rebalancing', 'forecast']
             if get_simulation_results(sim_type)
         },
+
+        # Alerts panel
+        top_alerts=top_alerts,
+        alerts_count_high=alerts_count_high,
 
         # (opcional) por si después quieres mostrar “corrida actual”
         runs=runs,
@@ -5318,6 +5331,313 @@ def export_store_health():
         as_attachment=True,
         download_name=f'indice_salud_tiendas_{date.today().isoformat()}.xlsx',
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+
+
+# ------------------ Alerts Module ------------------
+
+ALERT_PARAMS = {
+    'MIN_WOC': 1.5,
+    'MAX_WOC': 6.0,
+    'DEAD_DAYS_STORE': 60,
+    'DEAD_DAYS_GLOBAL': 90,
+    'RECENT_WINDOW_WEEKS': 4
+}
+
+
+def compute_alerts(params=None):
+    """
+    Compute dynamic alerts for stock and sales velocity.
+    Returns list of alert dicts sorted by severity (HIGH > MEDIUM > LOW).
+    """
+    if params is None:
+        params = ALERT_PARAMS.copy()
+    
+    today = date.today()
+    alerts = []
+    severity_order = {'HIGH': 0, 'MEDIUM': 1, 'LOW': 2}
+    
+    latest_store_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
+    latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar()
+    
+    if not latest_store_date:
+        return alerts
+    
+    products = {p.id: p for p in Product.query.all()}
+    stores = {s.id: s for s in Store.query.all()}
+    
+    store_stock = {}
+    for ss in StockSnapshot.query.filter(StockSnapshot.as_of_date == latest_store_date).all():
+        store_stock[(ss.product_id, ss.store_id)] = ss.quantity
+    
+    cd_stock = {}
+    if latest_cd_date:
+        for cd in StockCD.query.filter(StockCD.as_of_date == latest_cd_date).all():
+            cd_stock[cd.product_id] = cd.quantity
+    
+    recent_window = params.get('RECENT_WINDOW_WEEKS', 4)
+    cutoff_date = today - timedelta(weeks=recent_window)
+    
+    sales_query = db.session.query(
+        DistributionRecord.product_id,
+        DistributionRecord.store_id,
+        db.func.sum(DistributionRecord.quantity).label('total_qty')
+    ).filter(
+        DistributionRecord.event_date >= cutoff_date
+    ).group_by(
+        DistributionRecord.product_id,
+        DistributionRecord.store_id
+    ).all()
+    
+    sales_rate = {}
+    for row in sales_query:
+        weekly_rate = row.total_qty / recent_window if recent_window > 0 else 0
+        sales_rate[(row.product_id, row.store_id)] = weekly_rate
+    
+    last_sale_query = db.session.query(
+        DistributionRecord.product_id,
+        DistributionRecord.store_id,
+        db.func.max(DistributionRecord.event_date).label('last_date')
+    ).group_by(
+        DistributionRecord.product_id,
+        DistributionRecord.store_id
+    ).all()
+    
+    last_sale_store = {}
+    last_sale_global = {}
+    for row in last_sale_query:
+        last_sale_store[(row.product_id, row.store_id)] = row.last_date
+        if row.product_id not in last_sale_global or row.last_date > last_sale_global[row.product_id]:
+            last_sale_global[row.product_id] = row.last_date
+    
+    min_woc = params.get('MIN_WOC', 1.5)
+    max_woc = params.get('MAX_WOC', 6.0)
+    dead_days_store = params.get('DEAD_DAYS_STORE', 60)
+    dead_days_global = params.get('DEAD_DAYS_GLOBAL', 90)
+    
+    for (pid, sid), qty in store_stock.items():
+        if qty <= 0:
+            continue
+        
+        product = products.get(pid)
+        store = stores.get(sid)
+        if not product or not store:
+            continue
+        
+        rate = sales_rate.get((pid, sid), 0)
+        woc = qty / rate if rate > 0 else 9999
+        last_sale = last_sale_store.get((pid, sid))
+        days_since = (today - last_sale).days if last_sale else 9999
+        
+        if rate > 0:
+            if woc < 0.5:
+                alerts.append({
+                    'type': 'PROJECTED_STOCKOUT',
+                    'severity': 'HIGH',
+                    'sku': product.sku,
+                    'product_name': product.name,
+                    'location': store.name,
+                    'location_type': 'store',
+                    'woc': round(woc, 1),
+                    'stock': qty,
+                    'rate': round(rate, 2),
+                    'reason': f'WOC {round(woc, 1)} sem < 0.5',
+                    'action': 'Reponer urgente'
+                })
+            elif woc < min_woc:
+                alerts.append({
+                    'type': 'PROJECTED_STOCKOUT',
+                    'severity': 'MEDIUM',
+                    'sku': product.sku,
+                    'product_name': product.name,
+                    'location': store.name,
+                    'location_type': 'store',
+                    'woc': round(woc, 1),
+                    'stock': qty,
+                    'rate': round(rate, 2),
+                    'reason': f'WOC {round(woc, 1)} sem < {min_woc}',
+                    'action': 'Reponer'
+                })
+        
+        if rate > 0:
+            if woc > max_woc * 2:
+                alerts.append({
+                    'type': 'OVERSTOCK',
+                    'severity': 'HIGH',
+                    'sku': product.sku,
+                    'product_name': product.name,
+                    'location': store.name,
+                    'location_type': 'store',
+                    'woc': round(woc, 1) if woc < 9999 else None,
+                    'stock': qty,
+                    'rate': round(rate, 2),
+                    'reason': f'WOC {round(woc, 1)} sem > {max_woc * 2}',
+                    'action': 'Redistribuir'
+                })
+            elif woc > max_woc:
+                alerts.append({
+                    'type': 'OVERSTOCK',
+                    'severity': 'MEDIUM',
+                    'sku': product.sku,
+                    'product_name': product.name,
+                    'location': store.name,
+                    'location_type': 'store',
+                    'woc': round(woc, 1) if woc < 9999 else None,
+                    'stock': qty,
+                    'rate': round(rate, 2),
+                    'reason': f'WOC {round(woc, 1)} sem > {max_woc}',
+                    'action': 'Revisar inventario'
+                })
+        
+        if days_since >= dead_days_store:
+            if days_since >= dead_days_store * 2:
+                severity = 'HIGH'
+            elif days_since >= dead_days_store * 1.5:
+                severity = 'MEDIUM'
+            else:
+                severity = 'LOW'
+            alerts.append({
+                'type': 'SILENT_SKU',
+                'severity': severity,
+                'sku': product.sku,
+                'product_name': product.name,
+                'location': store.name,
+                'location_type': 'store',
+                'woc': round(woc, 1) if woc < 9999 else None,
+                'stock': qty,
+                'rate': round(rate, 2),
+                'days_since_sale': days_since if days_since < 9999 else None,
+                'reason': f'{days_since} días sin venta' if days_since < 9999 else 'Sin ventas registradas',
+                'action': 'Liquidar' if severity == 'HIGH' else 'Revisar'
+            })
+    
+    for pid, qty in cd_stock.items():
+        if qty <= 0:
+            continue
+        
+        product = products.get(pid)
+        if not product:
+            continue
+        
+        global_rate = sum(sales_rate.get((pid, sid), 0) for sid in stores.keys())
+        woc_cd = qty / global_rate if global_rate > 0 else 9999
+        last_sale = last_sale_global.get(pid)
+        days_since = (today - last_sale).days if last_sale else 9999
+        
+        if global_rate > 0 and woc_cd < 9999:
+            if woc_cd > max_woc * 2:
+                alerts.append({
+                    'type': 'OVERSTOCK',
+                    'severity': 'HIGH',
+                    'sku': product.sku,
+                    'product_name': product.name,
+                    'location': 'Centro Distribución',
+                    'location_type': 'cd',
+                    'woc': round(woc_cd, 1),
+                    'stock': qty,
+                    'rate': round(global_rate, 2),
+                    'reason': f'WOC CD {round(woc_cd, 1)} sem > {max_woc * 2}',
+                    'action': 'Revisar compra'
+                })
+            elif woc_cd > max_woc:
+                alerts.append({
+                    'type': 'OVERSTOCK',
+                    'severity': 'MEDIUM',
+                    'sku': product.sku,
+                    'product_name': product.name,
+                    'location': 'Centro Distribución',
+                    'location_type': 'cd',
+                    'woc': round(woc_cd, 1),
+                    'stock': qty,
+                    'rate': round(global_rate, 2),
+                    'reason': f'WOC CD {round(woc_cd, 1)} sem > {max_woc}',
+                    'action': 'Revisar compra'
+                })
+        
+        if days_since >= dead_days_global:
+            if days_since >= dead_days_global * 2:
+                severity = 'HIGH'
+            elif days_since >= dead_days_global * 1.5:
+                severity = 'MEDIUM'
+            else:
+                severity = 'LOW'
+            alerts.append({
+                'type': 'SILENT_SKU',
+                'severity': severity,
+                'sku': product.sku,
+                'product_name': product.name,
+                'location': 'Centro Distribución',
+                'location_type': 'cd',
+                'woc': round(woc_cd, 1) if woc_cd < 9999 else None,
+                'stock': qty,
+                'rate': round(global_rate, 2),
+                'days_since_sale': days_since if days_since < 9999 else None,
+                'reason': f'{days_since} días sin venta global' if days_since < 9999 else 'Sin ventas registradas',
+                'action': 'Liquidar' if severity == 'HIGH' else 'Revisar'
+            })
+    
+    alerts.sort(key=lambda x: (severity_order.get(x['severity'], 99), x['sku']))
+    
+    return alerts
+
+
+@app.route('/alerts')
+@login_required
+@require_permission('alerts:view')
+def alerts_page():
+    """Alerts module - dynamic alerts based on stock and sales velocity."""
+    type_filter = request.args.get('type', '').strip()
+    severity_filter = request.args.get('severity', '').strip()
+    store_filter = request.args.get('store', '').strip()
+    sku_filter = request.args.get('sku', '').strip().lower()
+    
+    page = request.args.get('page', 1, type=int)
+    per_page = 20
+    
+    stores = Store.query.order_by(Store.name).all()
+    
+    all_alerts = compute_alerts()
+    
+    if type_filter:
+        all_alerts = [a for a in all_alerts if a['type'] == type_filter]
+    if severity_filter:
+        all_alerts = [a for a in all_alerts if a['severity'] == severity_filter]
+    if store_filter:
+        all_alerts = [a for a in all_alerts if a['location'] == store_filter]
+    if sku_filter:
+        all_alerts = [a for a in all_alerts if sku_filter in a['sku'].lower() or sku_filter in a['product_name'].lower()]
+    
+    total = len(all_alerts)
+    start = (page - 1) * per_page
+    end = start + per_page
+    alerts = all_alerts[start:end]
+    
+    total_pages = (total + per_page - 1) // per_page if total > 0 else 1
+    
+    kpi_high = sum(1 for a in all_alerts if a['severity'] == 'HIGH')
+    kpi_medium = sum(1 for a in all_alerts if a['severity'] == 'MEDIUM')
+    kpi_low = sum(1 for a in all_alerts if a['severity'] == 'LOW')
+    kpi_stockout = sum(1 for a in all_alerts if a['type'] == 'PROJECTED_STOCKOUT')
+    kpi_overstock = sum(1 for a in all_alerts if a['type'] == 'OVERSTOCK')
+    kpi_silent = sum(1 for a in all_alerts if a['type'] == 'SILENT_SKU')
+    
+    return render_template(
+        'alerts.html',
+        alerts=alerts,
+        stores=stores,
+        type_filter=type_filter,
+        severity_filter=severity_filter,
+        store_filter=store_filter,
+        sku_filter=sku_filter,
+        page=page,
+        total_pages=total_pages,
+        total=total,
+        kpi_high=kpi_high,
+        kpi_medium=kpi_medium,
+        kpi_low=kpi_low,
+        kpi_stockout=kpi_stockout,
+        kpi_overstock=kpi_overstock,
+        kpi_silent=kpi_silent
     )
 
 

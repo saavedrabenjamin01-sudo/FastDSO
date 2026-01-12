@@ -1,0 +1,431 @@
+{% extends 'base.html' %}
+{% block title %}Alertas - FastDSO{% endblock %}
+{% block content %}
+
+<div class="alerts-page">
+  <div class="alerts-header">
+    <h2 class="alerts-title"><i class="bi bi-bell me-2"></i>Centro de Alertas</h2>
+    <p class="alerts-subtitle">Alertas proactivas basadas en stock y velocidad de venta</p>
+  </div>
+
+  <div class="alerts-kpis">
+    <div class="alerts-kpi alerts-kpi-high">
+      <div class="alerts-kpi-icon"><i class="bi bi-exclamation-triangle-fill"></i></div>
+      <div class="alerts-kpi-body">
+        <div class="alerts-kpi-number">{{ kpi_high }}</div>
+        <div class="alerts-kpi-label">Alta</div>
+      </div>
+    </div>
+    <div class="alerts-kpi alerts-kpi-medium">
+      <div class="alerts-kpi-icon"><i class="bi bi-exclamation-circle-fill"></i></div>
+      <div class="alerts-kpi-body">
+        <div class="alerts-kpi-number">{{ kpi_medium }}</div>
+        <div class="alerts-kpi-label">Media</div>
+      </div>
+    </div>
+    <div class="alerts-kpi alerts-kpi-low">
+      <div class="alerts-kpi-icon"><i class="bi bi-info-circle-fill"></i></div>
+      <div class="alerts-kpi-body">
+        <div class="alerts-kpi-number">{{ kpi_low }}</div>
+        <div class="alerts-kpi-label">Baja</div>
+      </div>
+    </div>
+    <div class="alerts-kpi alerts-kpi-stockout">
+      <div class="alerts-kpi-icon"><i class="bi bi-box"></i></div>
+      <div class="alerts-kpi-body">
+        <div class="alerts-kpi-number">{{ kpi_stockout }}</div>
+        <div class="alerts-kpi-label">Quiebres</div>
+      </div>
+    </div>
+    <div class="alerts-kpi alerts-kpi-overstock">
+      <div class="alerts-kpi-icon"><i class="bi bi-boxes"></i></div>
+      <div class="alerts-kpi-body">
+        <div class="alerts-kpi-number">{{ kpi_overstock }}</div>
+        <div class="alerts-kpi-label">Sobrestock</div>
+      </div>
+    </div>
+    <div class="alerts-kpi alerts-kpi-silent">
+      <div class="alerts-kpi-icon"><i class="bi bi-moon-stars"></i></div>
+      <div class="alerts-kpi-body">
+        <div class="alerts-kpi-number">{{ kpi_silent }}</div>
+        <div class="alerts-kpi-label">Sin movimiento</div>
+      </div>
+    </div>
+  </div>
+
+  <form class="alerts-filters" method="get" action="{{ url_for('alerts_page') }}">
+    <div class="alerts-filter">
+      <label class="alerts-label">Tipo</label>
+      <select class="form-select form-select-sm" name="type">
+        <option value="">Todos</option>
+        <option value="PROJECTED_STOCKOUT" {% if type_filter == 'PROJECTED_STOCKOUT' %}selected{% endif %}>Quiebre proyectado</option>
+        <option value="OVERSTOCK" {% if type_filter == 'OVERSTOCK' %}selected{% endif %}>Sobrestock</option>
+        <option value="SILENT_SKU" {% if type_filter == 'SILENT_SKU' %}selected{% endif %}>Sin movimiento</option>
+      </select>
+    </div>
+    <div class="alerts-filter">
+      <label class="alerts-label">Severidad</label>
+      <select class="form-select form-select-sm" name="severity">
+        <option value="">Todas</option>
+        <option value="HIGH" {% if severity_filter == 'HIGH' %}selected{% endif %}>Alta</option>
+        <option value="MEDIUM" {% if severity_filter == 'MEDIUM' %}selected{% endif %}>Media</option>
+        <option value="LOW" {% if severity_filter == 'LOW' %}selected{% endif %}>Baja</option>
+      </select>
+    </div>
+    <div class="alerts-filter">
+      <label class="alerts-label">Tienda</label>
+      <select class="form-select form-select-sm" name="store">
+        <option value="">Todas</option>
+        {% for s in stores %}
+        <option value="{{ s.name }}" {% if store_filter == s.name %}selected{% endif %}>{{ s.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="alerts-filter">
+      <label class="alerts-label">SKU contiene</label>
+      <input type="text" class="form-control form-control-sm" name="sku" value="{{ sku_filter or '' }}" placeholder="Buscar SKU...">
+    </div>
+    <div class="alerts-actions">
+      <button type="submit" class="btn btn-primary btn-sm">Filtrar</button>
+      <a href="{{ url_for('alerts_page') }}" class="btn btn-outline-secondary btn-sm">Limpiar</a>
+    </div>
+  </form>
+
+  <div class="alerts-panel">
+    <div class="alerts-panel-header">
+      <span class="alerts-panel-title">Alertas ({{ total }})</span>
+    </div>
+    <div class="alerts-table-wrap">
+      <table class="table table-sm mb-0 alerts-table">
+        <thead>
+          <tr>
+            <th style="width:80px;">Severidad</th>
+            <th style="width:120px;">Tipo</th>
+            <th>SKU</th>
+            <th>Producto</th>
+            <th>Ubicación</th>
+            <th>Razón</th>
+            <th>Acción</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if alerts and alerts|length > 0 %}
+            {% for alert in alerts %}
+            <tr>
+              <td>
+                {% if alert.severity == 'HIGH' %}
+                <span class="alerts-badge alerts-badge-high">Alta</span>
+                {% elif alert.severity == 'MEDIUM' %}
+                <span class="alerts-badge alerts-badge-medium">Media</span>
+                {% else %}
+                <span class="alerts-badge alerts-badge-low">Baja</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if alert.type == 'PROJECTED_STOCKOUT' %}
+                <span class="alerts-type-badge alerts-type-stockout"><i class="bi bi-box me-1"></i>Quiebre</span>
+                {% elif alert.type == 'OVERSTOCK' %}
+                <span class="alerts-type-badge alerts-type-overstock"><i class="bi bi-boxes me-1"></i>Sobrestock</span>
+                {% else %}
+                <span class="alerts-type-badge alerts-type-silent"><i class="bi bi-moon-stars me-1"></i>Silencioso</span>
+                {% endif %}
+              </td>
+              <td class="alerts-mono">{{ alert.sku }}</td>
+              <td>{{ alert.product_name }}</td>
+              <td>
+                {% if alert.location_type == 'cd' %}
+                <span class="alerts-loc-badge alerts-loc-cd"><i class="bi bi-box-seam me-1"></i>{{ alert.location }}</span>
+                {% else %}
+                <span class="alerts-loc-badge alerts-loc-store"><i class="bi bi-shop me-1"></i>{{ alert.location }}</span>
+                {% endif %}
+              </td>
+              <td>{{ alert.reason }}</td>
+              <td><span class="alerts-action">{{ alert.action }}</span></td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="7" class="alerts-empty">
+                <div class="alerts-empty-wrap">
+                  <i class="bi bi-check-circle alerts-empty-icon"></i>
+                  <div class="alerts-empty-title">Sin alertas</div>
+                  <div class="alerts-empty-hint">No hay alertas que coincidan con los filtros seleccionados</div>
+                </div>
+              </td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if total_pages > 1 %}
+    <div class="alerts-pagination">
+      <nav>
+        <ul class="pagination pagination-sm mb-0">
+          <li class="page-item {% if page <= 1 %}disabled{% endif %}">
+            <a class="page-link" href="{{ url_for('alerts_page', type=type_filter, severity=severity_filter, store=store_filter, sku=sku_filter, page=page-1) }}">Ant</a>
+          </li>
+          {% for p in range(1, total_pages + 1) %}
+            {% if p <= 3 or p > total_pages - 3 or (p >= page - 1 and p <= page + 1) %}
+            <li class="page-item {% if p == page %}active{% endif %}">
+              <a class="page-link" href="{{ url_for('alerts_page', type=type_filter, severity=severity_filter, store=store_filter, sku=sku_filter, page=p) }}">{{ p }}</a>
+            </li>
+            {% elif p == 4 or p == total_pages - 3 %}
+            <li class="page-item disabled"><span class="page-link">...</span></li>
+            {% endif %}
+          {% endfor %}
+          <li class="page-item {% if page >= total_pages %}disabled{% endif %}">
+            <a class="page-link" href="{{ url_for('alerts_page', type=type_filter, severity=severity_filter, store=store_filter, sku=sku_filter, page=page+1) }}">Sig</a>
+          </li>
+        </ul>
+      </nav>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<style>
+.alerts-page {
+  padding: 24px;
+  background: #f5f7fb;
+  min-height: 100vh;
+}
+.alerts-header {
+  margin-bottom: 24px;
+}
+.alerts-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #1e293b;
+  margin: 0 0 4px 0;
+}
+.alerts-subtitle {
+  font-size: 0.875rem;
+  color: #64748b;
+  margin: 0;
+}
+.alerts-kpis {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+@media (max-width: 1200px) {
+  .alerts-kpis { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 768px) {
+  .alerts-kpis { grid-template-columns: repeat(2, 1fr); }
+}
+.alerts-kpi {
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.alerts-kpi-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+}
+.alerts-kpi-high .alerts-kpi-icon { background: #fef2f2; color: #dc2626; }
+.alerts-kpi-medium .alerts-kpi-icon { background: #fffbeb; color: #d97706; }
+.alerts-kpi-low .alerts-kpi-icon { background: #f0f9ff; color: #0284c7; }
+.alerts-kpi-stockout .alerts-kpi-icon { background: #fef2f2; color: #dc2626; }
+.alerts-kpi-overstock .alerts-kpi-icon { background: #f0fdf4; color: #16a34a; }
+.alerts-kpi-silent .alerts-kpi-icon { background: #f8fafc; color: #64748b; }
+.alerts-kpi-body { flex: 1; }
+.alerts-kpi-number {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #1e293b;
+  line-height: 1;
+}
+.alerts-kpi-label {
+  font-size: 0.75rem;
+  color: #64748b;
+  margin-top: 4px;
+}
+.alerts-filters {
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-end;
+  margin-bottom: 24px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.alerts-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.alerts-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #64748b;
+}
+.alerts-filter select,
+.alerts-filter input {
+  min-width: 150px;
+}
+.alerts-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+.alerts-panel {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  overflow: hidden;
+}
+.alerts-panel-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.alerts-panel-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+.alerts-table-wrap {
+  overflow-x: auto;
+}
+.alerts-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.alerts-table thead th {
+  background: #f8fafc;
+  padding: 12px 16px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: #64748b;
+  border-bottom: 1px solid #e2e8f0;
+  position: sticky;
+  top: 0;
+}
+.alerts-table tbody tr {
+  border-bottom: 1px solid #f1f5f9;
+}
+.alerts-table tbody tr:hover {
+  background: #f8fafc;
+}
+.alerts-table tbody td {
+  padding: 12px 16px;
+  font-size: 0.875rem;
+  color: #334155;
+  vertical-align: middle;
+}
+.alerts-mono {
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 0.8125rem;
+}
+.alerts-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.alerts-badge-high {
+  background: #fef2f2;
+  color: #dc2626;
+}
+.alerts-badge-medium {
+  background: #fffbeb;
+  color: #d97706;
+}
+.alerts-badge-low {
+  background: #f0f9ff;
+  color: #0284c7;
+}
+.alerts-type-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 0.6875rem;
+  font-weight: 500;
+}
+.alerts-type-stockout {
+  background: #fef2f2;
+  color: #dc2626;
+}
+.alerts-type-overstock {
+  background: #f0fdf4;
+  color: #16a34a;
+}
+.alerts-type-silent {
+  background: #f8fafc;
+  color: #64748b;
+}
+.alerts-loc-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+}
+.alerts-loc-cd {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+.alerts-loc-store {
+  background: #f5f3ff;
+  color: #7c3aed;
+}
+.alerts-action {
+  display: inline-flex;
+  padding: 4px 10px;
+  background: #f1f5f9;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #475569;
+}
+.alerts-empty {
+  padding: 48px 16px;
+  text-align: center;
+}
+.alerts-empty-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.alerts-empty-icon {
+  font-size: 2.5rem;
+  color: #16a34a;
+  margin-bottom: 12px;
+}
+.alerts-empty-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+.alerts-empty-hint {
+  font-size: 0.875rem;
+  color: #64748b;
+  margin-top: 4px;
+}
+.alerts-pagination {
+  padding: 16px 20px;
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: center;
+}
+</style>
+
+{% endblock %}

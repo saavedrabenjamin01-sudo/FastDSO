@@ -146,6 +146,12 @@
           <span class="nav-text">Salud Tiendas</span>
         </a>
         {% endif %}
+        {% if current_user.has_permission('alerts:view') %}
+        <a class="nav-link" href="{{ url_for('alerts_page') }}">
+          <span class="nav-icon"><i class="bi bi-bell"></i></span>
+          <span class="nav-text">Alertas</span>
+        </a>
+        {% endif %}
       </div>
     </div>
     {% endif %}
