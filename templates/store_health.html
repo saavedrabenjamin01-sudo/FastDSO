@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+
+{% block title %}Índice de Salud de Tiendas{% endblock %}
+{% block page_title %}Índice de Salud de Tiendas{% endblock %}
+
+{% macro pagination_controls(pag, page_param) %}
+<div class="health-pagination">
+  <small class="text-muted">{{ pag.total }} tiendas</small>
+  {% if pag.pages > 1 %}
+    <nav>
+      <ul class="pagination pagination-sm mb-0">
+        <li class="page-item {% if not pag.has_prev %}disabled{% endif %}">
+          <a class="page-link" href="javascript:void(0)" onclick="updateParam('{{ page_param }}', {{ pag.prev_num or 1 }})">Ant</a>
+        </li>
+        {% for p in pag.iter_pages() %}
+          {% if p %}
+            <li class="page-item {% if p == pag.page %}active{% endif %}">
+              <a class="page-link" href="javascript:void(0)" onclick="updateParam('{{ page_param }}', {{ p }})">{{ p }}</a>
+            </li>
+          {% else %}
+            <li class="page-item disabled"><span class="page-link">…</span></li>
+          {% endif %}
+        {% endfor %}
+        <li class="page-item {% if not pag.has_next %}disabled{% endif %}">
+          <a class="page-link" href="javascript:void(0)" onclick="updateParam('{{ page_param }}', {{ pag.next_num or pag.pages }})">Sig</a>
+        </li>
+      </ul>
+    </nav>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{% macro status_badge(status) %}
+{% if status == 'HEALTHY' %}
+<span class="health-badge health-badge-green">Saludable</span>
+{% elif status == 'WARNING' %}
+<span class="health-badge health-badge-yellow">Atención</span>
+{% else %}
+<span class="health-badge health-badge-red">Crítico</span>
+{% endif %}
+{% endmacro %}
+
+{% macro score_bar(score) %}
+<div class="health-score-bar">
+  <div class="health-score-fill {% if score >= 80 %}fill-green{% elif score >= 50 %}fill-yellow{% else %}fill-red{% endif %}" style="width: {{ score }}%"></div>
+  <span class="health-score-value">{{ score }}</span>
+</div>
+{% endmacro %}
+
+{% block content %}
+<div class="health-wrap">
+  <div class="health-header">
+    <h1 class="health-title">Índice de Salud de Tiendas</h1>
+    <p class="health-subtitle">Diagnóstico integral por tienda para priorizar acciones de gestión</p>
+  </div>
+
+  {% if results and results.summary %}
+  <div class="health-kpi-row">
+    <div class="health-kpi-card health-kpi-blue">
+      <div class="health-kpi-badge">
+        <i class="bi bi-shop-window"></i>
+      </div>
+      <div class="health-kpi-content">
+        <div class="health-kpi-value">{{ results.summary.total_stores }}</div>
+        <div class="health-kpi-label">Total Tiendas</div>
+      </div>
+    </div>
+    <div class="health-kpi-card health-kpi-green">
+      <div class="health-kpi-badge">
+        <i class="bi bi-check-circle"></i>
+      </div>
+      <div class="health-kpi-content">
+        <div class="health-kpi-value">{{ results.summary.healthy_count }}</div>
+        <div class="health-kpi-label">Saludables (≥80)</div>
+      </div>
+    </div>
+    <div class="health-kpi-card health-kpi-yellow">
+      <div class="health-kpi-badge">
+        <i class="bi bi-exclamation-triangle"></i>
+      </div>
+      <div class="health-kpi-content">
+        <div class="health-kpi-value">{{ results.summary.warning_count }}</div>
+        <div class="health-kpi-label">Atención (50-79)</div>
+      </div>
+    </div>
+    <div class="health-kpi-card health-kpi-red">
+      <div class="health-kpi-badge">
+        <i class="bi bi-x-octagon"></i>
+      </div>
+      <div class="health-kpi-content">
+        <div class="health-kpi-value">{{ results.summary.critical_count }}</div>
+        <div class="health-kpi-label">Críticos (&lt;50)</div>
+      </div>
+    </div>
+    <div class="health-kpi-card health-kpi-purple">
+      <div class="health-kpi-badge">
+        <i class="bi bi-speedometer2"></i>
+      </div>
+      <div class="health-kpi-content">
+        <div class="health-kpi-value">{{ results.summary.avg_score }}</div>
+        <div class="health-kpi-label">Puntaje Promedio</div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="health-card health-weights-card">
+    <div class="health-card-header">
+      <i class="bi bi-sliders me-2"></i>Ponderación de Métricas
+    </div>
+    <div class="health-card-body">
+      <form method="GET" action="{{ url_for('store_health') }}" id="weightsForm">
+        <div class="health-weights-grid">
+          <div class="health-weight-field">
+            <label class="health-label">Fill Rate</label>
+            <div class="input-group input-group-sm">
+              <input type="number" name="w_fill" class="form-control" min="0" max="100" step="5" value="{{ (weights.FILL_RATE * 100)|int }}">
+              <span class="input-group-text">%</span>
+            </div>
+          </div>
+          <div class="health-weight-field">
+            <label class="health-label">Quiebres</label>
+            <div class="input-group input-group-sm">
+              <input type="number" name="w_stockout" class="form-control" min="0" max="100" step="5" value="{{ (weights.STOCKOUT_RATE * 100)|int }}">
+              <span class="input-group-text">%</span>
+            </div>
+          </div>
+          <div class="health-weight-field">
+            <label class="health-label">Sobrestock</label>
+            <div class="input-group input-group-sm">
+              <input type="number" name="w_overstock" class="form-control" min="0" max="100" step="5" value="{{ (weights.OVERSTOCK_RATE * 100)|int }}">
+              <span class="input-group-text">%</span>
+            </div>
+          </div>
+          <div class="health-weight-field">
+            <label class="health-label">Velocidad Venta</label>
+            <div class="input-group input-group-sm">
+              <input type="number" name="w_velocity" class="form-control" min="0" max="100" step="5" value="{{ (weights.SALES_VELOCITY * 100)|int }}">
+              <span class="input-group-text">%</span>
+            </div>
+          </div>
+        </div>
+        <div class="health-weights-actions">
+          <button type="submit" class="btn btn-sm health-btn-primary">
+            <i class="bi bi-arrow-clockwise me-1"></i>Recalcular
+          </button>
+          <a href="{{ url_for('store_health') }}" class="btn btn-sm health-btn-secondary">
+            <i class="bi bi-arrow-counterclockwise me-1"></i>Restablecer
+          </a>
+          <a href="{{ url_for('export_store_health') }}" class="btn btn-sm health-btn-export">
+            <i class="bi bi-download me-1"></i>Exportar Excel
+          </a>
+        </div>
+      </form>
+    </div>
+    <div class="health-weights-hint">
+      <i class="bi bi-info-circle me-1"></i>La suma de ponderaciones debe ser 100%. Ajusta según prioridades de negocio.
+    </div>
+  </div>
+
+  {% if results and results.stores %}
+  <div class="health-card health-table-card">
+    <div class="health-table-header">
+      <div class="health-table-title">
+        <i class="bi bi-bar-chart-line me-2"></i>Ranking de Tiendas
+      </div>
+      <div class="health-sort-controls">
+        <label class="health-sort-label">Ordenar por:</label>
+        <select class="form-select form-select-sm" id="sortSelect" onchange="applySort()">
+          <option value="score" {% if sort_by == 'score' %}selected{% endif %}>Puntaje</option>
+          <option value="name" {% if sort_by == 'name' %}selected{% endif %}>Nombre</option>
+          <option value="fill" {% if sort_by == 'fill' %}selected{% endif %}>Fill Rate</option>
+          <option value="stockout" {% if sort_by == 'stockout' %}selected{% endif %}>Quiebres</option>
+        </select>
+        <button type="button" class="btn btn-sm health-btn-sort" onclick="toggleOrder()">
+          <i class="bi bi-sort-{% if sort_order == 'desc' %}down{% else %}up{% endif %}"></i>
+        </button>
+      </div>
+    </div>
+    <div class="health-table-wrap">
+      <table class="health-table">
+        <thead>
+          <tr>
+            <th>Tienda</th>
+            <th class="text-center">Puntaje</th>
+            <th class="text-center">Estado</th>
+            <th class="text-end">Fill Rate</th>
+            <th class="text-end">Quiebres</th>
+            <th class="text-end">Sobrestock</th>
+            <th class="text-end">Venta/Sem</th>
+            <th class="text-end">Redist.</th>
+            <th>Alertas</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if pag and pag.items %}
+          {% for store in pag.items %}
+          <tr class="{% if store.status == 'CRITICAL' %}row-critical{% elif store.status == 'WARNING' %}row-warning{% endif %}">
+            <td class="fw-medium">{{ store.store_name }}</td>
+            <td class="text-center">{{ score_bar(store.health_score) }}</td>
+            <td class="text-center">{{ status_badge(store.status) }}</td>
+            <td class="text-end">{{ store.fill_rate }}%</td>
+            <td class="text-end {% if store.stockout_rate > 30 %}text-danger fw-bold{% endif %}">{{ store.stockout_rate }}%</td>
+            <td class="text-end {% if store.overstock_rate > 25 %}text-warning fw-bold{% endif %}">{{ store.overstock_rate }}%</td>
+            <td class="text-end">{{ store.avg_weekly_sales }}</td>
+            <td class="text-end">{{ store.redist_dependency }}</td>
+            <td class="health-alerts">{{ store.alerts }}</td>
+          </tr>
+          {% endfor %}
+          {% else %}
+          <tr>
+            <td colspan="9">
+              <div class="health-empty-table">
+                <i class="bi bi-shop"></i>
+                <div>Sin datos de tiendas</div>
+              </div>
+            </td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+    {% if pag and pag.total > 0 %}
+    <div class="health-table-footer">
+      {{ pagination_controls(pag, 'page') }}
+    </div>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="health-empty-state">
+    <div class="health-empty-icon"><i class="bi bi-shop-window"></i></div>
+    <div class="health-empty-title">Sin datos disponibles</div>
+    <div class="health-empty-text">Carga datos de tiendas, productos y ventas para calcular el índice de salud.</div>
+  </div>
+  {% endif %}
+
+  <div class="health-legend-card">
+    <div class="health-legend-title">
+      <i class="bi bi-info-circle me-2"></i>Fórmula de Cálculo
+    </div>
+    <div class="health-legend-content">
+      <div class="health-formula">
+        <strong>Puntaje = </strong>
+        <span class="formula-term">Fill Rate × {{ (default_weights.FILL_RATE * 100)|int }}%</span> +
+        <span class="formula-term">(100 - Quiebres) × {{ (default_weights.STOCKOUT_RATE * 100)|int }}%</span> +
+        <span class="formula-term">(100 - Sobrestock) × {{ (default_weights.OVERSTOCK_RATE * 100)|int }}%</span> +
+        <span class="formula-term">Velocidad Venta × {{ (default_weights.SALES_VELOCITY * 100)|int }}%</span>
+      </div>
+      <div class="health-metrics-desc">
+        <div><strong>Fill Rate:</strong> % de SKUs con stock > 0</div>
+        <div><strong>Quiebres:</strong> % de SKUs sin stock</div>
+        <div><strong>Sobrestock:</strong> % de SKUs con cobertura > {{ default_weights.MAX_WOC }} semanas</div>
+        <div><strong>Velocidad Venta:</strong> Ventas semanales relativas al máximo de la cadena</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function updateParam(param, value) {
+  const url = new URL(window.location.href);
+  url.searchParams.set(param, value);
+  window.location.href = url.toString();
+}
+
+function applySort() {
+  const sort = document.getElementById('sortSelect').value;
+  updateParam('sort', sort);
+}
+
+function toggleOrder() {
+  const url = new URL(window.location.href);
+  const current = url.searchParams.get('order') || 'desc';
+  updateParam('order', current === 'desc' ? 'asc' : 'desc');
+}
+</script>
+{% endblock %}

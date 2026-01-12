@@ -4769,3 +4769,378 @@ body{
 .slow-table .text-end {
   text-align: right;
 }
+
+/* ========================================
+   Store Health Index Module
+   ======================================== */
+.health-wrap {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 24px 32px;
+}
+.health-header {
+  margin-bottom: 24px;
+}
+.health-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0 0 4px 0;
+}
+.health-subtitle {
+  font-size: 0.92rem;
+  color: #64748b;
+  margin: 0;
+}
+
+.health-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.health-kpi-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  position: relative;
+  overflow: hidden;
+}
+.health-kpi-badge {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+}
+.health-kpi-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #1e293b;
+}
+.health-kpi-label {
+  font-size: 0.78rem;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.health-kpi-blue { border-left: 4px solid #3b82f6; }
+.health-kpi-blue .health-kpi-badge { background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); color: #1d4ed8; }
+.health-kpi-green { border-left: 4px solid #22c55e; }
+.health-kpi-green .health-kpi-badge { background: linear-gradient(135deg, #bbf7d0 0%, #86efac 100%); color: #166534; }
+.health-kpi-yellow { border-left: 4px solid #eab308; }
+.health-kpi-yellow .health-kpi-badge { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); color: #a16207; }
+.health-kpi-red { border-left: 4px solid #ef4444; }
+.health-kpi-red .health-kpi-badge { background: linear-gradient(135deg, #fecaca 0%, #fca5a5 100%); color: #991b1b; }
+.health-kpi-purple { border-left: 4px solid #8b5cf6; }
+.health-kpi-purple .health-kpi-badge { background: linear-gradient(135deg, #ddd6fe 0%, #c4b5fd 100%); color: #5b21b6; }
+
+.health-card {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  margin-bottom: 20px;
+}
+.health-card-header {
+  padding: 14px 20px;
+  font-weight: 600;
+  color: #334155;
+  font-size: 0.95rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+.health-card-body {
+  padding: 20px;
+}
+
+.health-weights-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.health-weight-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.health-label {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: #475569;
+}
+.health-weights-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.health-weights-hint {
+  padding: 12px 20px;
+  background: #f8fafc;
+  border-top: 1px solid #f1f5f9;
+  font-size: 0.82rem;
+  color: #64748b;
+  border-radius: 0 0 12px 12px;
+}
+
+.health-btn-primary {
+  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+  color: #fff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+.health-btn-primary:hover {
+  background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%);
+  color: #fff;
+  transform: translateY(-1px);
+}
+.health-btn-secondary {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+.health-btn-secondary:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #1e293b;
+}
+.health-btn-export {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+  padding: 8px 16px;
+  border-radius: 8px;
+}
+.health-btn-export:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+.health-table-card {
+  overflow: hidden;
+}
+.health-table-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 20px;
+  border-bottom: 1px solid #f1f5f9;
+}
+.health-table-title {
+  font-weight: 600;
+  color: #334155;
+  font-size: 0.95rem;
+}
+.health-sort-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.health-sort-label {
+  font-size: 0.82rem;
+  color: #64748b;
+}
+.health-btn-sort {
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.health-table-wrap {
+  overflow-x: auto;
+}
+.health-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+.health-table th {
+  background: #f8fafc;
+  padding: 12px 14px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #475569;
+  border-bottom: 1px solid #e2e8f0;
+  white-space: nowrap;
+}
+.health-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid #f1f5f9;
+  color: #334155;
+}
+.health-table tbody tr:hover {
+  background: #fafbfc;
+}
+.health-table .row-critical {
+  background: #fef2f2;
+}
+.health-table .row-critical:hover {
+  background: #fee2e2;
+}
+.health-table .row-warning {
+  background: #fefce8;
+}
+.health-table .row-warning:hover {
+  background: #fef9c3;
+}
+.health-table-footer {
+  padding: 12px 20px;
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
+}
+
+.health-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 16px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.health-badge-green {
+  background: linear-gradient(135deg, #bbf7d0 0%, #86efac 100%);
+  color: #166534;
+}
+.health-badge-yellow {
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  color: #a16207;
+}
+.health-badge-red {
+  background: linear-gradient(135deg, #fecaca 0%, #fca5a5 100%);
+  color: #991b1b;
+}
+
+.health-score-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 100px;
+}
+.health-score-bar .health-score-fill {
+  height: 8px;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+.health-score-bar .fill-green {
+  background: linear-gradient(90deg, #22c55e 0%, #16a34a 100%);
+}
+.health-score-bar .fill-yellow {
+  background: linear-gradient(90deg, #eab308 0%, #ca8a04 100%);
+}
+.health-score-bar .fill-red {
+  background: linear-gradient(90deg, #ef4444 0%, #dc2626 100%);
+}
+.health-score-value {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: #1e293b;
+  min-width: 32px;
+}
+
+.health-alerts {
+  font-size: 0.82rem;
+  color: #64748b;
+  max-width: 200px;
+}
+
+.health-pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.health-pagination .pagination {
+  margin: 0;
+}
+
+.health-empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  margin-bottom: 20px;
+}
+.health-empty-icon {
+  font-size: 3rem;
+  color: #cbd5e1;
+  margin-bottom: 12px;
+}
+.health-empty-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #475569;
+  margin-bottom: 4px;
+}
+.health-empty-text {
+  font-size: 0.88rem;
+  color: #94a3b8;
+}
+.health-empty-table {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 48px 24px;
+  color: #94a3b8;
+}
+.health-empty-table i {
+  font-size: 2.5rem;
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+
+.health-legend-card {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  margin-top: 24px;
+}
+.health-legend-title {
+  padding: 14px 20px;
+  font-weight: 600;
+  color: #334155;
+  font-size: 0.95rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+.health-legend-content {
+  padding: 20px;
+}
+.health-formula {
+  background: #f8fafc;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  color: #334155;
+  margin-bottom: 16px;
+}
+.formula-term {
+  background: #e0e7ff;
+  padding: 2px 8px;
+  border-radius: 4px;
+  color: #4338ca;
+  font-weight: 500;
+  margin: 0 2px;
+}
+.health-metrics-desc {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 8px;
+  font-size: 0.85rem;
+  color: #64748b;
+}

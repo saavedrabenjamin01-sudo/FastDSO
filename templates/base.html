@@ -140,6 +140,12 @@
           <span class="nav-icon"><i class="bi bi-intersect"></i></span>
           <span class="nav-text">Comparar Corridas</span>
         </a>
+        {% if current_user.has_permission('store_health:view') %}
+        <a class="nav-link" href="{{ url_for('store_health') }}">
+          <span class="nav-icon"><i class="bi bi-heart-pulse"></i></span>
+          <span class="nav-text">Salud Tiendas</span>
+        </a>
+        {% endif %}
       </div>
     </div>
     {% endif %}
