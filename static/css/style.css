@@ -5005,6 +5005,18 @@ body{
   border-top: 1px solid #e2e8f0;
 }
 
+.health-alert {
+  padding: 14px 20px;
+  border-radius: 10px;
+  margin-bottom: 20px;
+  font-size: 0.9rem;
+}
+.health-alert-warning {
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  color: #92400e;
+  border: 1px solid #fbbf24;
+}
+
 .health-badge {
   display: inline-block;
   padding: 4px 10px;

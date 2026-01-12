@@ -55,6 +55,12 @@
   </div>
 
   {% if results and results.summary %}
+  {% if not results.summary.has_sales_data %}
+  <div class="health-alert health-alert-warning">
+    <i class="bi bi-exclamation-triangle-fill me-2"></i>
+    <strong>Sin datos de ventas:</strong> No hay registros de ventas recientes. El puntaje de salud se calcula sin la métrica de velocidad de ventas. Carga datos de ventas para obtener un diagnóstico completo.
+  </div>
+  {% endif %}
   <div class="health-kpi-row">
     <div class="health-kpi-card health-kpi-blue">
       <div class="health-kpi-badge">

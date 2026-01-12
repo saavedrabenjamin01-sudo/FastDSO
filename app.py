@@ -5011,6 +5011,15 @@ def compute_store_health_index(weights=None):
     if weights is None:
         weights = STORE_HEALTH_WEIGHTS.copy()
     
+    # Normalize weights to ensure they sum to 1.0
+    weight_sum = (weights.get('FILL_RATE', 0.30) + weights.get('STOCKOUT_RATE', 0.30) +
+                  weights.get('OVERSTOCK_RATE', 0.20) + weights.get('SALES_VELOCITY', 0.20))
+    if weight_sum > 0:
+        weights['FILL_RATE'] = weights.get('FILL_RATE', 0.30) / weight_sum
+        weights['STOCKOUT_RATE'] = weights.get('STOCKOUT_RATE', 0.30) / weight_sum
+        weights['OVERSTOCK_RATE'] = weights.get('OVERSTOCK_RATE', 0.20) / weight_sum
+        weights['SALES_VELOCITY'] = weights.get('SALES_VELOCITY', 0.20) / weight_sum
+    
     stores = {s.id: s for s in Store.query.all()}
     products = {p.id: p for p in Product.query.all()}
     
@@ -5020,8 +5029,26 @@ def compute_store_health_index(weights=None):
     total_skus = len(products)
     max_woc = weights.get('MAX_WOC', 8.0)
     
+    # Get latest stock snapshot for each store-product pair using subquery for latest date
+    latest_dates = db.session.query(
+        StockSnapshot.store_id,
+        StockSnapshot.product_id,
+        db.func.max(StockSnapshot.as_of_date).label('max_date')
+    ).group_by(
+        StockSnapshot.store_id,
+        StockSnapshot.product_id
+    ).subquery()
+    
+    stock_query = db.session.query(StockSnapshot).join(
+        latest_dates,
+        db.and_(
+            StockSnapshot.store_id == latest_dates.c.store_id,
+            StockSnapshot.product_id == latest_dates.c.product_id,
+            StockSnapshot.as_of_date == latest_dates.c.max_date
+        )
+    ).all()
+    
     store_stock = {}
-    stock_query = StockStore.query.all()
     for ss in stock_query:
         if ss.store_id not in store_stock:
             store_stock[ss.store_id] = {}
@@ -5054,7 +5081,7 @@ def compute_store_health_index(weights=None):
     
     redistribution_count = {}
     try:
-        transfers = SlowStockTransferSuggestion.query.all()
+        transfers = SlowStockSuggestion.query.all()
         for t in transfers:
             if t.to_store_id not in redistribution_count:
                 redistribution_count[t.to_store_id] = set()
@@ -5062,7 +5089,8 @@ def compute_store_health_index(weights=None):
     except:
         pass
     
-    max_sales = max(store_total_sales.values()) if store_total_sales else 1
+    max_sales = max(store_total_sales.values()) if store_total_sales else 0
+    has_sales_data = max_sales > 0
     
     store_results = []
     
@@ -5089,7 +5117,11 @@ def compute_store_health_index(weights=None):
         overstock_rate = (skus_overstocked / total_skus * 100) if total_skus > 0 else 0
         
         avg_weekly_sales = store_total_sales.get(sid, 0)
-        sales_velocity_score = min((avg_weekly_sales / max_sales * 100), 100) if max_sales > 0 else 0
+        # Normalize velocity against chain maximum; use 0 if no comparison baseline available
+        if max_sales > 0 and avg_weekly_sales > 0:
+            sales_velocity_score = min((avg_weekly_sales / max_sales * 100), 100)
+        else:
+            sales_velocity_score = 0
         
         redist_skus = len(redistribution_count.get(sid, set()))
         
@@ -5098,12 +5130,22 @@ def compute_store_health_index(weights=None):
         overstock_score = 100 - overstock_rate
         velocity_score = sales_velocity_score
         
-        health_score = (
-            fill_score * weights.get('FILL_RATE', 0.30) +
-            stockout_score * weights.get('STOCKOUT_RATE', 0.30) +
-            overstock_score * weights.get('OVERSTOCK_RATE', 0.20) +
-            velocity_score * weights.get('SALES_VELOCITY', 0.20)
-        )
+        # If no sales data available chain-wide, redistribute velocity weight to other metrics
+        if has_sales_data:
+            health_score = (
+                fill_score * weights.get('FILL_RATE', 0.30) +
+                stockout_score * weights.get('STOCKOUT_RATE', 0.30) +
+                overstock_score * weights.get('OVERSTOCK_RATE', 0.20) +
+                velocity_score * weights.get('SALES_VELOCITY', 0.20)
+            )
+        else:
+            # Redistribute weights to 3 available metrics when no sales data
+            adj_total = weights.get('FILL_RATE', 0.30) + weights.get('STOCKOUT_RATE', 0.30) + weights.get('OVERSTOCK_RATE', 0.20)
+            health_score = (
+                fill_score * (weights.get('FILL_RATE', 0.30) / adj_total) +
+                stockout_score * (weights.get('STOCKOUT_RATE', 0.30) / adj_total) +
+                overstock_score * (weights.get('OVERSTOCK_RATE', 0.20) / adj_total)
+            ) if adj_total > 0 else 0
         
         health_score = max(0, min(100, round(health_score, 1)))
         
@@ -5123,6 +5165,8 @@ def compute_store_health_index(weights=None):
             alerts.append('Surtido bajo')
         if redist_skus > 5:
             alerts.append(f'{redist_skus} SKUs redistribuidos')
+        if avg_weekly_sales == 0:
+            alerts.append('Sin ventas recientes')
         
         store_results.append({
             'store_id': sid,
@@ -5151,7 +5195,8 @@ def compute_store_health_index(weights=None):
             'healthy_count': healthy_count,
             'warning_count': warning_count,
             'critical_count': critical_count,
-            'avg_score': avg_score
+            'avg_score': avg_score,
+            'has_sales_data': has_sales_data
         },
         'weights': weights
     }
