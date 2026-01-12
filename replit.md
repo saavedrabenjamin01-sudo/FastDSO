@@ -59,6 +59,14 @@ Do not make changes to the folder `Excel tipo/`.
     - Edge case handling: Redistributes velocity weight when no sales data chain-wide
     - KPI summary cards, paginated table with sorting, weights configuration form, Excel export
     - Access via "Salud Tiendas" link under Operaciones (requires store_health:view permission)
+- **In-app Alerts Module**: Proactive alerts based on stock and sales velocity (read-only, computed dynamically):
+    - Alert types: PROJECTED_STOCKOUT (WOC < MIN_WOC), OVERSTOCK (WOC > MAX_WOC), SILENT_SKU (no sales for DEAD_DAYS)
+    - Severity levels: HIGH (critical threshold breached), MEDIUM (warning level), LOW (minor concern)
+    - Dashboard integration: Top 10 alerts panel with highest severity first
+    - Dedicated /alerts page with filters: type, severity, store, SKU search
+    - KPI cards: High/Medium/Low counts, Quiebres, Sobrestock, Sin movimiento
+    - Suggested actions: Reponer, Redistribuir, Revisar, Liquidar
+    - Access via "Alertas" link under Operaciones (requires alerts:view permission)
 
 ## External Dependencies
 - **Database**: SQLite (for `app.db`)
