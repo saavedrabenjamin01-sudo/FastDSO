@@ -1,0 +1,78 @@
+You are working on FastDSO (Flask + SQLAlchemy).
+
+Implement an EXTENDED “Slow & Dead Stock Manager” module, building on the existing slow-stock functionality, WITHOUT altering existing redistribution or forecast logic.
+
+Definitions:
+- WOC (Weeks of Coverage) = stock / max(avg_weekly_sales, 1)
+- MIN_WOC and MAX_WOC are coverage thresholds.
+- DEAD_DAYS is the threshold for “no sales” aging.
+
+Requirements:
+
+1) Data sources:
+- StockCD (CD stock snapshot)
+- StockSnapshot (store stock snapshot)
+- DistributionRecord (sales history)
+- Product, Store
+
+2) Parameters (user configurable in UI):
+- history_window_weeks (default 12)
+- recent_window_weeks (default 4)
+- DEAD_DAYS_STORE (default 60)
+- DEAD_DAYS_GLOBAL (default 90)
+- MIN_WOC (default 1.5)
+- MAX_WOC (default 6.0)
+- slow_rate_threshold (default 0.3 units/week)
+
+3) Metrics to compute (per SKU-store + global SKU):
+- avg_weekly_sales_recent (per store, last recent_window_weeks)
+- avg_weekly_sales_global (global, last recent_window_weeks)
+- last_sale_date_store (from lifecycle upload if available; else from DistributionRecord max date)
+- last_sale_date_global (from lifecycle; else max date across all stores)
+- days_since_last_sale_store / global
+- store_stock_qty, cd_stock_qty
+- WOC_store = store_stock_qty / max(avg_weekly_sales_recent, 1)
+- WOC_global = (cd_stock_qty + sum(store_stock_qty)) / max(avg_weekly_sales_global, 1)
+
+4) Classification:
+Store-level classification (only if store_stock_qty > 0):
+- DEAD_STORE if days_since_last_sale_store >= DEAD_DAYS_STORE
+- SLOW_STORE if avg_weekly_sales_recent <= slow_rate_threshold OR WOC_store > MAX_WOC
+- HEALTHY_STORE if MIN_WOC <= WOC_store <= MAX_WOC
+- LOW_STOCK if WOC_store < MIN_WOC (optional)
+
+CD-level classification (only if cd_stock_qty > 0):
+- DEAD_CD if days_since_last_sale_global >= DEAD_DAYS_GLOBAL
+- SLOW_CD if avg_weekly_sales_global <= slow_rate_threshold OR WOC_global > MAX_WOC
+- HEALTHY_CD otherwise
+
+5) Output UI:
+- Route: /slow_stock (or extend existing route if already created)
+- 3 sections/tabs:
+  A) Slow/Dead stock by Store (paginated 10/page)
+  B) Dead/SLOW stock in CD (paginated 10/page)
+  C) Suggested actions summary (counts and recommended next step)
+- Filters: sku contains, store, status (DEAD/SLOW/HEALTHY), source (CD vs store)
+- KPI cards:
+  - Dead Store locations
+  - Slow Store locations
+  - Dead CD SKUs
+  - Total immobilized units (optional)
+
+6) Visual style:
+- Use Dashboard table styling: zebra + hover + sticky headers.
+- Badges:
+  DEAD = soft red
+  SLOW = soft orange
+  HEALTHY = soft green
+
+7) Safety:
+- Do NOT change existing redistribution logic.
+- Do NOT change forecast logic.
+- Only add/read data.
+- Preserve SKU leading zeros everywhere (treat SKU as text).
+
+Deliverables:
+- Updated route/controller (minimal logic changes)
+- Updated template with pagination controls (10 rows per page)
+- Any CSS additions scoped to this module only

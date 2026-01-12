@@ -4388,6 +4388,10 @@ body{
 .slow-kpi-amber .slow-kpi-deco { background: #f59e0b; }
 .slow-kpi-green .slow-kpi-deco { background: #10b981; }
 .slow-kpi-purple .slow-kpi-deco { background: #8b5cf6; }
+.slow-kpi-maroon .slow-kpi-badge {
+  background: linear-gradient(135deg, #be123c 0%, #9f1239 100%);
+}
+.slow-kpi-maroon .slow-kpi-deco { background: #be123c; }
 
 /* Tabs */
 .slow-tabs {
@@ -4513,6 +4517,10 @@ body{
 .slow-badge-amber {
   background: linear-gradient(135deg, #fed7aa 0%, #fdba74 100%);
   color: #92400e;
+}
+.slow-badge-yellow {
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  color: #a16207;
 }
 .slow-badge-green {
   background: linear-gradient(135deg, #bbf7d0 0%, #86efac 100%);

@@ -4299,19 +4299,20 @@ def clear_simulation_route(sim_type):
 
 # Default parameters
 SLOW_STOCK_PARAMS = {
+    'HISTORY_WINDOW_WEEKS': 12,
+    'RECENT_WINDOW_WEEKS': 4,
     'DEAD_DAYS_STORE': 60,
-    'SLOW_MIN_DAYS_STORE': 21,
     'DEAD_DAYS_GLOBAL': 90,
+    'SLOW_MIN_DAYS_STORE': 21,
     'DEAD_PURCHASE_DAYS': 120,
     'SLOW_RATE_THRESHOLD': 0.3,
-    'RECENT_WINDOW_WEEKS': 4,
+    'MIN_WOC': 1.5,
+    'MAX_WOC': 6.0,
     'RECEIVER_MIN_RATE': 0.5,
     'RECEIVER_WOC_MIN': 1.5,
     'TARGET_RECEIVER_WOC': 2.5,
     'DONOR_FLOOR': 1,
-    'MIN_TRANSFER_QTY': 2,
-    'MIN_WOC': 2.0,
-    'MAX_WOC': 8.0
+    'MIN_TRANSFER_QTY': 2
 }
 
 
@@ -4416,16 +4417,21 @@ def compute_slow_stock_analysis(params=None):
         # Calculate weeks of coverage (WOC)
         woc = qty / max(rate, 0.01) if rate > 0 else 9999
         
-        # Classification with DEAD, SLOW, HEALTHY
-        status = 'HEALTHY'
+        # Classification: DEAD_STORE, SLOW_STORE, LOW_STOCK, HEALTHY_STORE
+        # Priority: DEAD > SLOW > LOW_STOCK > HEALTHY
         if days_since_last_sale >= params['DEAD_DAYS_STORE']:
             status = 'DEAD_STORE'
-        elif rate <= params['SLOW_RATE_THRESHOLD'] and days_since_last_sale >= params['SLOW_MIN_DAYS_STORE']:
+        elif rate <= params['SLOW_RATE_THRESHOLD']:
+            # Low sales rate means SLOW regardless of days
             status = 'SLOW_STORE'
         elif woc > params['MAX_WOC']:
+            # Overstock (high WOC) is also SLOW
             status = 'SLOW_STORE'
-        elif woc < params['MIN_WOC'] and rate > 0:
-            status = 'HEALTHY'
+        elif rate > params['SLOW_RATE_THRESHOLD'] and woc < params['MIN_WOC']:
+            # Active sales (above slow threshold) but low coverage
+            status = 'LOW_STOCK'
+        else:
+            status = 'HEALTHY_STORE'
         
         # Include all SKU-store pairs with stock
         store_analysis.append({
@@ -4465,10 +4471,17 @@ def compute_slow_stock_analysis(params=None):
         days_since_last_sale_global = (today - last_sale_global).days if last_sale_global else 9999
         days_since_last_purchase = (today - last_purchase).days if last_purchase else 9999
         
-        # Classification
-        status = 'OK'
-        if days_since_last_sale_global >= params['DEAD_DAYS_GLOBAL'] or days_since_last_purchase >= params['DEAD_PURCHASE_DAYS']:
+        # Calculate CD WOC for this SKU (CD stock only, not total stock)
+        global_rate = sum(sales_rate.get((pid, sid), 0) for sid in stores.keys())
+        woc_cd = qty / max(global_rate, 0.01) if global_rate > 0 else 9999
+        
+        # Classification: DEAD_CD, SLOW_CD, HEALTHY_CD
+        if days_since_last_sale_global >= params['DEAD_DAYS_GLOBAL'] or days_since_last_purchase >= params.get('DEAD_PURCHASE_DAYS', 120):
             status = 'DEAD_CD'
+        elif global_rate <= params['SLOW_RATE_THRESHOLD'] or woc_cd > params['MAX_WOC']:
+            status = 'SLOW_CD'
+        else:
+            status = 'HEALTHY_CD'
         
         # Check if there are active receivers for this SKU
         has_receivers = any(
@@ -4482,14 +4495,19 @@ def compute_slow_stock_analysis(params=None):
                 recommendation = 'Redistribuir a tiendas'
             else:
                 recommendation = 'Considerar liquidación'
+        elif status == 'SLOW_CD':
+            recommendation = 'Revisar movimiento'
         
-        if status != 'OK':
+        # Only add non-healthy CD entries (DEAD_CD, SLOW_CD)
+        if status in ['DEAD_CD', 'SLOW_CD']:
             cd_analysis.append({
                 'sku': product.sku,
                 'product_name': product.name,
                 'stock_cd': qty,
                 'days_since_last_sale_global': days_since_last_sale_global if days_since_last_sale_global < 9999 else None,
                 'days_since_last_purchase': days_since_last_purchase if days_since_last_purchase < 9999 else None,
+                'global_rate': round(global_rate, 2),
+                'woc_cd': round(woc_cd, 1) if woc_cd < 9999 else None,
                 'status': status,
                 'recommendation': recommendation,
                 'product_id': pid
@@ -4692,11 +4710,15 @@ def slow_stock():
         # Get parameters from form
         params = SLOW_STOCK_PARAMS.copy()
         try:
+            params['HISTORY_WINDOW_WEEKS'] = int(request.form.get('history_window_weeks', 12))
+            params['RECENT_WINDOW_WEEKS'] = int(request.form.get('recent_window_weeks', 4))
             params['DEAD_DAYS_STORE'] = int(request.form.get('dead_days_store', 60))
-            params['SLOW_MIN_DAYS_STORE'] = int(request.form.get('slow_min_days_store', 21))
             params['DEAD_DAYS_GLOBAL'] = int(request.form.get('dead_days_global', 90))
             params['DEAD_PURCHASE_DAYS'] = int(request.form.get('dead_purchase_days', 120))
+            params['SLOW_MIN_DAYS_STORE'] = int(request.form.get('slow_min_days_store', 21))
             params['SLOW_RATE_THRESHOLD'] = float(request.form.get('slow_rate_threshold', 0.3))
+            params['MIN_WOC'] = float(request.form.get('min_woc', 1.5))
+            params['MAX_WOC'] = float(request.form.get('max_woc', 6.0))
             params['RECEIVER_MIN_RATE'] = float(request.form.get('receiver_min_rate', 0.5))
             params['TARGET_RECEIVER_WOC'] = float(request.form.get('target_receiver_woc', 2.5))
         except ValueError:
