@@ -222,6 +222,344 @@
       {% endif %}
     </div>
   </div>
+
+  {% if current_user.has_permission('rebalancing:run') %}
+  <div class="rebal-card rebal-manual-card" id="manualTransferSection">
+    <div class="rebal-card-header">
+      <div class="d-flex align-items-center">
+        <i class="bi bi-hand-index-thumb me-2"></i>
+        <span>Constructor de Transferencias Manuales</span>
+      </div>
+      <button class="btn btn-sm rebal-btn-toggle" type="button" data-bs-toggle="collapse" data-bs-target="#manualTransferBody">
+        <i class="bi bi-chevron-down"></i>
+      </button>
+    </div>
+    <div class="collapse show" id="manualTransferBody">
+      <div class="rebal-card-body">
+        <p class="rebal-manual-subtitle">Selecciona tienda origen, destino y SKUs para crear un plan de transferencia personalizado.</p>
+        
+        <form id="manualTransferForm" enctype="multipart/form-data">
+          <div class="rebal-manual-grid">
+            <div class="rebal-field">
+              <label class="rebal-label">Tienda Origen (Donante)</label>
+              <select name="from_store_id" id="mtFromStore" class="form-select" required>
+                <option value="">-- Seleccionar --</option>
+                {% for store in stores %}
+                <option value="{{ store.id }}">{{ store.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="rebal-field">
+              <label class="rebal-label">Tienda Destino (Receptora)</label>
+              <select name="to_store_id" id="mtToStore" class="form-select" required>
+                <option value="">-- Seleccionar --</option>
+                {% for store in stores %}
+                <option value="{{ store.id }}">{{ store.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="rebal-field">
+              <label class="rebal-label">Stock mínimo a retener</label>
+              <input type="number" name="donor_floor" id="mtDonorFloor" class="form-control" value="1" min="0">
+            </div>
+          </div>
+
+          <div class="rebal-manual-input-section">
+            <div class="rebal-field">
+              <label class="rebal-label">Archivo CSV/Excel (columnas: sku, qty)</label>
+              <input type="file" name="items_file" id="mtItemsFile" class="form-control" accept=".csv,.xlsx,.xls">
+              <small class="text-muted">O pega la lista de SKUs abajo</small>
+            </div>
+            <div class="rebal-field">
+              <label class="rebal-label">Lista de SKUs (una línea por SKU: sku,cantidad)</label>
+              <textarea name="items_text" id="mtItemsText" class="form-control" rows="4" placeholder="Ejemplo:&#10;SKU001,5&#10;SKU002,10&#10;SKU003,3"></textarea>
+            </div>
+          </div>
+
+          <div class="rebal-manual-actions">
+            <button type="submit" class="btn rebal-btn-primary" id="mtValidateBtn">
+              <i class="bi bi-check2-circle me-1"></i>Validar transferencias
+            </button>
+          </div>
+        </form>
+
+        <div id="mtValidationResults" class="rebal-manual-results" style="display:none;">
+          <div class="rebal-manual-results-header">
+            <h5><i class="bi bi-list-check me-2"></i>Resultados de Validación</h5>
+            <div class="rebal-manual-results-summary">
+              <span class="mt-badge mt-badge-ok" id="mtOkCount">0 OK</span>
+              <span class="mt-badge mt-badge-warn" id="mtWarnCount">0 Advertencias</span>
+              <span class="mt-badge mt-badge-error" id="mtErrorCount">0 Errores</span>
+            </div>
+          </div>
+          <div class="rebal-table-wrap">
+            <table class="rebal-table rebal-manual-table">
+              <thead>
+                <tr>
+                  <th>SKU</th>
+                  <th>Producto</th>
+                  <th>Cantidad</th>
+                  <th>Stock Origen</th>
+                  <th>Estado</th>
+                  <th>Notas</th>
+                </tr>
+              </thead>
+              <tbody id="mtValidationBody"></tbody>
+            </table>
+          </div>
+          <div class="rebal-manual-actions mt-3">
+            <button type="button" class="btn rebal-btn-success" id="mtAddToPlanBtn">
+              <i class="bi bi-plus-circle me-1"></i>Agregar al plan
+            </button>
+            <button type="button" class="btn rebal-btn-secondary" id="mtClearValidationBtn">
+              <i class="bi bi-x-circle me-1"></i>Limpiar validación
+            </button>
+          </div>
+        </div>
+
+        <hr class="rebal-manual-divider">
+
+        <div class="rebal-manual-plan-section">
+          <div class="rebal-manual-plan-header">
+            <h5><i class="bi bi-clipboard-data me-2"></i>Plan de Transferencia Manual</h5>
+            <span class="rebal-table-badge" id="mtPlanCount">0 items</span>
+          </div>
+          <div class="rebal-table-wrap">
+            <table class="rebal-table rebal-manual-table">
+              <thead>
+                <tr>
+                  <th>SKU</th>
+                  <th>Producto</th>
+                  <th>Tienda Origen</th>
+                  <th>Tienda Destino</th>
+                  <th class="text-end">Cantidad</th>
+                  <th>Estado</th>
+                  <th>Notas</th>
+                  <th class="text-center">Acción</th>
+                </tr>
+              </thead>
+              <tbody id="mtPlanBody">
+                <tr class="rebal-empty-row">
+                  <td colspan="8" class="text-center text-muted py-4">
+                    <i class="bi bi-inbox me-2"></i>El plan está vacío. Valida y agrega SKUs arriba.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="rebal-manual-actions mt-3">
+            <a href="{{ url_for('manual_transfer_export') }}" class="btn rebal-btn-secondary" id="mtExportBtn">
+              <i class="bi bi-download me-1"></i>Exportar plan (Excel)
+            </a>
+            <button type="button" class="btn rebal-btn-danger" id="mtClearPlanBtn">
+              <i class="bi bi-trash me-1"></i>Limpiar plan
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  let validatedItems = [];
+  let validationContext = {};
+
+  const form = document.getElementById('manualTransferForm');
+  const resultsDiv = document.getElementById('mtValidationResults');
+  const validationBody = document.getElementById('mtValidationBody');
+  const planBody = document.getElementById('mtPlanBody');
+
+  if (form) {
+    form.addEventListener('submit', function(e) {
+      e.preventDefault();
+      
+      const fromStore = document.getElementById('mtFromStore').value;
+      const toStore = document.getElementById('mtToStore').value;
+      
+      if (!fromStore || !toStore) {
+        alert('Selecciona tienda origen y destino');
+        return;
+      }
+      
+      if (fromStore === toStore) {
+        alert('Tienda origen no puede ser igual a destino');
+        return;
+      }
+      
+      const formData = new FormData(form);
+      const btn = document.getElementById('mtValidateBtn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Validando...';
+      
+      fetch('/rebalancing/manual/validate', {
+        method: 'POST',
+        body: formData
+      })
+      .then(r => r.json())
+      .then(data => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Validar transferencias';
+        
+        if (data.error) {
+          alert(data.error);
+          return;
+        }
+        
+        validatedItems = data.items;
+        validationContext = {
+          from_store_id: data.from_store_id,
+          to_store_id: data.to_store_id,
+          from_store: data.from_store,
+          to_store: data.to_store
+        };
+        
+        document.getElementById('mtOkCount').textContent = data.ok_count + ' OK';
+        document.getElementById('mtWarnCount').textContent = data.warning_count + ' Advertencias';
+        document.getElementById('mtErrorCount').textContent = data.error_count + ' Errores';
+        
+        validationBody.innerHTML = '';
+        data.items.forEach(item => {
+          const statusClass = item.status === 'OK' ? 'mt-status-ok' : 
+                             (item.status === 'WARNING' ? 'mt-status-warn' : 'mt-status-error');
+          validationBody.innerHTML += `
+            <tr>
+              <td><code class="rebal-sku">${item.sku}</code></td>
+              <td class="rebal-name">${item.product_name}</td>
+              <td class="text-end">${item.qty}</td>
+              <td class="text-end">${item.donor_stock}</td>
+              <td><span class="mt-status ${statusClass}">${item.status}</span></td>
+              <td class="text-muted">${item.notes || '-'}</td>
+            </tr>
+          `;
+        });
+        
+        resultsDiv.style.display = 'block';
+      })
+      .catch(err => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Validar transferencias';
+        alert('Error: ' + err.message);
+      });
+    });
+  }
+
+  document.getElementById('mtAddToPlanBtn')?.addEventListener('click', function() {
+    const validItems = validatedItems.filter(i => i.status === 'OK' || i.status === 'WARNING');
+    
+    if (validItems.length === 0) {
+      alert('No hay items válidos para agregar');
+      return;
+    }
+    
+    const btn = this;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Agregando...';
+    
+    fetch('/rebalancing/manual/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from_store_id: validationContext.from_store_id,
+        to_store_id: validationContext.to_store_id,
+        items: validItems
+      })
+    })
+    .then(r => r.json())
+    .then(data => {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-plus-circle me-1"></i>Agregar al plan';
+      
+      if (data.error) {
+        alert(data.error);
+        return;
+      }
+      
+      loadPlanItems();
+      resultsDiv.style.display = 'none';
+      validatedItems = [];
+      document.getElementById('mtItemsFile').value = '';
+      document.getElementById('mtItemsText').value = '';
+    })
+    .catch(err => {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-plus-circle me-1"></i>Agregar al plan';
+      alert('Error: ' + err.message);
+    });
+  });
+
+  document.getElementById('mtClearValidationBtn')?.addEventListener('click', function() {
+    resultsDiv.style.display = 'none';
+    validatedItems = [];
+  });
+
+  document.getElementById('mtClearPlanBtn')?.addEventListener('click', function() {
+    if (!confirm('¿Estás seguro de limpiar todo el plan de transferencia?')) return;
+    
+    fetch('/rebalancing/manual/clear', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      loadPlanItems();
+    });
+  });
+
+  function loadPlanItems() {
+    fetch('/rebalancing/manual/items')
+    .then(r => r.json())
+    .then(data => {
+      const items = data.items || [];
+      document.getElementById('mtPlanCount').textContent = items.length + ' items';
+      
+      if (items.length === 0) {
+        planBody.innerHTML = `
+          <tr class="rebal-empty-row">
+            <td colspan="8" class="text-center text-muted py-4">
+              <i class="bi bi-inbox me-2"></i>El plan está vacío. Valida y agrega SKUs arriba.
+            </td>
+          </tr>
+        `;
+        return;
+      }
+      
+      planBody.innerHTML = '';
+      items.forEach(item => {
+        const statusClass = item.status === 'OK' ? 'mt-status-ok' : 
+                           (item.status === 'WARNING' ? 'mt-status-warn' : 'mt-status-error');
+        planBody.innerHTML += `
+          <tr>
+            <td><code class="rebal-sku">${item.sku}</code></td>
+            <td class="rebal-name">${item.product_name}</td>
+            <td><span class="badge-donor">${item.from_store}</span></td>
+            <td><span class="badge-receiver">${item.to_store}</span></td>
+            <td class="text-end fw-bold">${item.qty}</td>
+            <td><span class="mt-status ${statusClass}">${item.status}</span></td>
+            <td class="text-muted">${item.notes || '-'}</td>
+            <td class="text-center">
+              <button class="btn btn-sm btn-outline-danger mt-remove-btn" data-id="${item.id}">
+                <i class="bi bi-trash"></i>
+              </button>
+            </td>
+          </tr>
+        `;
+      });
+      
+      document.querySelectorAll('.mt-remove-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+          const itemId = this.dataset.id;
+          fetch('/rebalancing/manual/remove/' + itemId, { method: 'POST' })
+          .then(r => r.json())
+          .then(data => {
+            if (data.success) loadPlanItems();
+          });
+        });
+      });
+    });
+  }
+
+  loadPlanItems();
+});
+</script>
 
 {% endblock %}

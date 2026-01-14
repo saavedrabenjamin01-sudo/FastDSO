@@ -1,0 +1,100 @@
+Add a NEW “Manual Transfer Builder” feature to the existing Store-to-Store Redistribution module, without modifying or breaking the current automatic suggestion logic.
+
+GOAL
+Keep the current automatic redistribution engine exactly as-is, but add an additional manual workflow where the user can choose:
+- Donor store
+- Receiver store
+- One or many SKUs
+- Transfer quantities
+and export/save this manual transfer plan.
+
+STRICT RULES
+1) Do NOT remove or change the existing auto-suggestions logic, UI, thresholds (WOC), or exports.
+2) Manual mode must be an additional section (tab or collapsible card) inside the redistribution page.
+3) Do NOT change existing routes unless necessary. Prefer adding new routes for manual actions.
+4) Respect existing permissions (e.g., only roles with redistribution permissions can use it).
+
+FEATURE REQUIREMENTS
+
+A) UI: Add a “Manual Transfer” section
+Inside the redistribution page (rebalancing.html), add a new card section:
+Title: “Manual Transfer Builder”
+Subtitle: “Select donor, destination and SKUs to create a transfer plan.”
+
+Fields:
+1) Donor store dropdown (required)
+2) Destination store dropdown (required)
+3) SKU selection:
+   - Support MULTI-SKU selection in a practical way:
+     Option 1 (preferred): upload a small CSV/XLSX with columns:
+       sku, qty
+     Option 2: paste list (textarea) with lines: sku,qty
+     Option 3: multi-select input (if already available)
+   Choose the simplest robust option (CSV upload + optional paste list).
+4) Validate button: “Validate transfers”
+5) Action button: “Add to manual plan”
+
+Below, show a table:
+- SKU | Product | Donor store | Destination store | Qty | Status | Notes
+Status examples:
+- OK
+- Exceeds donor stock
+- Unknown SKU
+- Destination same as donor (invalid)
+
+Buttons:
+- “Export manual plan” (Excel)
+- “Clear manual plan”
+- Optional (V1.1): “Apply transfers” (NOT required now; keep as future)
+
+B) Validation logic (must be accurate)
+For each SKU row:
+- Ensure SKU exists (Product)
+- Ensure donor != destination
+- Get latest store stock snapshot for donor store and SKU (StockSnapshot latest date)
+- If qty <= donor_stock_available - donor_floor (donor_floor configurable, default 1), mark OK
+- Else mark error and cap suggestion optionally (do not auto-correct unless user confirms)
+- Destination stock is optional display info (nice to show, not required)
+
+C) Manual plan storage (lightweight)
+Choose one:
+Option 1: store manual plan rows in DB (recommended for traceability):
+- New models:
+  ManualTransferRun (run_id uuid, created_at, created_by_user_id)
+  ManualTransferItem (run_id, product_id, from_store_id, to_store_id, qty, status, notes)
+Option 2: store in server session
+Prefer DB for traceability and export consistency.
+
+D) Integration with existing module (must not mix)
+- Auto suggestions remain separate and unchanged.
+- Manual plan is separate section and export.
+- Do NOT modify auto suggestion export files.
+
+E) Export
+Add an export endpoint:
+- /rebalancing/manual/export?run_id=...
+Export columns:
+sku (as text), product_name, from_store, to_store, qty, status, notes
+Preserve leading zeros in SKU.
+
+F) UX
+- Use same visual style as current module (cards, zebra tables, sticky header).
+- Use loader popup on “Validate transfers” and “Export”.
+
+DELIVERABLES
+- Updated template rebalancing.html with new “Manual Transfer Builder” card
+- New routes:
+  - POST /rebalancing/manual/validate (or combined submit)
+  - POST /rebalancing/manual/add
+  - GET /rebalancing/manual/export
+  - POST /rebalancing/manual/clear
+- New models if DB storage chosen
+- No regressions in existing automatic redistribution flow.
+
+ACCEPTANCE TESTS
+1) Auto redistribution still works exactly as before.
+2) Manual transfer:
+   - Pick donor/destination, upload 5 SKUs with qty
+   - See validation statuses
+   - Export manual plan succeeds
+3) Validation prevents donor == destination and over-allocations.

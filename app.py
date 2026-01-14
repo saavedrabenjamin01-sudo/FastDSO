@@ -339,6 +339,37 @@ class RebalanceSuggestion(db.Model):
     run = db.relationship('RebalanceRun', backref='suggestions')
 
 
+class ManualTransferRun(db.Model):
+    """Run metadata for manual transfer plans."""
+    __tablename__ = 'manual_transfer_run'
+    id = db.Column(db.Integer, primary_key=True)
+    run_id = db.Column(db.String(36), unique=True, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='draft')
+
+    user = db.relationship('User', backref='manual_transfer_runs')
+
+
+class ManualTransferItem(db.Model):
+    """Individual item in a manual transfer plan."""
+    __tablename__ = 'manual_transfer_item'
+    id = db.Column(db.Integer, primary_key=True)
+    run_id = db.Column(db.String(36), db.ForeignKey('manual_transfer_run.run_id'), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    from_store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False)
+    to_store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False)
+    qty = db.Column(db.Integer, nullable=False)
+    status = db.Column(db.String(30), nullable=False, default='pending')
+    notes = db.Column(db.String(255), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    product = db.relationship('Product')
+    from_store = db.relationship('Store', foreign_keys=[from_store_id])
+    to_store = db.relationship('Store', foreign_keys=[to_store_id])
+    run = db.relationship('ManualTransferRun', backref='items')
+
+
 class Job(db.Model):
     """Background job tracking for long-running operations."""
     __tablename__ = 'job'
@@ -4207,6 +4238,380 @@ def export_rebalancing():
         download_name=filename,
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
+
+
+# ------------------ Manual Transfer Builder Routes ------------------
+
+@app.route('/rebalancing/manual/validate', methods=['POST'])
+@login_required
+@require_permission('rebalancing:run')
+def manual_transfer_validate():
+    """Validate manual transfer items from CSV/paste input."""
+    from_store_id = request.form.get('from_store_id', type=int)
+    to_store_id = request.form.get('to_store_id', type=int)
+    donor_floor = request.form.get('donor_floor', 1, type=int)
+    
+    if not from_store_id or not to_store_id:
+        return jsonify({'error': 'Tienda origen y destino son requeridas'}), 400
+    
+    if from_store_id == to_store_id:
+        return jsonify({'error': 'Tienda origen no puede ser igual a destino'}), 400
+    
+    from_store = Store.query.get(from_store_id)
+    to_store = Store.query.get(to_store_id)
+    
+    if not from_store or not to_store:
+        return jsonify({'error': 'Tienda no encontrada'}), 404
+    
+    items_text = request.form.get('items_text', '').strip()
+    items_file = request.files.get('items_file')
+    
+    sku_qty_list = []
+    
+    if items_file and items_file.filename:
+        try:
+            filename = items_file.filename.lower()
+            if filename.endswith('.csv'):
+                import csv
+                import io
+                content = items_file.read().decode('utf-8-sig')
+                reader = csv.DictReader(io.StringIO(content))
+                for row in reader:
+                    sku = str(row.get('sku', row.get('SKU', ''))).strip()
+                    qty_str = str(row.get('qty', row.get('QTY', row.get('cantidad', row.get('Cantidad', '0'))))).strip()
+                    try:
+                        qty = int(float(qty_str))
+                    except:
+                        qty = 0
+                    if sku and qty > 0:
+                        sku_qty_list.append((sku, qty))
+            elif filename.endswith('.xlsx') or filename.endswith('.xls'):
+                df = pd.read_excel(items_file)
+                df.columns = [c.lower().strip() for c in df.columns]
+                for _, row in df.iterrows():
+                    sku = str(row.get('sku', '')).strip()
+                    qty = int(row.get('qty', row.get('cantidad', 0)) or 0)
+                    if sku and qty > 0:
+                        sku_qty_list.append((sku, qty))
+        except Exception as e:
+            return jsonify({'error': f'Error leyendo archivo: {str(e)}'}), 400
+    
+    if items_text and not sku_qty_list:
+        for line in items_text.split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.replace(';', ',').split(',')
+            if len(parts) >= 2:
+                sku = parts[0].strip()
+                try:
+                    qty = int(float(parts[1].strip()))
+                except:
+                    qty = 0
+                if sku and qty > 0:
+                    sku_qty_list.append((sku, qty))
+    
+    if not sku_qty_list:
+        return jsonify({'error': 'No se encontraron SKUs válidos en el archivo o texto'}), 400
+    
+    latest_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
+    
+    donor_stock = {}
+    if latest_date:
+        stock_rows = StockSnapshot.query.filter(
+            StockSnapshot.store_id == from_store_id,
+            StockSnapshot.as_of_date == latest_date
+        ).all()
+        for ss in stock_rows:
+            if ss.product:
+                donor_stock[ss.product.sku] = ss.quantity
+    
+    results = []
+    for sku, qty in sku_qty_list:
+        product = Product.query.filter_by(sku=sku).first()
+        
+        if not product:
+            results.append({
+                'sku': sku,
+                'product_name': '-',
+                'product_id': None,
+                'qty': qty,
+                'status': 'ERROR',
+                'notes': 'SKU no encontrado',
+                'donor_stock': 0
+            })
+            continue
+        
+        available = donor_stock.get(sku, 0)
+        max_transferable = max(0, available - donor_floor)
+        
+        if qty > max_transferable:
+            if available == 0:
+                status = 'ERROR'
+                notes = 'Sin stock en tienda origen'
+            else:
+                status = 'WARNING'
+                notes = f'Excede stock disponible (max: {max_transferable})'
+        else:
+            status = 'OK'
+            notes = ''
+        
+        results.append({
+            'sku': sku,
+            'product_name': product.name,
+            'product_id': product.id,
+            'qty': qty,
+            'status': status,
+            'notes': notes,
+            'donor_stock': available
+        })
+    
+    return jsonify({
+        'from_store': from_store.name,
+        'to_store': to_store.name,
+        'from_store_id': from_store_id,
+        'to_store_id': to_store_id,
+        'items': results,
+        'total_items': len(results),
+        'ok_count': sum(1 for r in results if r['status'] == 'OK'),
+        'warning_count': sum(1 for r in results if r['status'] == 'WARNING'),
+        'error_count': sum(1 for r in results if r['status'] == 'ERROR')
+    })
+
+
+@app.route('/rebalancing/manual/add', methods=['POST'])
+@login_required
+@require_permission('rebalancing:run')
+def manual_transfer_add():
+    """Add validated items to the current manual transfer plan."""
+    data = request.get_json()
+    
+    if not data:
+        return jsonify({'error': 'Datos no proporcionados'}), 400
+    
+    from_store_id = data.get('from_store_id')
+    to_store_id = data.get('to_store_id')
+    items = data.get('items', [])
+    
+    if not from_store_id or not to_store_id:
+        return jsonify({'error': 'Tienda origen y destino son requeridas'}), 400
+    
+    if from_store_id == to_store_id:
+        return jsonify({'error': 'Tienda origen no puede ser igual a destino'}), 400
+    
+    valid_items = [i for i in items if i.get('product_id') and i.get('status') in ('OK', 'WARNING')]
+    
+    if not valid_items:
+        return jsonify({'error': 'No hay items válidos para agregar'}), 400
+    
+    current_run = ManualTransferRun.query.filter_by(
+        created_by_user_id=current_user.id,
+        status='draft'
+    ).first()
+    
+    if not current_run:
+        run_id = str(uuid.uuid4())
+        current_run = ManualTransferRun(
+            run_id=run_id,
+            created_by_user_id=current_user.id,
+            status='draft'
+        )
+        db.session.add(current_run)
+        db.session.flush()
+    
+    added_count = 0
+    for item in valid_items:
+        existing = ManualTransferItem.query.filter_by(
+            run_id=current_run.run_id,
+            product_id=item['product_id'],
+            from_store_id=from_store_id,
+            to_store_id=to_store_id
+        ).first()
+        
+        if existing:
+            existing.qty = item['qty']
+            existing.status = item['status']
+            existing.notes = item.get('notes', '')
+        else:
+            new_item = ManualTransferItem(
+                run_id=current_run.run_id,
+                product_id=item['product_id'],
+                from_store_id=from_store_id,
+                to_store_id=to_store_id,
+                qty=item['qty'],
+                status=item['status'],
+                notes=item.get('notes', '')
+            )
+            db.session.add(new_item)
+            added_count += 1
+    
+    db.session.commit()
+    
+    total_items = ManualTransferItem.query.filter_by(run_id=current_run.run_id).count()
+    
+    log_audit(
+        action='manual_transfer.add',
+        status='success',
+        message=f'Added {added_count} items to manual transfer plan',
+        entity_type='ManualTransferRun',
+        run_id=current_run.run_id
+    )
+    
+    return jsonify({
+        'success': True,
+        'run_id': current_run.run_id,
+        'added_count': added_count,
+        'total_items': total_items
+    })
+
+
+@app.route('/rebalancing/manual/items', methods=['GET'])
+@login_required
+@require_permission('rebalancing:view')
+def manual_transfer_items():
+    """Get current manual transfer plan items."""
+    current_run = ManualTransferRun.query.filter_by(
+        created_by_user_id=current_user.id,
+        status='draft'
+    ).first()
+    
+    if not current_run:
+        return jsonify({'items': [], 'run_id': None})
+    
+    items = ManualTransferItem.query.filter_by(run_id=current_run.run_id).all()
+    
+    return jsonify({
+        'run_id': current_run.run_id,
+        'items': [{
+            'id': i.id,
+            'sku': i.product.sku if i.product else '',
+            'product_name': i.product.name if i.product else '',
+            'from_store': i.from_store.name if i.from_store else '',
+            'to_store': i.to_store.name if i.to_store else '',
+            'qty': i.qty,
+            'status': i.status,
+            'notes': i.notes
+        } for i in items]
+    })
+
+
+@app.route('/rebalancing/manual/clear', methods=['POST'])
+@login_required
+@require_permission('rebalancing:run')
+def manual_transfer_clear():
+    """Clear the current manual transfer plan."""
+    current_run = ManualTransferRun.query.filter_by(
+        created_by_user_id=current_user.id,
+        status='draft'
+    ).first()
+    
+    if current_run:
+        ManualTransferItem.query.filter_by(run_id=current_run.run_id).delete()
+        db.session.delete(current_run)
+        db.session.commit()
+        
+        log_audit(
+            action='manual_transfer.clear',
+            status='success',
+            message='Cleared manual transfer plan',
+            entity_type='ManualTransferRun',
+            run_id=current_run.run_id
+        )
+    
+    return jsonify({'success': True})
+
+
+@app.route('/rebalancing/manual/export', methods=['GET'])
+@login_required
+@require_permission('rebalancing:view')
+def manual_transfer_export():
+    """Export manual transfer plan to Excel."""
+    run_id = request.args.get('run_id', '').strip()
+    
+    if not run_id:
+        current_run = ManualTransferRun.query.filter_by(
+            created_by_user_id=current_user.id,
+            status='draft'
+        ).first()
+        if current_run:
+            run_id = current_run.run_id
+    
+    if not run_id:
+        flash('No hay plan de transferencia manual activo.', 'warning')
+        return redirect(url_for('rebalancing'))
+    
+    items = ManualTransferItem.query.filter_by(run_id=run_id).all()
+    
+    if not items:
+        flash('El plan de transferencia está vacío.', 'warning')
+        return redirect(url_for('rebalancing'))
+    
+    rows = []
+    for i in items:
+        rows.append({
+            'SKU': str(i.product.sku) if i.product else '',
+            'Producto': i.product.name if i.product else '',
+            'Tienda Origen': i.from_store.name if i.from_store else '',
+            'Tienda Destino': i.to_store.name if i.to_store else '',
+            'Cantidad': i.qty,
+            'Estado': i.status,
+            'Notas': i.notes or ''
+        })
+    
+    df = pd.DataFrame(rows)
+    
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Transferencia Manual')
+        
+        workbook = writer.book
+        worksheet = writer.sheets['Transferencia Manual']
+        
+        for col_cells in worksheet.columns:
+            col_letter = col_cells[0].column_letter
+            if col_letter == 'A':
+                worksheet.column_dimensions[col_letter].number_format = '@'
+                for cell in col_cells[1:]:
+                    cell.number_format = '@'
+    
+    output.seek(0)
+    
+    filename = f"transferencia_manual_{run_id[:8]}_{date.today().isoformat()}.xlsx"
+    
+    log_audit(
+        action='manual_transfer.export',
+        status='success',
+        message=f'Exported {len(rows)} manual transfer items',
+        entity_type='ManualTransferRun',
+        run_id=run_id
+    )
+    
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+
+
+@app.route('/rebalancing/manual/remove/<int:item_id>', methods=['POST'])
+@login_required
+@require_permission('rebalancing:run')
+def manual_transfer_remove_item(item_id):
+    """Remove a single item from the manual transfer plan."""
+    item = ManualTransferItem.query.get(item_id)
+    
+    if not item:
+        return jsonify({'error': 'Item no encontrado'}), 404
+    
+    run = ManualTransferRun.query.filter_by(run_id=item.run_id).first()
+    if not run or run.created_by_user_id != current_user.id:
+        return jsonify({'error': 'No tienes permiso para modificar este plan'}), 403
+    
+    db.session.delete(item)
+    db.session.commit()
+    
+    return jsonify({'success': True})
 
 
 @app.route('/export_simulation/<sim_type>', methods=['GET'])

@@ -2553,6 +2553,171 @@ body{
 .impact-med { background: rgba(255,193,7,.16); color:#664d03; border:1px solid rgba(255,193,7,.22); }
 .impact-low { background: rgba(108,117,125,.12); color:#343a40; border:1px solid rgba(108,117,125,.18); }
 
+/* ========== Manual Transfer Builder ========== */
+.rebal-manual-card {
+  margin-top: 24px;
+  border: 1px solid #e2e8f0;
+}
+.rebal-manual-card .rebal-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.rebal-btn-toggle {
+  background: transparent;
+  border: none;
+  color: #64748b;
+  padding: 4px 8px;
+}
+.rebal-btn-toggle:hover {
+  color: #1e293b;
+}
+.rebal-manual-subtitle {
+  font-size: 0.88rem;
+  color: #64748b;
+  margin-bottom: 16px;
+}
+.rebal-manual-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.rebal-manual-input-section {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.rebal-manual-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.rebal-btn-success {
+  background: linear-gradient(135deg, #16a34a, #15803d);
+  color: #fff;
+  border: none;
+  font-weight: 600;
+  padding: 10px 20px;
+  border-radius: 8px;
+}
+.rebal-btn-success:hover {
+  background: linear-gradient(135deg, #15803d, #166534);
+  color: #fff;
+}
+.rebal-btn-danger {
+  background: linear-gradient(135deg, #dc2626, #b91c1c);
+  color: #fff;
+  border: none;
+  font-weight: 600;
+  padding: 10px 20px;
+  border-radius: 8px;
+}
+.rebal-btn-danger:hover {
+  background: linear-gradient(135deg, #b91c1c, #991b1b);
+  color: #fff;
+}
+.rebal-manual-results {
+  margin-top: 20px;
+  padding: 16px;
+  background: #f8fafc;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+}
+.rebal-manual-results-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.rebal-manual-results-header h5 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+.rebal-manual-results-summary {
+  display: flex;
+  gap: 10px;
+}
+.mt-badge {
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.mt-badge-ok {
+  background: #dcfce7;
+  color: #166534;
+}
+.mt-badge-warn {
+  background: #fef3c7;
+  color: #92400e;
+}
+.mt-badge-error {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+.mt-status {
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  display: inline-block;
+}
+.mt-status-ok {
+  background: #dcfce7;
+  color: #166534;
+}
+.mt-status-warn {
+  background: #fef3c7;
+  color: #92400e;
+}
+.mt-status-error {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+.rebal-manual-divider {
+  margin: 24px 0;
+  border-color: #e2e8f0;
+}
+.rebal-manual-plan-section {
+  margin-top: 16px;
+}
+.rebal-manual-plan-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.rebal-manual-plan-header h5 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+.rebal-manual-table tbody tr:hover {
+  background: #f1f5f9;
+}
+.mt-remove-btn {
+  padding: 4px 8px;
+  font-size: 0.75rem;
+}
+@media (max-width: 768px) {
+  .rebal-manual-grid {
+    grid-template-columns: 1fr;
+  }
+  .rebal-manual-input-section {
+    grid-template-columns: 1fr;
+  }
+  .rebal-manual-results-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+}
+
 /* =============================================
    RUNS CENTER PAGE STYLES
    ============================================= */
