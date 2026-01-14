@@ -54,62 +54,49 @@
   </div>
   {% endif %}
 
-  {# TOP ALERTS PANEL #}
-  {% if top_alerts is defined and top_alerts and top_alerts|length > 0 %}
-  <div class="dash-alerts-panel">
-    <div class="dash-alerts-header">
-      <div class="dash-alerts-title-group">
-        <i class="bi bi-bell-fill dash-alerts-icon"></i>
-        <span class="dash-alerts-title">Alertas Críticas</span>
-        {% if alerts_count_high is defined and alerts_count_high > 0 %}
-        <span class="dash-alerts-count-badge">{{ alerts_count_high }} alta{{ 's' if alerts_count_high > 1 else '' }}</span>
+  {# ALERTS SUMMARY WIDGET (lightweight) #}
+  {% if alerts_summary is defined and alerts_summary.total_count > 0 %}
+  <div class="alerts-summary-widget">
+    <div class="alerts-summary-header">
+      <div class="alerts-summary-title-group">
+        <i class="bi bi-bell-fill alerts-summary-icon"></i>
+        <span class="alerts-summary-title">Alertas</span>
+        <span class="alerts-summary-total">{{ alerts_summary.total_count }}</span>
+      </div>
+      <a href="{{ url_for('alerts_page') }}" class="btn btn-sm btn-primary alerts-summary-btn">
+        <i class="bi bi-arrow-right me-1"></i>Ver alertas
+      </a>
+    </div>
+    <div class="alerts-summary-content">
+      <div class="alerts-summary-chips">
+        <div class="alerts-chip alerts-chip-high">
+          <span class="alerts-chip-count">{{ alerts_summary.high_count }}</span>
+          <span class="alerts-chip-label">Alta</span>
+        </div>
+        <div class="alerts-chip alerts-chip-medium">
+          <span class="alerts-chip-count">{{ alerts_summary.medium_count }}</span>
+          <span class="alerts-chip-label">Media</span>
+        </div>
+        <div class="alerts-chip alerts-chip-low">
+          <span class="alerts-chip-count">{{ alerts_summary.low_count }}</span>
+          <span class="alerts-chip-label">Baja</span>
+        </div>
+      </div>
+      {% set total = alerts_summary.total_count if alerts_summary.total_count > 0 else 1 %}
+      {% set high_pct = (alerts_summary.high_count / total * 100)|round|int %}
+      {% set medium_pct = (alerts_summary.medium_count / total * 100)|round|int %}
+      {% set low_pct = (alerts_summary.low_count / total * 100)|round|int %}
+      <div class="alerts-summary-bar">
+        {% if alerts_summary.high_count > 0 %}
+        <div class="alerts-bar-segment alerts-bar-high" style="width: {{ high_pct }}%;" title="Alta: {{ alerts_summary.high_count }}"></div>
+        {% endif %}
+        {% if alerts_summary.medium_count > 0 %}
+        <div class="alerts-bar-segment alerts-bar-medium" style="width: {{ medium_pct }}%;" title="Media: {{ alerts_summary.medium_count }}"></div>
+        {% endif %}
+        {% if alerts_summary.low_count > 0 %}
+        <div class="alerts-bar-segment alerts-bar-low" style="width: {{ low_pct }}%;" title="Baja: {{ alerts_summary.low_count }}"></div>
         {% endif %}
       </div>
-      <a href="{{ url_for('alerts_page') }}" class="btn btn-sm btn-outline-primary">Ver todas</a>
-    </div>
-    <div class="dash-alerts-table-wrap">
-      <table class="table table-sm mb-0 dash-alerts-table">
-        <thead>
-          <tr>
-            <th style="width:70px;">Sev.</th>
-            <th style="width:100px;">Tipo</th>
-            <th>SKU</th>
-            <th>Producto</th>
-            <th>Ubicación</th>
-            <th>Razón</th>
-            <th>Acción</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for alert in top_alerts %}
-          <tr>
-            <td>
-              {% if alert.severity == 'HIGH' %}
-              <span class="dash-alert-badge dash-alert-high">Alta</span>
-              {% elif alert.severity == 'MEDIUM' %}
-              <span class="dash-alert-badge dash-alert-medium">Media</span>
-              {% else %}
-              <span class="dash-alert-badge dash-alert-low">Baja</span>
-              {% endif %}
-            </td>
-            <td>
-              {% if alert.type == 'PROJECTED_STOCKOUT' %}
-              <span class="dash-alert-type-pill dash-alert-type-stockout">Quiebre</span>
-              {% elif alert.type == 'OVERSTOCK' %}
-              <span class="dash-alert-type-pill dash-alert-type-overstock">Sobre</span>
-              {% else %}
-              <span class="dash-alert-type-pill dash-alert-type-silent">Muerto</span>
-              {% endif %}
-            </td>
-            <td class="dashv1-mono">{{ alert.sku }}</td>
-            <td>{{ alert.product_name[:30] }}{% if alert.product_name|length > 30 %}...{% endif %}</td>
-            <td>{{ alert.location }}</td>
-            <td class="text-muted">{{ alert.reason }}</td>
-            <td><span class="dash-alert-action">{{ alert.action }}</span></td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
     </div>
   </div>
   {% endif %}

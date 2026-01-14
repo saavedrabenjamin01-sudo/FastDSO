@@ -1507,14 +1507,11 @@ def dashboard():
     # --- Lista de tiendas para el select ---
     stores = Store.query.order_by(Store.name.asc()).all()
     
-    # --- Top 10 alerts for dashboard panel ---
+    # --- Lightweight alerts summary for dashboard (cached) ---
     try:
-        all_alerts = compute_alerts()
-        top_alerts = all_alerts[:10]
-        alerts_count_high = sum(1 for a in all_alerts if a['severity'] == 'HIGH')
+        alerts_summary = get_alerts_summary(store_filter=store_filter)
     except Exception:
-        top_alerts = []
-        alerts_count_high = 0
+        alerts_summary = {'high_count': 0, 'medium_count': 0, 'low_count': 0, 'total_count': 0}
 
     return render_template(
         "dashboard.html",
@@ -1551,9 +1548,8 @@ def dashboard():
             if get_simulation_results(sim_type)
         },
 
-        # Alerts panel
-        top_alerts=top_alerts,
-        alerts_count_high=alerts_count_high,
+        # Alerts summary (lightweight)
+        alerts_summary=alerts_summary,
 
         # (opcional) por si después quieres mostrar “corrida actual”
         runs=runs,
@@ -5633,6 +5629,50 @@ ALERT_PARAMS = {
     'DEAD_DAYS_GLOBAL': 90,
     'RECENT_WINDOW_WEEKS': 4
 }
+
+_alerts_cache = {'data': None, 'time': 0}
+ALERTS_CACHE_TTL = 45
+
+
+def get_alerts_summary(store_filter=None):
+    """
+    Lightweight alerts summary with caching.
+    Returns {high_count, medium_count, low_count, total_count}.
+    
+    Strategy: Cache the full global alerts list once (45s TTL), then
+    derive store-filtered summaries from the cached list instantly.
+    This means only 1 expensive compute_alerts() call per cache period,
+    regardless of how many store-specific dashboard views are loaded.
+    """
+    import time
+    
+    now = time.time()
+    
+    if _alerts_cache['data'] is None or (now - _alerts_cache['time']) >= ALERTS_CACHE_TTL:
+        try:
+            _alerts_cache['data'] = compute_alerts()
+            _alerts_cache['time'] = now
+        except Exception:
+            _alerts_cache['data'] = []
+            _alerts_cache['time'] = now
+    
+    all_alerts = _alerts_cache['data']
+    
+    if store_filter:
+        all_alerts = [a for a in all_alerts 
+                     if a.get('location') == store_filter and a.get('location_type') == 'store']
+    
+    high_count = sum(1 for a in all_alerts if a['severity'] == 'HIGH')
+    medium_count = sum(1 for a in all_alerts if a['severity'] == 'MEDIUM')
+    low_count = sum(1 for a in all_alerts if a['severity'] == 'LOW')
+    total_count = high_count + medium_count + low_count
+    
+    return {
+        'high_count': high_count,
+        'medium_count': medium_count,
+        'low_count': low_count,
+        'total_count': total_count
+    }
 
 
 def compute_alerts(params=None):
