@@ -40,6 +40,14 @@ Do not make changes to the folder `Excel tipo/`.
 - **Advanced Forecasting (Forecast Compra V2)**: Comprehensive purchase forecasting incorporating lead time, safety stock, coverage, and various demand methods.
 - **Inventory Optimization**:
     - **Store-to-Store Rebalancing**: Suggests optimal stock transfers between stores based on Weeks of Cover (WOC) and sales velocity.
+    - **Manual Transfer Builder**: Additional workflow for creating custom transfer plans:
+        - Select donor and receiver stores manually
+        - Upload CSV/Excel with SKU and quantity columns, or paste list
+        - Validation checks: SKU existence, donor stock availability, donor != destination
+        - Status indicators: OK, WARNING (exceeds available), ERROR (unknown SKU)
+        - DB storage for traceability (ManualTransferRun, ManualTransferItem models)
+        - Export manual plan to Excel with SKU as text (preserves leading zeros)
+        - Routes: /rebalancing/manual/validate, /add, /items, /clear, /export, /remove
     - **Stock-out Replenishment (BREAK_REPLENISH)**: Automatically identifies and suggests replenishment for out-of-stock SKU-Store pairs with historical demand.
     - **Slow Stock & Smart Reallocation**: Extended dead/slow-moving inventory manager with configurable thresholds. Features include:
         - Configurable parameters: HISTORY_WINDOW_WEEKS (12), RECENT_WINDOW_WEEKS (4), DEAD_DAYS_STORE (60), DEAD_DAYS_GLOBAL (90), DEAD_PURCHASE_DAYS (120), SLOW_RATE_THRESHOLD (0.3), MIN_WOC (1.5), MAX_WOC (6.0)
