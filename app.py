@@ -3122,13 +3122,16 @@ def upload_stock():
 
         sku_col = cols_lower.get('sku') or cols_lower.get('codigo')
         prod_col = cols_lower.get('producto') or cols_lower.get('product') or cols_lower.get('product_name') or cols_lower.get('nombre')
+        cat_col = cols_lower.get('category') or cols_lower.get('categoria')
 
         if not sku_col:
             flash('El archivo debe tener columna "SKU" o "Codigo".', 'danger')
             return redirect(url_for('upload_stock'))
 
-        # columnas de tiendas = todo lo que no es SKU ni Producto
-        store_cols = [c for c in df.columns if c not in (sku_col, prod_col)]
+        # columnas de tiendas = todo lo que no es SKU, Producto, ni Category
+        excluded_cols = [sku_col, prod_col, cat_col] if cat_col else [sku_col, prod_col]
+        excluded_cols = [c for c in excluded_cols if c]  # filter None
+        store_cols = [c for c in df.columns if c not in excluded_cols]
         if not store_cols:
             flash('No se encontraron columnas de tiendas.', 'danger')
             return redirect(url_for('upload_stock'))
@@ -3137,6 +3140,11 @@ def upload_stock():
         df[sku_col] = df[sku_col].astype('string').str.strip()
         if prod_col:
             df[prod_col] = df[prod_col].astype('string').str.strip()
+        
+        # Optional category column normalization
+        if cat_col:
+            df[cat_col] = df[cat_col].astype('string').str.strip()
+            df[cat_col] = df[cat_col].replace(['', 'nan', 'None', 'NaN', '<NA>'], None)
 
         # pasar columnas de tiendas a int
         for sc in store_cols:
@@ -3170,14 +3178,27 @@ def upload_stock():
                 continue
 
             pname = row[prod_col] if prod_col and pd.notna(row[prod_col]) else sku
+            cat_val = None
+            if cat_col:
+                raw_cat = row.get(cat_col)
+                if raw_cat and pd.notna(raw_cat) and str(raw_cat) not in ['', 'nan', 'None', 'NaN', '<NA>']:
+                    cat_val = str(raw_cat).strip()
 
             # producto: usar cache o crear
             prod = existing_products.get(sku)
             if not prod:
                 prod = Product(sku=sku, name=str(pname))
+                if cat_val:
+                    prod.category = cat_val
                 db.session.add(prod)
                 db.session.flush()  # para tener prod.id
                 existing_products[sku] = prod  # meterlo al cache
+            elif cat_val:
+                # Update category for existing product if NULL
+                if not prod.category:
+                    prod.category = cat_val
+                elif prod.category != cat_val:
+                    print(f"Category mismatch for SKU {sku}: existing={prod.category}, incoming={cat_val}")
 
             # por cada tienda
             for sc in store_cols:
