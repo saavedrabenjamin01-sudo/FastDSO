@@ -110,12 +110,58 @@
   </div>
   {% endif %}
 
+  <div class="health-scope-card">
+    <div class="health-scope-header">
+      <div class="health-scope-title">
+        <i class="bi bi-funnel me-2"></i>Alcance de SKUs
+        <span class="health-scope-info" title="La salud de tiendas se mide contra el surtido activo, no el catálogo completo. Esto evita penalizar tiendas por SKUs que no deberían tener.">
+          <i class="bi bi-info-circle"></i>
+        </span>
+      </div>
+      <div class="health-scope-selector">
+        <button type="button" class="health-scope-btn {% if sku_scope == 'core' %}active{% endif %}" onclick="updateParam('scope', 'core')">
+          <i class="bi bi-star me-1"></i>Surtido Activo
+        </button>
+        <button type="button" class="health-scope-btn {% if sku_scope == 'runs' %}active{% endif %}" onclick="updateParam('scope', 'runs')">
+          <i class="bi bi-box-arrow-in-right me-1"></i>SKUs en Corridas
+        </button>
+        <button type="button" class="health-scope-btn {% if sku_scope == 'full' %}active{% endif %}" onclick="updateParam('scope', 'full')">
+          <i class="bi bi-collection me-1"></i>Catálogo Completo
+        </button>
+      </div>
+    </div>
+    {% if results and results.scope_info %}
+    <div class="health-scope-stats">
+      <div class="health-scope-stat health-scope-stat-primary">
+        <div class="health-scope-stat-value">{{ results.scope_info.skus_in_scope }}</div>
+        <div class="health-scope-stat-label">SKUs en alcance</div>
+      </div>
+      <div class="health-scope-stat health-scope-stat-muted">
+        <div class="health-scope-stat-value">{{ results.scope_info.skus_excluded }}</div>
+        <div class="health-scope-stat-label">SKUs excluidos</div>
+      </div>
+      <div class="health-scope-stat health-scope-stat-info">
+        <div class="health-scope-stat-value">{{ results.scope_info.total_catalog }}</div>
+        <div class="health-scope-stat-label">Total catálogo</div>
+      </div>
+      {% if results.scope_info.skus_excluded > 0 %}
+      <div class="health-scope-reasons">
+        <span class="health-scope-reason"><i class="bi bi-box me-1"></i>{{ results.scope_info.excluded_cd_only }} solo en CD</span>
+        <span class="health-scope-reason"><i class="bi bi-x-circle me-1"></i>{{ results.scope_info.excluded_no_store_stock }} sin stock tiendas</span>
+        <span class="health-scope-reason"><i class="bi bi-calendar-x me-1"></i>{{ results.scope_info.excluded_no_runs }} sin corridas recientes</span>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+
   <div class="health-card health-weights-card">
     <div class="health-card-header">
       <i class="bi bi-sliders me-2"></i>Ponderación de Métricas
     </div>
     <div class="health-card-body">
       <form method="GET" action="{{ url_for('store_health') }}" id="weightsForm">
+        <input type="hidden" name="scope" value="{{ sku_scope }}" />
         <div class="health-weights-grid">
           <div class="health-weight-field">
             <label class="health-label">Fill Rate</label>
@@ -153,7 +199,7 @@
           <a href="{{ url_for('store_health') }}" class="btn btn-sm health-btn-secondary">
             <i class="bi bi-arrow-counterclockwise me-1"></i>Restablecer
           </a>
-          <a href="{{ url_for('export_store_health') }}" class="btn btn-sm health-btn-export">
+          <a href="{{ url_for('export_store_health', scope=sku_scope) }}" class="btn btn-sm health-btn-export">
             <i class="bi bi-download me-1"></i>Exportar Excel
           </a>
         </div>

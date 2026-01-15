@@ -5258,6 +5258,100 @@ body{
 .health-kpi-purple { border-left: 4px solid #8b5cf6; }
 .health-kpi-purple .health-kpi-badge { background: linear-gradient(135deg, #ddd6fe 0%, #c4b5fd 100%); color: #5b21b6; }
 
+/* Store Health Scope Selector */
+.health-scope-card {
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+}
+.health-scope-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.health-scope-title {
+  display: flex;
+  align-items: center;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #374151;
+}
+.health-scope-info {
+  margin-left: 8px;
+  color: #6b7280;
+  cursor: help;
+}
+.health-scope-selector {
+  display: flex;
+  gap: 6px;
+}
+.health-scope-btn {
+  padding: 6px 12px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: #64748b;
+  background: white;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.health-scope-btn:hover {
+  background: #f9fafb;
+  border-color: #9ca3af;
+}
+.health-scope-btn.active {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: white;
+}
+.health-scope-stats {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 20px;
+  padding-top: 12px;
+  border-top: 1px solid #e5e7eb;
+}
+.health-scope-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.health-scope-stat-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+.health-scope-stat-label {
+  font-size: 0.72rem;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.health-scope-stat-primary .health-scope-stat-value { color: #3b82f6; }
+.health-scope-stat-muted .health-scope-stat-value { color: #9ca3af; }
+.health-scope-stat-info .health-scope-stat-value { color: #374151; }
+.health-scope-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-left: auto;
+}
+.health-scope-reason {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.72rem;
+  color: #6b7280;
+  background: rgba(0,0,0,0.03);
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
 .health-card {
   background: #fff;
   border-radius: 12px;

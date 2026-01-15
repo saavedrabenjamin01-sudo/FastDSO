@@ -5836,7 +5836,7 @@ STORE_HEALTH_WEIGHTS = {
 }
 
 
-def compute_store_health_index(weights=None):
+def compute_store_health_index(weights=None, sku_scope='core'):
     """
     Compute a health score (0-100) for each store based on:
     - Fill rate (% SKUs with stock > 0)
@@ -5844,6 +5844,11 @@ def compute_store_health_index(weights=None):
     - Overstock rate (% SKUs over MAX_WOC)
     - Sales velocity (average weekly sales)
     - Redistribution dependency (SKUs received via transfers)
+    
+    sku_scope: 'core' (default), 'runs', or 'full'
+    - core: SKUs with global sales in last 90 days OR in recent dist runs OR has stock in stores
+    - runs: SKUs that appeared in last 5 distribution runs
+    - full: All SKUs in catalog
     """
     if weights is None:
         weights = STORE_HEALTH_WEIGHTS.copy()
@@ -5858,11 +5863,91 @@ def compute_store_health_index(weights=None):
         weights['SALES_VELOCITY'] = weights.get('SALES_VELOCITY', 0.20) / weight_sum
     
     stores = {s.id: s for s in Store.query.all()}
-    products = {p.id: p for p in Product.query.all()}
+    all_products = {p.id: p for p in Product.query.all()}
     
-    if not stores or not products:
+    if not stores or not all_products:
         return {'error': 'Sin tiendas o productos registrados', 'stores': []}
     
+    # Build SKU scope based on selected mode
+    today = date.today()
+    scope_window_days = 90
+    scope_runs_count = 5
+    
+    # Get SKUs with global sales in last N days (any store or CD)
+    sales_cutoff = today - timedelta(days=scope_window_days)
+    skus_with_sales = set()
+    sales_query = db.session.query(DistributionRecord.product_id.distinct()).filter(
+        DistributionRecord.event_date >= sales_cutoff
+    ).all()
+    skus_with_sales = {r[0] for r in sales_query}
+    
+    # Get SKUs that appeared in recent distribution runs
+    skus_in_runs = set()
+    recent_runs = DistributionRun.query.order_by(DistributionRun.created_at.desc()).limit(scope_runs_count).all()
+    if recent_runs:
+        run_ids = [r.run_id for r in recent_runs]
+        run_skus = db.session.query(DistributionPrediction.product_id.distinct()).filter(
+            DistributionPrediction.run_id.in_(run_ids)
+        ).all()
+        skus_in_runs = {r[0] for r in run_skus}
+    
+    # Get SKUs with stock > 0 in any store (exclude CD)
+    skus_with_store_stock = set()
+    store_ids = list(stores.keys())
+    stock_skus = db.session.query(StockSnapshot.product_id.distinct()).filter(
+        StockSnapshot.store_id.in_(store_ids),
+        StockSnapshot.quantity > 0
+    ).all()
+    skus_with_store_stock = {r[0] for r in stock_skus}
+    
+    # Build scope set based on mode
+    all_product_ids = set(all_products.keys())
+    
+    if sku_scope == 'full':
+        scope_skus = all_product_ids
+    elif sku_scope == 'runs':
+        scope_skus = skus_in_runs if skus_in_runs else all_product_ids
+    else:  # 'core' - default
+        scope_skus = skus_with_sales | skus_in_runs | skus_with_store_stock
+        if not scope_skus:
+            scope_skus = all_product_ids
+    
+    # Compute exclusion stats
+    excluded_skus = all_product_ids - scope_skus
+    
+    # Categorize excluded SKUs
+    cd_only_no_sales = 0
+    not_in_stores = 0
+    not_in_runs = 0
+    
+    for pid in excluded_skus:
+        has_store_stock = pid in skus_with_store_stock
+        has_sales = pid in skus_with_sales
+        has_runs = pid in skus_in_runs
+        
+        if not has_store_stock and not has_sales:
+            cd_only_no_sales += 1
+        if not has_store_stock:
+            not_in_stores += 1
+        if not has_runs:
+            not_in_runs += 1
+    
+    scope_info = {
+        'mode': sku_scope,
+        'mode_label': {'core': 'Surtido Activo', 'runs': 'SKUs en Corridas', 'full': 'Catálogo Completo'}.get(sku_scope, sku_scope),
+        'total_catalog': len(all_product_ids),
+        'skus_in_scope': len(scope_skus),
+        'skus_excluded': len(excluded_skus),
+        'excluded_cd_only': cd_only_no_sales,
+        'excluded_no_store_stock': not_in_stores,
+        'excluded_no_runs': not_in_runs,
+        'skus_with_sales': len(skus_with_sales),
+        'skus_in_runs': len(skus_in_runs),
+        'skus_with_stock': len(skus_with_store_stock)
+    }
+    
+    # Filter products to scope
+    products = {pid: all_products[pid] for pid in scope_skus if pid in all_products}
     total_skus = len(products)
     max_woc = weights.get('MAX_WOC', 8.0)
     
@@ -6035,7 +6120,8 @@ def compute_store_health_index(weights=None):
             'avg_score': avg_score,
             'has_sales_data': has_sales_data
         },
-        'weights': weights
+        'weights': weights,
+        'scope_info': scope_info
     }
 
 
@@ -6060,7 +6146,11 @@ def store_health():
     if w_velocity is not None:
         weights['SALES_VELOCITY'] = w_velocity / 100
     
-    results = compute_store_health_index(weights)
+    sku_scope = request.args.get('scope', 'core')
+    if sku_scope not in ('core', 'runs', 'full'):
+        sku_scope = 'core'
+    
+    results = compute_store_health_index(weights, sku_scope=sku_scope)
     
     sort_by = request.args.get('sort', 'score')
     sort_order = request.args.get('order', 'desc')
@@ -6086,7 +6176,8 @@ def store_health():
                            sort_by=sort_by,
                            sort_order=sort_order,
                            weights=weights,
-                           default_weights=STORE_HEALTH_WEIGHTS)
+                           default_weights=STORE_HEALTH_WEIGHTS,
+                           sku_scope=sku_scope)
 
 
 @app.route('/export_store_health')
@@ -6094,7 +6185,11 @@ def store_health():
 @require_permission('store_health:view')
 def export_store_health():
     """Export store health index results."""
-    results = compute_store_health_index()
+    sku_scope = request.args.get('scope', 'core')
+    if sku_scope not in ('core', 'runs', 'full'):
+        sku_scope = 'core'
+    
+    results = compute_store_health_index(sku_scope=sku_scope)
     
     if 'error' in results:
         flash(results['error'], 'warning')
