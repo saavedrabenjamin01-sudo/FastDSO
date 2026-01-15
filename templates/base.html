@@ -64,6 +64,13 @@
         </a>
         {% endif %}
 
+        {% if current_user.has_permission('sales_macro:upload') %}
+        <a class="nav-link" href="{{ url_for('sales_macro_upload') }}">
+          <span class="nav-icon"><i class="bi bi-database-add"></i></span>
+          <span class="nav-text">Ventas Macro</span>
+        </a>
+        {% endif %}
+
         {% if current_user.has_permission('forecast_v2:view') %}
         <a class="nav-link" href="{{ url_for('purchase_forecast_v2') }}">
           <span class="nav-icon"><i class="bi bi-graph-up"></i></span>

@@ -85,6 +85,25 @@ Do not make changes to the folder `Excel tipo/`.
     - Dashboard integration: "Why?" button (?) on each prediction row with modal showing bullet-point explanation
     - Forecast V2 integration: "Why?" button on purchase suggested KPI with detailed calculation breakdown
     - Helper functions: `explain_distribution_suggestion()`, `explain_forecast_purchase()` for generating explanations
+- **Macro Sales Layer**: Full catalog visibility for accurate health metrics and cold-start distribution:
+    - `SalesWeeklyAgg` model: Aggregated weekly sales (product_id, store_id, week_start, units, category)
+    - Indexes: (product_id, store_id, week_start), (store_id, week_start), (category, store_id, week_start)
+    - Route: `/sales_macro_upload` for uploading full catalog sales
+    - Background processing with bulk inserts and weekly aggregation
+    - Load modes: `replace_range` (default, replaces weeks), `append_range` (adds to existing)
+    - Automatic Product.category population from uploads
+    - Distribution generation uses macro layer when available for demand estimation
+- **Category-Based Cold Start**: Distribution suggestions for new SKUs without sales history:
+    - Parameters: min_fill=2, target_WOC_new=1.0, eligible_store_top_n=10, category_window_days=90
+    - Eligibility: SKU must have category set in Product.category
+    - Store ranking: Top 10 stores by category weekly sales rate from SalesWeeklyAgg
+    - Suggested qty: max(min_fill, ceil(target_WOC × cat_sales_rate)) - store_stock
+    - CD allocation: Prioritizes higher category sales rate stores
+    - Model tag: "COLD_START_CATEGORY ({category})"
+- **Store Health SKU Scope**: Configurable scope for relevant SKU set in health calculations:
+    - Modes: `core` (sales in 90 days OR in runs OR has store stock), `runs` (last 5 distribution runs), `full` (all SKUs)
+    - Transparency: Shows SKUs in scope, excluded count, exclusion reasons
+    - Uses SalesWeeklyAgg when available for scope calculations
 
 ## External Dependencies
 - **Database**: SQLite (for `app.db`)

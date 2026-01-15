@@ -1,6 +1,7 @@
 import os
 import io
 import uuid
+import math
 import datetime as dt
 from datetime import datetime, timedelta, date
 from io import BytesIO
@@ -23,7 +24,7 @@ ROLES = ['Admin', 'Management', 'CategoryManager', 'WarehouseOps', 'Viewer']
 
 ROLE_PERMISSIONS = {
     'Admin': [
-        'dashboard:view', 'sales:upload', 'stock_store:upload', 'stock_cd:upload',
+        'dashboard:view', 'sales:upload', 'sales_macro:upload', 'stock_store:upload', 'stock_cd:upload',
         'stock:query', 'distribution:generate', 'distribution:export',
         'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'admin:users', 'admin:reset', 'audit:view',
         'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view'
@@ -33,7 +34,7 @@ ROLE_PERMISSIONS = {
         'forecast_v2:view', 'runs:view', 'audit:view', 'rebalancing:view', 'slow_stock:view', 'store_health:view', 'alerts:view'
     ],
     'CategoryManager': [
-        'dashboard:view', 'sales:upload', 'distribution:generate', 'distribution:export',
+        'dashboard:view', 'sales:upload', 'sales_macro:upload', 'distribution:generate', 'distribution:export',
         'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'rebalancing:view', 'rebalancing:run',
         'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view'
     ],
@@ -170,6 +171,7 @@ class Product(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     sku = db.Column(db.String(64), unique=True, nullable=False)
     name = db.Column(db.String(255), nullable=False)
+    category = db.Column(db.String(100), nullable=True, index=True)
 
 
 class Store(db.Model):
@@ -188,6 +190,27 @@ class DistributionRecord(db.Model):
 
     product = db.relationship('Product')
     store = db.relationship('Store')
+
+
+class SalesWeeklyAgg(db.Model):
+    """Aggregated weekly sales for macro layer - full catalog visibility."""
+    __tablename__ = 'sales_weekly_agg'
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False, index=True)
+    store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False, index=True)
+    week_start = db.Column(db.Date, nullable=False, index=True)
+    units = db.Column(db.Integer, nullable=False, default=0)
+    category = db.Column(db.String(100), nullable=True, index=True)
+    
+    __table_args__ = (
+        db.Index('ix_sales_weekly_agg_prod_store_week', 'product_id', 'store_id', 'week_start', unique=True),
+        db.Index('ix_sales_weekly_agg_store_week', 'store_id', 'week_start'),
+        db.Index('ix_sales_weekly_agg_cat_store_week', 'category', 'store_id', 'week_start'),
+    )
+    
+    product = db.relationship('Product')
+    store = db.relationship('Store')
+
 
 class StockCD(db.Model):
     __tablename__ = 'stock_cd'
@@ -818,18 +841,40 @@ def generate_predictions(
         db.session.flush()
 
     # 1) Origen de datos: df pasado o histórico completo
+    # Try SalesWeeklyAgg (macro layer) first when no df is passed
+    use_macro_layer = False
     if df is None:
-        rows = DistributionRecord.query.all()
-        if not rows:
-            db.session.commit()
-            return run_id, 0
-        data = [{
-            'sku': r.product.sku,
-            'store': r.store.name,
-            'quantity': r.quantity,
-            'date': pd.to_datetime(r.event_date)
-        } for r in rows]
-        df = pd.DataFrame(data)
+        macro_count = db.session.query(func.count(SalesWeeklyAgg.id)).scalar() or 0
+        if macro_count > 0:
+            use_macro_layer = True
+            product_map = {p.id: p.sku for p in Product.query.all()}
+            store_map = {s.id: s.name for s in Store.query.all()}
+            
+            agg_rows = SalesWeeklyAgg.query.all()
+            data = [{
+                'sku': product_map.get(r.product_id, ''),
+                'store': store_map.get(r.store_id, ''),
+                'quantity': r.units,
+                'week_start': pd.to_datetime(r.week_start)
+            } for r in agg_rows if product_map.get(r.product_id) and store_map.get(r.store_id)]
+            if data:
+                df = pd.DataFrame(data)
+                df['date'] = df['week_start']
+            else:
+                use_macro_layer = False
+        
+        if not use_macro_layer:
+            rows = DistributionRecord.query.all()
+            if not rows:
+                db.session.commit()
+                return run_id, 0, 0, 0, 0
+            data = [{
+                'sku': r.product.sku,
+                'store': r.store.name,
+                'quantity': r.quantity,
+                'date': pd.to_datetime(r.event_date)
+            } for r in rows]
+            df = pd.DataFrame(data)
     else:
         df = df.copy()
         df['date'] = pd.to_datetime(df['date'])
@@ -1127,6 +1172,129 @@ def generate_predictions(
             print(f"[STOCKOUT] Candidates found: {len(stockout_candidates)}")
             print(f"[STOCKOUT] Replenishment predictions added: {replenish_added}")
             print(f"[STOCKOUT] CD constrained count: {cd_constrained}")
+
+    # 4c) Category-based Cold Start for New SKUs
+    cold_start_added = 0
+    cold_start_cd_allocated = 0
+    
+    COLD_START_MIN_FILL = 2
+    COLD_START_TARGET_WOC = 1.0
+    COLD_START_TOP_STORES = 10
+    COLD_START_WINDOW_WEEKS = 12
+    
+    macro_data_available = db.session.query(func.count(SalesWeeklyAgg.id)).scalar() or 0
+    
+    if macro_data_available > 0:
+        skus_in_df = set(df['sku'].unique()) if df is not None and 'sku' in df.columns else set()
+        existing_pred_skus = {it['sku'] for it in final_preds if it.get('suggested', 0) > 0}
+        
+        products_with_category = (
+            Product.query
+            .filter(Product.category.isnot(None))
+            .filter(Product.category != '')
+            .all()
+        )
+        
+        cold_start_window = date.today() - timedelta(weeks=COLD_START_WINDOW_WEEKS)
+        
+        category_store_rates = defaultdict(lambda: defaultdict(float))
+        cat_agg_query = (
+            db.session.query(
+                SalesWeeklyAgg.category,
+                SalesWeeklyAgg.store_id,
+                func.sum(SalesWeeklyAgg.units).label('total_units'),
+                func.count(func.distinct(SalesWeeklyAgg.week_start)).label('weeks')
+            )
+            .filter(SalesWeeklyAgg.week_start >= cold_start_window)
+            .filter(SalesWeeklyAgg.category.isnot(None))
+            .group_by(SalesWeeklyAgg.category, SalesWeeklyAgg.store_id)
+            .all()
+        )
+        
+        for cat, store_id, total_units, weeks in cat_agg_query:
+            if weeks > 0:
+                category_store_rates[cat][store_id] = (total_units or 0) / weeks
+        
+        store_lookup = {s.id: s.name for s in Store.query.all()}
+        store_id_by_name = {s.name: s.id for s in Store.query.all()}
+        
+        store_stock_map = {}
+        if latest_stock_date:
+            stock_snap_q = (
+                db.session.query(StockSnapshot.product_id, StockSnapshot.store_id, StockSnapshot.quantity)
+                .filter(StockSnapshot.as_of_date == latest_stock_date)
+                .all()
+            )
+            for pid, sid, qty in stock_snap_q:
+                store_stock_map[(pid, sid)] = qty or 0
+        
+        cold_start_candidates = []
+        
+        for prod in products_with_category:
+            if prod.sku in existing_pred_skus:
+                continue
+            
+            if prod.sku in skus_in_df:
+                continue
+            
+            category = prod.category
+            if category not in category_store_rates:
+                continue
+            
+            store_rates = category_store_rates[category]
+            if not store_rates:
+                continue
+            
+            sorted_stores = sorted(store_rates.items(), key=lambda x: x[1], reverse=True)
+            eligible_stores = sorted_stores[:COLD_START_TOP_STORES]
+            
+            for store_id, cat_sales_rate in eligible_stores:
+                if cat_sales_rate <= 0:
+                    continue
+                
+                current_stock = store_stock_map.get((prod.id, store_id), 0)
+                
+                need_units = max(int(math.ceil(COLD_START_TARGET_WOC * cat_sales_rate)), COLD_START_MIN_FILL)
+                suggested = max(need_units - current_stock, 0)
+                
+                if suggested > 0:
+                    cold_start_candidates.append({
+                        "sku": prod.sku,
+                        "store": store_lookup.get(store_id, ''),
+                        "product_id": prod.id,
+                        "store_id": store_id,
+                        "suggested": suggested,
+                        "model_name": f"COLD_START_CATEGORY ({category})",
+                        "category": category,
+                        "cat_sales_rate": cat_sales_rate
+                    })
+        
+        cold_start_candidates.sort(key=lambda x: x['cat_sales_rate'], reverse=True)
+        
+        cold_start_per_product = defaultdict(list)
+        for cand in cold_start_candidates:
+            cold_start_per_product[cand["product_id"]].append(cand)
+        
+        for product_id, cands in cold_start_per_product.items():
+            remaining_cd = cd_remaining_after_base.get(product_id, 0)
+            
+            if remaining_cd <= 0:
+                continue
+            
+            for c in cands:
+                want = c["suggested"]
+                give = min(want, remaining_cd)
+                if give > 0:
+                    c["suggested"] = give
+                    remaining_cd -= give
+                    final_preds.append(c)
+                    cold_start_added += 1
+                    cold_start_cd_allocated += give
+                
+                if remaining_cd <= 0:
+                    break
+            
+            cd_remaining_after_base[product_id] = remaining_cd
 
     # 5) Guardar predicciones y registrar asignaciones
     target_week = next_monday()
@@ -2396,6 +2564,181 @@ def export_cd_remanente():
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
+
+def process_macro_sales_upload(job_id, payload):
+    """Background task to process macro sales upload - aggregates to weekly data."""
+    import os
+    
+    filepath = payload.get('filepath')
+    load_mode = payload.get('load_mode', 'replace_range')
+    user_id = payload.get('user_id')
+    
+    session = get_isolated_session()
+    try:
+        update_job_status(job_id, progress=5, message='Leyendo archivo...')
+        
+        if filepath.endswith('.csv'):
+            df = pd.read_csv(filepath, dtype=str)
+        else:
+            df = pd.read_excel(filepath, dtype=str)
+        
+        total_rows = len(df)
+        update_job_status(job_id, progress=10, message=f'Procesando {total_rows} filas...')
+        
+        df.columns = [str(c).strip().lower() for c in df.columns]
+        
+        needed = {'sku', 'store', 'date', 'quantity'}
+        if not needed.issubset(set(df.columns)):
+            update_job_status(job_id, status='error', progress=100, 
+                            message='Archivo debe tener columnas: sku, store, date, quantity')
+            return
+        
+        df['sku'] = df['sku'].astype(str).str.strip()
+        df['store'] = df['store'].astype(str).str.strip()
+        df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0).astype(int)
+        df['date'] = pd.to_datetime(df['date'], errors='coerce')
+        
+        has_product_name = 'product_name' in df.columns
+        has_category = 'category' in df.columns
+        
+        if has_product_name:
+            df['product_name'] = df['product_name'].astype(str).str.strip()
+        if has_category:
+            df['category'] = df['category'].astype(str).str.strip()
+            df['category'] = df['category'].replace(['', 'nan', 'None'], None)
+        
+        df = df.dropna(subset=['date'])
+        df['week_start'] = df['date'].apply(lambda d: d - timedelta(days=d.weekday()))
+        
+        update_job_status(job_id, progress=20, message='Preparando productos y tiendas...')
+        
+        existing_products = {p.sku: p for p in session.query(Product).all()}
+        existing_stores = {s.name: s for s in session.query(Store).all()}
+        
+        new_products = []
+        new_stores = []
+        
+        unique_skus = df['sku'].unique()
+        for sku in unique_skus:
+            if sku not in existing_products:
+                row = df[df['sku'] == sku].iloc[0]
+                name = row.get('product_name', sku) if has_product_name else sku
+                cat = row.get('category') if has_category else None
+                new_products.append({'sku': sku, 'name': name, 'category': cat})
+        
+        unique_stores = df['store'].unique()
+        for store_name in unique_stores:
+            if store_name not in existing_stores:
+                new_stores.append({'name': store_name})
+        
+        if new_products:
+            session.execute(Product.__table__.insert(), new_products)
+            session.commit()
+            existing_products = {p.sku: p for p in session.query(Product).all()}
+        
+        if new_stores:
+            session.execute(Store.__table__.insert(), new_stores)
+            session.commit()
+            existing_stores = {s.name: s for s in session.query(Store).all()}
+        
+        update_job_status(job_id, progress=35, message='Actualizando categorías de productos...')
+        
+        if has_category:
+            category_updates = 0
+            for sku in unique_skus:
+                prod = existing_products.get(sku)
+                if prod and not prod.category:
+                    cat_val = df[df['sku'] == sku]['category'].dropna().unique()
+                    if len(cat_val) > 0 and cat_val[0]:
+                        session.query(Product).filter(Product.id == prod.id).update({'category': cat_val[0]})
+                        category_updates += 1
+            if category_updates > 0:
+                session.commit()
+        
+        update_job_status(job_id, progress=50, message='Agregando ventas por semana...')
+        
+        df['product_id'] = df['sku'].map(lambda x: existing_products[x].id)
+        df['store_id'] = df['store'].map(lambda x: existing_stores[x].id)
+        
+        agg_df = df.groupby(['product_id', 'store_id', 'week_start']).agg({
+            'quantity': 'sum'
+        }).reset_index()
+        agg_df.rename(columns={'quantity': 'units'}, inplace=True)
+        
+        if has_category:
+            cat_map = {}
+            for sku, prod in existing_products.items():
+                cat_map[prod.id] = prod.category
+            agg_df['category'] = agg_df['product_id'].map(cat_map)
+        else:
+            agg_df['category'] = None
+        
+        update_job_status(job_id, progress=65, message=f'Guardando {len(agg_df)} registros semanales...')
+        
+        weeks_in_upload = set(agg_df['week_start'].unique())
+        
+        if load_mode == 'replace_range' and weeks_in_upload:
+            session.query(SalesWeeklyAgg).filter(
+                SalesWeeklyAgg.week_start.in_(weeks_in_upload)
+            ).delete(synchronize_session=False)
+            session.commit()
+        
+        chunk_size = 1000
+        records = agg_df.to_dict('records')
+        total_inserted = 0
+        
+        for i in range(0, len(records), chunk_size):
+            chunk = records[i:i+chunk_size]
+            
+            if load_mode == 'append_range':
+                for rec in chunk:
+                    existing = session.query(SalesWeeklyAgg).filter(
+                        SalesWeeklyAgg.product_id == rec['product_id'],
+                        SalesWeeklyAgg.store_id == rec['store_id'],
+                        SalesWeeklyAgg.week_start == rec['week_start']
+                    ).first()
+                    if existing:
+                        existing.units += rec['units']
+                    else:
+                        session.add(SalesWeeklyAgg(**rec))
+            else:
+                session.execute(SalesWeeklyAgg.__table__.insert(), chunk)
+            
+            session.commit()
+            total_inserted += len(chunk)
+            progress = 65 + int(30 * (i + chunk_size) / len(records))
+            update_job_status(job_id, progress=min(progress, 95), 
+                            message=f'Insertando... {total_inserted}/{len(records)}')
+        
+        try:
+            os.remove(filepath)
+        except:
+            pass
+        
+        session.close()
+        
+        msg = f'Ventas macro cargadas: {len(agg_df)} registros semanales de {total_rows} filas originales'
+        update_job_status(
+            job_id,
+            status='done',
+            progress=100,
+            message=msg,
+            result={
+                'records_created': len(agg_df),
+                'total_rows': total_rows,
+                'weeks': len(weeks_in_upload),
+                'new_products': len(new_products),
+                'new_stores': len(new_stores)
+            }
+        )
+        
+    except Exception as e:
+        session.rollback()
+        session.close()
+        update_job_status(job_id, status='error', progress=100, message=f'Error: {str(e)[:400]}')
+        raise
+
+
 def process_sales_upload(job_id, payload):
     """Background task to process Sales upload with bulk operations and prediction generation. Uses isolated session."""
     import os
@@ -2629,6 +2972,82 @@ def upload():
         return redirect(url_for('job_status_view', job_id=job_id))
 
     return render_template('upload.html', require_stock_confirm=require_stock_confirm)
+
+
+@app.route('/sales_macro_upload', methods=['GET', 'POST'])
+@login_required
+@require_permission('sales_macro:upload')
+def sales_macro_upload():
+    """Upload full catalog sales data for macro layer visibility and cold-start."""
+    import os
+    
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+    
+    stats = {}
+    agg_count = db.session.query(func.count(SalesWeeklyAgg.id)).scalar() or 0
+    if agg_count > 0:
+        stats['total_skus'] = db.session.query(func.count(func.distinct(SalesWeeklyAgg.product_id))).scalar() or 0
+        stats['total_stores'] = db.session.query(func.count(func.distinct(SalesWeeklyAgg.store_id))).scalar() or 0
+        stats['total_weeks'] = db.session.query(func.count(func.distinct(SalesWeeklyAgg.week_start))).scalar() or 0
+        stats['total_units'] = db.session.query(func.sum(SalesWeeklyAgg.units)).scalar() or 0
+        
+        min_week = db.session.query(func.min(SalesWeeklyAgg.week_start)).scalar()
+        max_week = db.session.query(func.max(SalesWeeklyAgg.week_start)).scalar()
+        if min_week and max_week:
+            stats['date_range'] = f"{min_week.strftime('%d/%m/%Y')} - {max_week.strftime('%d/%m/%Y')}"
+    
+    if request.method == 'POST':
+        file = request.files.get('file')
+        if not file:
+            if is_ajax:
+                return jsonify({'ok': False, 'message': 'Sube un archivo CSV o Excel.', 'category': 'warning'}), 400
+            flash('Sube un archivo CSV o Excel.', 'warning')
+            return redirect(url_for('sales_macro_upload'))
+
+        filename = file.filename.lower()
+        if not (filename.endswith('.csv') or filename.endswith('.xlsx') or filename.endswith('.xls')):
+            if is_ajax:
+                return jsonify({'ok': False, 'message': 'Formato no soportado. Usa .csv o .xlsx', 'category': 'danger'}), 400
+            flash('Formato no soportado. Usa .csv o .xlsx', 'danger')
+            return redirect(url_for('sales_macro_upload'))
+        
+        upload_dir = os.path.join(BASE_DIR, 'instance', 'uploads')
+        os.makedirs(upload_dir, exist_ok=True)
+        
+        saved_filename = f"macro_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
+        filepath = os.path.join(upload_dir, saved_filename)
+        file.save(filepath)
+        
+        load_mode = request.form.get('load_mode', 'replace_range')
+        user_id = current_user.id if current_user.is_authenticated else None
+        
+        payload = {
+            'filepath': filepath,
+            'load_mode': load_mode,
+            'user_id': user_id,
+            'original_filename': file.filename
+        }
+        
+        job_id = create_and_run_job(
+            job_type='upload_macro_sales',
+            task_func=process_macro_sales_upload,
+            payload=payload,
+            user_id=user_id
+        )
+        
+        if is_ajax:
+            return jsonify({
+                'ok': True,
+                'job_id': job_id,
+                'redirect_url': url_for('sales_macro_upload'),
+                'message': 'Archivo recibido. Procesando ventas macro...',
+                'category': 'success'
+            })
+        
+        return redirect(url_for('job_status_view', job_id=job_id))
+
+    return render_template('upload_sales_macro.html', stats=stats if stats else None)
+
 
 @app.route('/stock', methods=['GET', 'POST'])
 @login_required
@@ -5873,12 +6292,19 @@ def compute_store_health_index(weights=None, sku_scope='core'):
     scope_window_days = 90
     scope_runs_count = 5
     
-    # Get SKUs with global sales in last N days (any store or CD)
+    # Get SKUs with global sales in last N days - prefer SalesWeeklyAgg (macro layer) if available
     sales_cutoff = today - timedelta(days=scope_window_days)
     skus_with_sales = set()
-    sales_query = db.session.query(DistributionRecord.product_id.distinct()).filter(
-        DistributionRecord.event_date >= sales_cutoff
-    ).all()
+    
+    macro_count = db.session.query(func.count(SalesWeeklyAgg.id)).scalar() or 0
+    if macro_count > 0:
+        sales_query = db.session.query(SalesWeeklyAgg.product_id.distinct()).filter(
+            SalesWeeklyAgg.week_start >= sales_cutoff
+        ).all()
+    else:
+        sales_query = db.session.query(DistributionRecord.product_id.distinct()).filter(
+            DistributionRecord.event_date >= sales_cutoff
+        ).all()
     skus_with_sales = {r[0] for r in sales_query}
     
     # Get SKUs that appeared in recent distribution runs

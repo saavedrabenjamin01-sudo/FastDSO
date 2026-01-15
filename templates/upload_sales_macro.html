@@ -1,0 +1,201 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<div class="query-wrap">
+  <div class="query-header">
+    <h1 class="query-title">Ventas Macro (Catálogo Completo)</h1>
+    <p class="query-subtitle">Carga ventas históricas del catálogo completo para visibilidad global y cold-start de nuevos SKUs</p>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-12 col-lg-8">
+      <div class="query-card">
+        <form method="post" enctype="multipart/form-data"
+              data-loader="true"
+              data-ajax="true"
+              data-loader-title="Procesando Ventas Macro"
+              data-loader-msg="Agregando ventas semanales al catálogo global..."
+              data-loader-icon="database">
+
+          <div class="upload-row">
+            <div class="upload-field upload-field-half">
+              <label class="query-label">Archivo de ventas macro</label>
+              <input type="file" class="form-control" name="file"
+                     accept=".csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                     required>
+              <small class="text-muted">Acepta <code>.csv</code> y <code>.xlsx</code></small>
+            </div>
+
+            <div class="upload-field upload-field-half">
+              <label class="query-label">Modo de carga</label>
+              <select class="form-select" name="load_mode">
+                <option value="replace_range">Reemplazar semanas existentes (recomendado)</option>
+                <option value="append_range">Agregar a semanas existentes</option>
+              </select>
+              <small class="text-muted">Define cómo manejar datos de semanas ya cargadas</small>
+            </div>
+          </div>
+
+          <div class="upload-actions">
+            <button type="submit" class="btn btn-primary query-btn">
+              <i class="bi bi-cloud-arrow-up me-2"></i>Cargar Ventas Macro
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div class="upload-collapse-wrap">
+        <button class="btn btn-link upload-collapse-toggle" type="button" data-bs-toggle="collapse" data-bs-target="#fileReqCollapse">
+          <i class="bi bi-info-circle me-1"></i>Requisitos del archivo
+        </button>
+        <div class="collapse" id="fileReqCollapse">
+          <div class="upload-collapse-body">
+            <p class="mb-2"><strong>Columnas requeridas:</strong></p>
+            <ul class="upload-req-list">
+              <li><code>sku</code> — Código del producto (texto, ceros a la izquierda preservados)</li>
+              <li><code>store</code> — Nombre de la tienda</li>
+              <li><code>date</code> — Fecha de venta (YYYY-MM-DD)</li>
+              <li><code>quantity</code> — Cantidad vendida</li>
+            </ul>
+            <p class="mb-2"><strong>Columnas opcionales:</strong></p>
+            <ul class="upload-req-list">
+              <li><code>product_name</code> — Nombre del producto</li>
+              <li><code>category</code> — Categoría del producto (usado para cold-start)</li>
+            </ul>
+            <p class="mb-1"><strong>Formatos aceptados:</strong> <code>.csv</code>, <code>.xlsx</code></p>
+            <p class="text-muted mb-0">El SKU debe ser texto para preservar ceros a la izquierda.</p>
+          </div>
+        </div>
+      </div>
+
+      {% if stats %}
+      <div class="query-card mt-3">
+        <h6 class="mb-3"><i class="bi bi-bar-chart me-2"></i>Estado Actual del Catálogo Macro</h6>
+        <div class="row g-2">
+          <div class="col-6 col-md-3">
+            <div class="macro-stat-card">
+              <div class="macro-stat-value">{{ stats.total_skus|default(0) }}</div>
+              <div class="macro-stat-label">SKUs</div>
+            </div>
+          </div>
+          <div class="col-6 col-md-3">
+            <div class="macro-stat-card">
+              <div class="macro-stat-value">{{ stats.total_stores|default(0) }}</div>
+              <div class="macro-stat-label">Tiendas</div>
+            </div>
+          </div>
+          <div class="col-6 col-md-3">
+            <div class="macro-stat-card">
+              <div class="macro-stat-value">{{ stats.total_weeks|default(0) }}</div>
+              <div class="macro-stat-label">Semanas</div>
+            </div>
+          </div>
+          <div class="col-6 col-md-3">
+            <div class="macro-stat-card">
+              <div class="macro-stat-value">{{ "{:,.0f}".format(stats.total_units|default(0)) }}</div>
+              <div class="macro-stat-label">Unidades</div>
+            </div>
+          </div>
+        </div>
+        {% if stats.date_range %}
+        <div class="macro-stat-range mt-2">
+          <i class="bi bi-calendar3 me-1"></i>Rango: {{ stats.date_range }}
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="col-12 col-lg-4">
+      <div class="upload-sidecard">
+        <div class="upload-sidecard-title"><i class="bi bi-list-check me-2"></i>Guía rápida</div>
+        <ol class="upload-guide-list">
+          <li>Exporta ventas históricas de tu ERP</li>
+          <li>Incluye columna <code>category</code> para cold-start</li>
+          <li>Sube archivo CSV/XLSX con ventas del catálogo completo</li>
+          <li>El sistema agrega por semana automáticamente</li>
+          <li>Los nuevos SKUs usarán datos de categoría para sugerir</li>
+        </ol>
+      </div>
+
+      <div class="upload-sidecard">
+        <div class="upload-sidecard-title"><i class="bi bi-table me-2"></i>Ejemplo de archivo</div>
+        <div class="upload-example-table-wrap">
+          <table class="upload-example-table">
+            <thead>
+              <tr>
+                <th>sku</th>
+                <th>store</th>
+                <th>date</th>
+                <th>quantity</th>
+                <th>category</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>000123</td>
+                <td>Tienda Norte</td>
+                <td>2025-01-01</td>
+                <td>5</td>
+                <td>Electrónica</td>
+              </tr>
+              <tr>
+                <td>000456</td>
+                <td>Tienda Sur</td>
+                <td>2025-01-02</td>
+                <td>3</td>
+                <td>Hogar</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="upload-sidecard">
+        <div class="upload-sidecard-title"><i class="bi bi-lightbulb me-2"></i>¿Por qué Ventas Macro?</div>
+        <ul class="upload-tips-list">
+          <li><strong>Visibilidad completa:</strong> Store Health y Alertas reflejan todo el catálogo</li>
+          <li><strong>Cold-Start:</strong> Nuevos SKUs reciben sugerencias basadas en su categoría</li>
+          <li><strong>Rendimiento:</strong> Datos agregados por semana = consultas rápidas</li>
+        </ul>
+      </div>
+
+      <div class="upload-sidecard upload-sidecard-note">
+        <i class="bi bi-info-circle me-2"></i>
+        <span>Para distribución de un subconjunto de SKUs, usa <a href="{{ url_for('upload') }}">Carga de Ventas</a> normal.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+.macro-stat-card {
+  background: var(--bg-subtle, #f8f9fa);
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+}
+.macro-stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--primary-color, #2563eb);
+}
+.macro-stat-label {
+  font-size: 0.75rem;
+  color: #6c757d;
+  text-transform: uppercase;
+}
+.macro-stat-range {
+  font-size: 0.85rem;
+  color: #6c757d;
+  text-align: center;
+}
+.upload-sidecard-note {
+  background: #e8f4fd;
+  border-left: 3px solid #2563eb;
+  font-size: 0.85rem;
+  color: #1e40af;
+}
+</style>
+
+{% endblock %}

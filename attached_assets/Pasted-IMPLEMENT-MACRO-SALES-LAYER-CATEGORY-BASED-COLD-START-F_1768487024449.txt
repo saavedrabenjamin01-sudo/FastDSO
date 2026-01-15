@@ -1,0 +1,147 @@
+IMPLEMENT MACRO SALES LAYER + CATEGORY-BASED COLD START (FastDSO V01)
+
+Context:
+FastDSO currently generates distributions from a “subset” sales upload (only SKUs we want to distribute). This biases Store Health/alerts and fails for new SKUs with no prior sales. We need:
+1) A macro sales layer (full catalog sales) stored efficiently
+2) Category support to allow cold-start distribution for new SKUs
+3) Keep distribution runs working for a subset of SKUs, but demand estimation must leverage macro layer
+4) Preserve performance (avoid scanning millions of raw rows on every request)
+
+HARD RULES
+- Do NOT break existing modules: Dashboard, Runs, Compare, Stock CD, Stock Stores, Stock Query, Redistribution, Forecast V2, Audit.
+- Do NOT remove DistributionRecord. You may keep it as raw history, but the system must use aggregated data for speed.
+- Preserve SKU leading zeros everywhere.
+- Use background jobs for heavy uploads (already implemented pattern).
+- Use bulk inserts/upserts, no per-row db queries inside loops.
+
+PART A — DATA MODEL CHANGES (minimal, safe)
+1) Add/extend Product to store category:
+- Product.category (string nullable)
+- If category present in uploads and product.category is empty, set it.
+- If category differs from existing category, keep existing and log warning (do not overwrite blindly).
+
+2) Add a new aggregated table SalesWeeklyAgg:
+- id PK
+- product_id FK
+- store_id FK
+- week_start (date, Monday)
+- units (int)
+- category (string nullable)  (optional redundancy for fast category queries)
+Indexes:
+- (product_id, store_id, week_start)
+- (store_id, week_start)
+- (category, store_id, week_start)
+
+3) Optional (recommended): store global last sale date per product and store-level last sale date:
+- If lifecycle tables exist, reuse them.
+- Otherwise compute on demand from SalesWeeklyAgg.
+
+PART B — NEW: MACRO SALES UPLOAD (full catalog)
+Add a new module/page:
+- Route: /sales_macro_upload
+- Menu placement: “Ventas y Compras”
+- Upload CSV/XLSX with columns:
+  sku, store, date, quantity
+  optional: product_name, category
+
+Processing requirements:
+- Run as background job
+- Steps:
+  1) Validate columns
+  2) Normalize sku as TEXT (leading zeros preserved)
+  3) Parse date
+  4) Upsert Product (sku, name) and Store (name)
+  5) Update Product.category if provided and currently null
+  6) Aggregate to weekly:
+     week_start = date - weekday offset
+     group by (sku, store, week_start) sum(quantity)
+  7) Upsert into SalesWeeklyAgg:
+     - If row exists for (product_id, store_id, week_start), add units (or replace based on chosen mode)
+Provide mode:
+- replace_range (replace weeks in uploaded range)
+- append_range (add to existing weeks)
+Default: replace_range
+Performance:
+- bulk_insert_mappings / executemany
+- commit in chunks
+
+PART C — DISTRIBUTION GENERATION MUST USE MACRO LAYER WHEN AVAILABLE
+Modify distribution generation logic (generate_predictions and/or distribution calculation) WITHOUT changing outputs for existing SKUs:
+- If SalesWeeklyAgg has data for the requested SKUs and stores, use it as the sales source instead of scanning DistributionRecord.
+- Keep analysis windows:
+  win=1/2/3 weeks for SMA modes
+  min_weeks required still applies
+- Store stock adjustment unchanged
+- CD limitation unchanged
+- Runs unchanged
+
+PART D — CATEGORY-BASED COLD START FOR NEW SKUs (core requirement)
+Implement cold-start logic for SKUs that have no recent sales history:
+Definition: “new SKU” if there are zero weekly sales rows for that SKU-store in the recent window.
+We apply category-based suggestion rules:
+
+Parameters (defaults):
+- min_fill = 2
+- target_WOC_new = 1.0
+- eligible_store_top_n = 10 (DEFAULT)
+- category_window_days = 90 (or use last 12 weeks)
+
+Eligibility:
+For each new SKU:
+- Identify its category:
+  - from Product.category (preferred)
+  - or from sales upload if provided
+If category missing, do not apply cold start (suggest 0 with reason).
+Compute category store ranking:
+- For each store, compute category weekly sales rate over last category_window_days (from SalesWeeklyAgg):
+  cat_sales_rate_store = avg weekly units for that category in that store
+Pick eligible stores:
+- Top 10 stores by cat_sales_rate_store (eligible_store_top_n=10)
+Only eligible stores can receive new SKU cold-start suggestions.
+
+Suggested qty for new SKU at eligible store:
+- need_units = ceil(target_WOC_new * cat_sales_rate_store)
+- suggested_new = max(min_fill, need_units)
+- Then apply store stock adjustment:
+  if store already has stock for that SKU, reduce suggested accordingly (cannot go negative)
+- Then apply CD availability (global limiter) same as base forecast:
+  allocate CD stock to higher cat_sales_rate_store first
+
+Integration:
+- Cold-start suggestions are added AFTER base forecast suggestions:
+  - Only for SKU-store pairs not already receiving base suggestion (or base is 0)
+  - Mark model_name or reason tag: “COLD_START_CATEGORY”
+- Exports should include reason tag if available (optional but recommended).
+
+PART E — TRANSPARENCY + PERFORMANCE
+1) Add a small summary in distribution run:
+- # SKUs with normal sales-based suggestions
+- # SKUs cold-started by category
+- CD units allocated to cold-start
+2) Avoid slow queries:
+- For distribution subset runs, query SalesWeeklyAgg only for the SKUs involved (not full table).
+- Use dict maps for product_id and store_id.
+3) Ensure dashboard alerts/store health can leverage macro layer:
+- Store Health scope default uses:
+  (1) SKUs with sales in last 90 days from SalesWeeklyAgg
+  (2) SKUs present in last X runs (existing logic)
+No scanning of full DistributionRecord needed.
+
+UI REQUIREMENTS
+- New macro upload page must match current upload style (2-column layout with guide/example).
+- Keep existing subset “Sales Upload” for distribution runs unchanged (still works).
+- Add note on Sales Upload:
+  “For full catalog macro visibility, use Macro Sales Upload.”
+
+DELIVERABLES
+- New models (SalesWeeklyAgg + Product.category if missing) with indexes
+- New macro upload route + template
+- Updated distribution generation to use SalesWeeklyAgg when present
+- Implement category-based cold start (min_fill=2, target_WOC_new=1.0, top 10 stores eligible)
+- Ensure no regressions in current modules
+- Provide brief test plan:
+  1) Upload macro sales
+  2) Upload stock CD + stores
+  3) Run distribution with SKU list including a “new SKU” with category
+  4) Confirm cold start assigns qty to top 10 category stores
+  5) Confirm normal SKUs use SMA as before
