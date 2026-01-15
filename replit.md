@@ -39,15 +39,18 @@ Do not make changes to the folder `Excel tipo/`.
 - **Distribution Predictions**: Generate product distribution suggestions based on moving averages and historical data.
 - **Advanced Forecasting (Forecast Compra V2)**: Comprehensive purchase forecasting incorporating lead time, safety stock, coverage, and various demand methods.
 - **Inventory Optimization**:
-    - **Store-to-Store Rebalancing**: Suggests optimal stock transfers between stores based on Weeks of Cover (WOC) and sales velocity.
-    - **Manual Transfer Builder**: Additional workflow for creating custom transfer plans:
-        - Select donor and receiver stores manually
-        - Upload CSV/Excel with SKU and quantity columns, or paste list
-        - Validation checks: SKU existence, donor stock availability, donor != destination
-        - Status indicators: OK, WARNING (exceeds available), ERROR (unknown SKU)
-        - DB storage for traceability (ManualTransferRun, ManualTransferItem models)
-        - Export manual plan to Excel with SKU as text (preserves leading zeros)
-        - Routes: /rebalancing/manual/validate, /add, /items, /clear, /export, /remove
+    - **Store-to-Store Rebalancing**: Consolidated single-page module with two modes:
+        - **Auto Suggestions**: System analyzes all stores and generates optimal transfers based on WOC and sales velocity
+        - **Assisted Manual Plan**: User provides SKU list only (no quantities), system calculates optimal transfer amounts
+        - Shared parameters: weeks_window, WOC min/target/max, retain_woc, stock_floor, min_transfer_qty
+        - Tabbed UI with [Sugerencias Automáticas] [Plan Manual Asistido] toggle
+    - **Assisted Manual Plan Features**:
+        - Destination store required, donor store optional (system finds best donor)
+        - SKU input via CSV/Excel file or paste list (one SKU per line)
+        - Calculation logic: need_units = max(ceil(WOC_target * sales_rate_dest) - stock_dest, 0)
+        - Status indicators: OK, NO-NEED (sufficient WOC), NO-DONOR, NO-SALES
+        - Save plan to database or export to Excel
+        - Routes: /rebalancing/manual/calculate, /save, /export-calculated
     - **Stock-out Replenishment (BREAK_REPLENISH)**: Automatically identifies and suggests replenishment for out-of-stock SKU-Store pairs with historical demand.
     - **Slow Stock & Smart Reallocation**: Extended dead/slow-moving inventory manager with configurable thresholds. Features include:
         - Configurable parameters: HISTORY_WINDOW_WEEKS (12), RECENT_WINDOW_WEEKS (4), DEAD_DAYS_STORE (60), DEAD_DAYS_GLOBAL (90), DEAD_PURCHASE_DAYS (120), SLOW_RATE_THRESHOLD (0.3), MIN_WOC (1.5), MAX_WOC (6.0)
