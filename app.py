@@ -3514,6 +3514,12 @@ def process_stock_cd_upload(job_id, payload):
                 name_col = col
                 break
         
+        # Optional category column
+        has_category = 'category' in df.columns
+        if has_category:
+            df['category'] = df['category'].astype(str).str.strip()
+            df['category'] = df['category'].replace(['', 'nan', 'None', 'NaN'], None)
+        
         update_job_status(job_id, progress=30, message='Verificando productos...')
         
         unique_skus = list(df['sku'].unique())
@@ -3527,6 +3533,16 @@ def process_stock_cd_upload(job_id, payload):
         
         update_job_status(job_id, progress=40, message='Procesando SKUs...')
         
+        # Build category map from upload data
+        sku_category_map = {}
+        if has_category:
+            for sku in unique_skus:
+                match = df[df['sku'] == sku]
+                if not match.empty:
+                    cat_val = match.iloc[0].get('category')
+                    if cat_val and cat_val not in [None, 'None', 'nan', '']:
+                        sku_category_map[sku] = cat_val
+        
         new_products = []
         for sku in unique_skus:
             if sku not in sku_to_product_id:
@@ -3535,7 +3551,10 @@ def process_stock_cd_upload(job_id, payload):
                     match = df[df['sku'] == sku]
                     if not match.empty and pd.notna(match.iloc[0].get(name_col)):
                         pname = str(match.iloc[0][name_col]).strip()
-                new_products.append({'sku': sku, 'name': pname if pname else f"SKU {sku}"})
+                prod_data = {'sku': sku, 'name': pname if pname else f"SKU {sku}"}
+                if sku in sku_category_map:
+                    prod_data['category'] = sku_category_map[sku]
+                new_products.append(prod_data)
         
         if new_products:
             update_job_status(job_id, progress=50, message=f'Creando {len(new_products)} productos nuevos...')
@@ -3546,6 +3565,26 @@ def process_stock_cd_upload(job_id, payload):
                 sku_batch = new_skus[i:i + batch_size]
                 for p in session.query(Product).filter(Product.sku.in_(sku_batch)).all():
                     sku_to_product_id[p.sku] = p.id
+        
+        # Update category for existing products with NULL category
+        if has_category and sku_category_map:
+            category_updates = 0
+            category_mismatches = 0
+            existing_skus_to_check = [sku for sku in sku_category_map.keys() if sku in sku_to_product_id]
+            for i in range(0, len(existing_skus_to_check), batch_size):
+                sku_batch = existing_skus_to_check[i:i + batch_size]
+                for prod in session.query(Product).filter(Product.sku.in_(sku_batch)).all():
+                    incoming_cat = sku_category_map.get(prod.sku)
+                    if incoming_cat:
+                        if not prod.category:
+                            prod.category = incoming_cat
+                            category_updates += 1
+                        elif prod.category != incoming_cat:
+                            print(f"Category mismatch for SKU {prod.sku}: existing={prod.category}, incoming={incoming_cat}")
+                            category_mismatches += 1
+            if category_updates > 0:
+                session.commit()
+                print(f"Stock CD: Updated category for {category_updates} products, {category_mismatches} mismatches logged")
         
         update_job_status(job_id, progress=60, message='Preparando stock...')
         
