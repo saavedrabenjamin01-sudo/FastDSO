@@ -5883,11 +5883,17 @@ def compute_store_health_index(weights=None, sku_scope='core'):
     
     # Get SKUs that appeared in recent distribution runs
     skus_in_runs = set()
-    recent_runs = DistributionRun.query.order_by(DistributionRun.created_at.desc()).limit(scope_runs_count).all()
+    recent_runs = (
+        Run.query
+        .filter(Run.run_type == 'distribution')
+        .order_by(Run.created_at.desc())
+        .limit(scope_runs_count)
+        .all()
+    )
     if recent_runs:
         run_ids = [r.run_id for r in recent_runs]
-        run_skus = db.session.query(DistributionPrediction.product_id.distinct()).filter(
-            DistributionPrediction.run_id.in_(run_ids)
+        run_skus = db.session.query(Prediction.product_id.distinct()).filter(
+            Prediction.run_id.in_(run_ids)
         ).all()
         skus_in_runs = {r[0] for r in run_skus}
     
