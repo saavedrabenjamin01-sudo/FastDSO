@@ -4614,6 +4614,380 @@ def manual_transfer_remove_item(item_id):
     return jsonify({'success': True})
 
 
+@app.route('/rebalancing/manual/calculate', methods=['POST'])
+@login_required
+@require_permission('rebalancing:run')
+def manual_transfer_calculate():
+    """
+    Assisted Manual Plan: Calculate transfer quantities for a list of SKUs.
+    System determines optimal qty based on WOC logic - no user qty input needed.
+    """
+    to_store_id = request.form.get('to_store_id', type=int)
+    from_store_id = request.form.get('from_store_id', type=int)
+    
+    weeks_window = request.form.get('weeks_window', 4, type=int)
+    woc_min = request.form.get('woc_min', 1.5, type=float)
+    woc_target = request.form.get('woc_target', 2.5, type=float)
+    woc_max = request.form.get('woc_max', 6.0, type=float)
+    retain_woc = request.form.get('retain_woc', 4.0, type=float)
+    stock_floor = request.form.get('stock_floor', 1, type=int)
+    min_transfer_qty = request.form.get('min_transfer_qty', 2, type=int)
+    
+    if not to_store_id:
+        return jsonify({'error': 'Tienda destino es requerida'}), 400
+    
+    if from_store_id and from_store_id == to_store_id:
+        return jsonify({'error': 'Tienda origen no puede ser igual a destino'}), 400
+    
+    to_store = Store.query.get(to_store_id)
+    from_store = Store.query.get(from_store_id) if from_store_id else None
+    
+    if not to_store:
+        return jsonify({'error': 'Tienda destino no encontrada'}), 404
+    
+    sku_text = request.form.get('sku_text', '').strip()
+    sku_file = request.files.get('sku_file')
+    
+    sku_list = []
+    
+    if sku_file and sku_file.filename:
+        try:
+            filename = sku_file.filename.lower()
+            if filename.endswith('.csv'):
+                import csv
+                import io
+                content = sku_file.read().decode('utf-8-sig')
+                reader = csv.DictReader(io.StringIO(content))
+                for row in reader:
+                    sku = str(row.get('sku', row.get('SKU', ''))).strip()
+                    if sku:
+                        sku_list.append(sku)
+            elif filename.endswith('.xlsx') or filename.endswith('.xls'):
+                df = pd.read_excel(sku_file)
+                df.columns = [c.lower().strip() for c in df.columns]
+                for _, row in df.iterrows():
+                    sku = str(row.get('sku', '')).strip()
+                    if sku:
+                        sku_list.append(sku)
+        except Exception as e:
+            return jsonify({'error': f'Error leyendo archivo: {str(e)}'}), 400
+    
+    if sku_text and not sku_list:
+        for line in sku_text.split('\n'):
+            line = line.strip().split(',')[0].split(';')[0].strip()
+            if line:
+                sku_list.append(line)
+    
+    if not sku_list:
+        return jsonify({'error': 'No se encontraron SKUs válidos'}), 400
+    
+    sku_list = list(dict.fromkeys(sku_list))
+    
+    today = date.today()
+    cutoff = today - timedelta(days=weeks_window * 7)
+    
+    latest_stock_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
+    if not latest_stock_date:
+        return jsonify({'error': 'No hay datos de stock disponibles'}), 400
+    
+    products_by_sku = {p.sku: p for p in Product.query.filter(Product.sku.in_(sku_list)).all()}
+    product_ids = [p.id for p in products_by_sku.values()]
+    
+    stock_map = {}
+    stock_q = (
+        db.session.query(
+            StockSnapshot.product_id,
+            StockSnapshot.store_id,
+            StockSnapshot.quantity
+        )
+        .filter(
+            StockSnapshot.as_of_date == latest_stock_date,
+            StockSnapshot.product_id.in_(product_ids)
+        )
+        .all()
+    )
+    for pid, sid, qty in stock_q:
+        stock_map[(pid, sid)] = qty
+    
+    week_expr = db.func.strftime('%Y-%W', DistributionRecord.event_date)
+    sales_q = (
+        db.session.query(
+            DistributionRecord.product_id,
+            DistributionRecord.store_id,
+            db.func.sum(DistributionRecord.quantity).label('total_qty'),
+            db.func.count(db.func.distinct(week_expr)).label('num_weeks')
+        )
+        .filter(
+            DistributionRecord.event_date >= cutoff,
+            DistributionRecord.product_id.in_(product_ids)
+        )
+        .group_by(DistributionRecord.product_id, DistributionRecord.store_id)
+        .all()
+    )
+    
+    sales_rate_map = {}
+    for pid, sid, total_qty, num_weeks in sales_q:
+        rate = total_qty / max(num_weeks, 1)
+        sales_rate_map[(pid, sid)] = rate
+    
+    store_info = {s.id: s.name for s in Store.query.all()}
+    all_store_ids = list(store_info.keys())
+    
+    results = []
+    
+    for sku in sku_list:
+        product = products_by_sku.get(sku)
+        
+        if not product:
+            results.append({
+                'sku': sku,
+                'product_name': '-',
+                'to_store': to_store.name,
+                'donor_store': None,
+                'transfer_qty': 0,
+                'woc_dest': 0,
+                'donor_give': 0,
+                'status': 'NO-SKU',
+                'notes': 'SKU no encontrado'
+            })
+            continue
+        
+        pid = product.id
+        
+        stock_dest = stock_map.get((pid, to_store_id), 0)
+        rate_dest = sales_rate_map.get((pid, to_store_id), 0)
+        woc_dest = stock_dest / max(rate_dest, 0.01) if rate_dest > 0 else 999
+        
+        if rate_dest == 0:
+            results.append({
+                'sku': sku,
+                'product_name': product.name,
+                'to_store': to_store.name,
+                'donor_store': None,
+                'transfer_qty': 0,
+                'woc_dest': 0,
+                'donor_give': 0,
+                'status': 'NO-SALES',
+                'notes': 'Sin historial de ventas en destino'
+            })
+            continue
+        
+        if woc_dest >= woc_min:
+            need_units = 0
+        else:
+            need_units = max(math.ceil(woc_target * rate_dest) - stock_dest, 0)
+        
+        if need_units == 0:
+            results.append({
+                'sku': sku,
+                'product_name': product.name,
+                'to_store': to_store.name,
+                'donor_store': None,
+                'transfer_qty': 0,
+                'woc_dest': round(woc_dest, 2),
+                'donor_give': 0,
+                'status': 'NO-NEED',
+                'notes': f'WOC {woc_dest:.1f} >= {woc_min}'
+            })
+            continue
+        
+        candidate_donors = []
+        search_store_ids = [from_store_id] if from_store_id else all_store_ids
+        
+        for sid in search_store_ids:
+            if sid == to_store_id:
+                continue
+            
+            stock_donor = stock_map.get((pid, sid), 0)
+            if stock_donor <= 0:
+                continue
+            
+            rate_donor = sales_rate_map.get((pid, sid), 0)
+            keep_units = max(math.ceil(retain_woc * rate_donor), stock_floor) if rate_donor > 0 else stock_floor
+            give_units = max(stock_donor - keep_units, 0)
+            
+            if give_units > 0:
+                woc_donor = stock_donor / max(rate_donor, 0.01)
+                candidate_donors.append({
+                    'store_id': sid,
+                    'store_name': store_info.get(sid, '?'),
+                    'give': give_units,
+                    'woc': woc_donor
+                })
+        
+        candidate_donors.sort(key=lambda x: x['give'], reverse=True)
+        
+        if not candidate_donors:
+            results.append({
+                'sku': sku,
+                'product_name': product.name,
+                'to_store': to_store.name,
+                'donor_store': from_store.name if from_store else None,
+                'transfer_qty': 0,
+                'woc_dest': round(woc_dest, 2),
+                'donor_give': 0,
+                'status': 'NO-DONOR',
+                'notes': 'Sin tienda donante disponible'
+            })
+            continue
+        
+        best_donor = candidate_donors[0]
+        transfer = min(need_units, best_donor['give'])
+        
+        is_stockout = stock_dest == 0 and rate_dest > 0
+        if transfer < min_transfer_qty and not is_stockout:
+            transfer = 0
+            status = 'NO-NEED'
+            notes = f'Transferencia ({transfer}) < mínimo ({min_transfer_qty})'
+        else:
+            status = 'OK'
+            notes = ''
+        
+        results.append({
+            'sku': sku,
+            'product_name': product.name,
+            'product_id': pid,
+            'to_store': to_store.name,
+            'to_store_id': to_store_id,
+            'donor_store': best_donor['store_name'],
+            'donor_store_id': best_donor['store_id'],
+            'transfer_qty': transfer,
+            'woc_dest': round(woc_dest, 2),
+            'donor_give': best_donor['give'],
+            'status': status,
+            'notes': notes
+        })
+    
+    ok_count = sum(1 for r in results if r['status'] == 'OK' and r.get('transfer_qty', 0) > 0)
+    no_need_count = sum(1 for r in results if r['status'] == 'NO-NEED')
+    no_donor_count = sum(1 for r in results if r['status'] in ('NO-DONOR', 'NO-SKU', 'NO-SALES'))
+    
+    return jsonify({
+        'to_store': to_store.name,
+        'from_store': from_store.name if from_store else None,
+        'items': results,
+        'total_items': len(results),
+        'ok_count': ok_count,
+        'no_need_count': no_need_count,
+        'no_donor_count': no_donor_count
+    })
+
+
+@app.route('/rebalancing/manual/save', methods=['POST'])
+@login_required
+@require_permission('rebalancing:run')
+def manual_transfer_save():
+    """Save the calculated assisted manual plan to database."""
+    data = request.get_json()
+    
+    if not data:
+        return jsonify({'error': 'Datos no proporcionados'}), 400
+    
+    items = data.get('items', [])
+    valid_items = [i for i in items if i.get('status') == 'OK' and i.get('transfer_qty', 0) > 0]
+    
+    if not valid_items:
+        return jsonify({'error': 'No hay items válidos para guardar'}), 400
+    
+    run_id = str(uuid.uuid4())
+    current_run = ManualTransferRun(
+        run_id=run_id,
+        created_by_user_id=current_user.id,
+        status='complete'
+    )
+    db.session.add(current_run)
+    
+    count = 0
+    for item in valid_items:
+        mt_item = ManualTransferItem(
+            run_id=run_id,
+            product_id=item.get('product_id'),
+            from_store_id=item.get('donor_store_id'),
+            to_store_id=item.get('to_store_id'),
+            qty=item.get('transfer_qty', 0),
+            status='OK',
+            notes=item.get('notes', '')
+        )
+        db.session.add(mt_item)
+        count += 1
+    
+    db.session.commit()
+    
+    log_audit(
+        action='manual_transfer.save_assisted',
+        status='success',
+        message=f'Saved assisted manual plan with {count} items',
+        entity_type='ManualTransferRun',
+        run_id=run_id
+    )
+    
+    return jsonify({'success': True, 'count': count, 'run_id': run_id})
+
+
+@app.route('/rebalancing/manual/export-calculated', methods=['POST'])
+@login_required
+@require_permission('rebalancing:run')
+def manual_transfer_export_calculated():
+    """Export the calculated assisted manual plan to Excel."""
+    items_json = request.form.get('items', '[]')
+    
+    try:
+        items = json.loads(items_json)
+    except:
+        items = []
+    
+    if not items:
+        flash('No hay items para exportar', 'warning')
+        return redirect(url_for('rebalancing'))
+    
+    rows = []
+    for item in items:
+        rows.append({
+            'SKU': str(item.get('sku', '')),
+            'Producto': item.get('product_name', ''),
+            'Tienda Origen': item.get('donor_store', ''),
+            'Tienda Destino': item.get('to_store', ''),
+            'Cantidad': item.get('transfer_qty', 0),
+            'WOC Destino': item.get('woc_dest', 0),
+            'Donante Da': item.get('donor_give', 0),
+            'Estado': item.get('status', '')
+        })
+    
+    df = pd.DataFrame(rows)
+    
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Plan Asistido')
+        
+        workbook = writer.book
+        worksheet = writer.sheets['Plan Asistido']
+        
+        for col_cells in worksheet.columns:
+            col_letter = col_cells[0].column_letter
+            if col_letter == 'A':
+                worksheet.column_dimensions[col_letter].number_format = '@'
+                for cell in col_cells[1:]:
+                    cell.number_format = '@'
+    
+    output.seek(0)
+    
+    to_store = items[0].get('to_store', 'unknown') if items else 'unknown'
+    filename = f"plan_asistido_{to_store}_{date.today().isoformat()}.xlsx"
+    
+    log_audit(
+        action='manual_transfer.export_calculated',
+        status='success',
+        message=f'Exported calculated plan with {len(rows)} items'
+    )
+    
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+
+
 @app.route('/export_simulation/<sim_type>', methods=['GET'])
 @login_required
 def export_simulation(sim_type):

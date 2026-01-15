@@ -1,0 +1,94 @@
+REDISTRIBUTION MODULE — Consolidate Auto + Manual into one compact UI, and make Manual mode “assisted” (no user qty input)
+
+Context:
+We currently have two large sections in the Redistribution module:
+1) Auto suggestions: user selects only destination store + parameters, system picks donors and quantities.
+2) Manual transfer builder: user selects donor + destination + retains min stock, uploads SKU+qty.
+We want to consolidate both into a single compact module and remove the need for manual quantity input.
+
+GOAL
+- Keep the existing auto redistribution logic intact.
+- Replace the current manual builder with an “Assisted Manual Plan”:
+  user selects destination + (optional) donor + list of SKUs ONLY, and the system calculates transfer quantities intelligently using the same WOC logic and constraints.
+
+STRICT RULES
+1) Do NOT break or remove the existing Auto redistribution behavior.
+2) Do NOT require user-specified quantity in manual mode.
+3) Manual assisted mode must reuse the same parameters: history_weeks, WOC_min, WOC_target, WOC_max, retain_woc, donor_floor, min_transfer_qty.
+4) Keep exports working (auto export and manual export).
+5) Keep UI consistent with Dashboard style and avoid “big/heavy” layout.
+
+UI REQUIREMENTS
+A) Consolidated layout in rebalancing.html:
+- Single page with one compact “Redistribution” container card.
+- Add a segmented toggle or tabs at top:
+  [Auto Suggestions] [Assisted Manual Plan]
+- Both modes share the same parameter card (no duplicate parameter blocks).
+- Manual mode shows extra fields:
+  - Donor store dropdown (optional)
+  - Destination store dropdown (required)
+  - SKU input method:
+     Option 1: Upload CSV/XLSX with one column “sku”
+     Option 2: Textarea paste (one sku per line)
+  - Button: “Calculate plan”
+- Remove qty column from upload template/input. Only SKU list.
+
+B) Assisted Manual Calculation rules (core logic):
+For each selected SKU:
+1) Determine destination sales_rate and stock:
+   - sales_rate_dest = avg weekly sales for destination store over recent_window_weeks (use history_weeks param or a fixed recent window like last 4–6 weeks; must be consistent with Auto mode)
+   - stock_dest = latest store stock snapshot for that sku-store
+   - woc_dest = stock_dest / max(sales_rate_dest, 1)
+2) Determine destination need:
+   need_units = max(ceil(WOC_target * sales_rate_dest) - stock_dest, 0)
+   Gate: if woc_dest >= WOC_min, allow need_units to be 0 (do not force transfers).
+3) Determine donor:
+   - If user selected a donor store, use that donor only.
+   - Else choose donor automatically from stores with stock and donor_give > 0, prefer highest donor_give (or highest WOC).
+4) Determine donor give:
+   sales_rate_donor = avg weekly sales for donor store (same horizon)
+   keep_units = max(ceil(retain_woc * sales_rate_donor), donor_floor)
+   donor_give = max(stock_donor - keep_units, 0)
+5) Transfer qty:
+   transfer = min(need_units, donor_give)
+   If transfer < min_transfer_qty: set 0 unless destination_stock == 0 AND destination has sales history -> allow 1.
+6) Status per row:
+   - OK if transfer > 0
+   - NO-NEED if need_units == 0
+   - NO-DONOR if donor_give == 0 or no donor found
+   - NO-SALES if sales_rate_dest == 0 and no history
+Return a plan table.
+
+C) Output table (manual mode)
+Show a compact table:
+SKU | Product | Donor | Destination | Transfer Qty | Dest WOC | Donor give | Status
+Include badges for Status (green/orange/gray).
+
+D) Export manual plan
+- Export the calculated plan with the suggested quantities.
+- Preserve leading zeros in SKU (text).
+- Filename includes date and destination store.
+
+E) Performance
+- Do not do per-row DB queries.
+- Batch fetch:
+  - products by sku
+  - store stocks snapshots
+  - sales aggregates by sku-store-week
+Use in-memory dicts.
+
+DELIVERABLES
+- Updated rebalancing.html with consolidated UI and assisted manual tab.
+- Updated backend route(s) to accept SKU list (csv/xlsx or textarea) and return calculated plan.
+- Keep existing auto suggestion route unchanged.
+- Updated export endpoint for manual plan (now exporting suggested qty computed by system).
+- Ensure no regressions and UI is not heavy.
+
+ACCEPTANCE TEST
+1) Auto suggestions still behave exactly as before.
+2) Manual assisted:
+   - Select destination store
+   - Upload a SKU list only
+   - System proposes transfer qty per SKU
+   - Export works
+3) If destination already has sufficient WOC, transfer qty becomes 0 (no unnecessary transfers).

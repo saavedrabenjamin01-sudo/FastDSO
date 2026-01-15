@@ -33,131 +33,220 @@
   {% endif %}
   {% endif %}
 
-  <div class="rebal-card rebal-params-card">
-    <div class="rebal-card-header">
-      <i class="bi bi-sliders me-2"></i>Parámetros de Redistribución
+  <div class="rebal-card rebal-main-card">
+    <div class="rebal-mode-tabs">
+      <button type="button" class="rebal-mode-tab active" data-mode="auto">
+        <i class="bi bi-lightning-charge me-1"></i>Sugerencias Automáticas
+      </button>
+      {% if current_user.has_permission('rebalancing:run') %}
+      <button type="button" class="rebal-mode-tab" data-mode="manual">
+        <i class="bi bi-hand-index-thumb me-1"></i>Plan Manual Asistido
+      </button>
+      {% endif %}
     </div>
+
     <div class="rebal-card-body">
-      <form method="POST" action="{{ url_for('rebalancing') }}" id="rebalancingForm"
-            data-loader="true"
-            data-loader-title="Procesando Redistribución"
-            data-loader-msg="Evaluando stock de tiendas y generando transferencias sugeridas..."
-            data-loader-icon="store-transfer">
-        
-        <div class="rebal-params-grid">
-          <div class="rebal-field">
-            <label class="rebal-label">Tienda destino</label>
-            <select name="store_filter" class="form-select">
-              <option value="">-- Todas --</option>
-              {% for store in stores %}
-              <option value="{{ store.name }}" {% if params.store_filter == store.name %}selected{% endif %}>{{ store.name }}</option>
-              {% endfor %}
-            </select>
-          </div>
+      <div class="rebal-params-section">
+        <div class="rebal-params-header">
+          <i class="bi bi-sliders me-2"></i>Parámetros Compartidos
+        </div>
+        <div class="rebal-params-grid rebal-params-compact">
           <div class="rebal-field">
             <label class="rebal-label">Semanas historial</label>
-            <select name="weeks_window" class="form-select">
+            <select id="paramWeeksWindow" class="form-select form-select-sm">
               {% for w in [2,4,8,12] %}
               <option value="{{ w }}" {% if params.weeks_window == w %}selected{% endif %}>{{ w }}</option>
               {% endfor %}
             </select>
           </div>
           <div class="rebal-field">
-            <label class="rebal-label">WOC Mín <small class="text-muted">(riesgo)</small></label>
-            <input type="number" step="0.1" name="target_woc_min" class="form-control" value="{{ params.target_woc_min }}">
+            <label class="rebal-label">WOC Mín</label>
+            <input type="number" step="0.1" id="paramWocMin" class="form-control form-control-sm" value="{{ params.target_woc_min }}">
           </div>
           <div class="rebal-field">
             <label class="rebal-label">WOC Objetivo</label>
-            <input type="number" step="0.1" name="target_woc_target" class="form-control" value="{{ params.target_woc_target }}">
+            <input type="number" step="0.1" id="paramWocTarget" class="form-control form-control-sm" value="{{ params.target_woc_target }}">
           </div>
           <div class="rebal-field">
-            <label class="rebal-label">WOC Máx <small class="text-muted">(exceso)</small></label>
-            <input type="number" step="0.1" name="target_woc_max" class="form-control" value="{{ params.target_woc_max }}">
+            <label class="rebal-label">WOC Máx</label>
+            <input type="number" step="0.1" id="paramWocMax" class="form-control form-control-sm" value="{{ params.target_woc_max }}">
           </div>
-        </div>
-
-        <div class="rebal-params-grid rebal-params-grid-row2">
           <div class="rebal-field">
             <label class="rebal-label">Retener WOC</label>
-            <input type="number" step="0.1" name="retain_woc" class="form-control" value="{{ params.retain_woc }}">
+            <input type="number" step="0.1" id="paramRetainWoc" class="form-control form-control-sm" value="{{ params.retain_woc }}">
           </div>
           <div class="rebal-field">
-            <label class="rebal-label">Stock mínimo</label>
-            <input type="number" name="stock_floor" class="form-control" value="{{ params.stock_floor }}">
+            <label class="rebal-label">Stock mín</label>
+            <input type="number" id="paramStockFloor" class="form-control form-control-sm" value="{{ params.stock_floor }}">
           </div>
           <div class="rebal-field">
-            <label class="rebal-label">Transf. mínima</label>
-            <input type="number" name="min_transfer_qty" class="form-control" value="{{ params.min_transfer_qty }}">
+            <label class="rebal-label">Transf. mín</label>
+            <input type="number" id="paramMinTransfer" class="form-control form-control-sm" value="{{ params.min_transfer_qty }}">
+          </div>
+        </div>
+      </div>
+
+      <div id="autoModeContent" class="rebal-mode-content active">
+        <form method="POST" action="{{ url_for('rebalancing') }}" id="autoRebalancingForm"
+              data-loader="true"
+              data-loader-title="Procesando Redistribución"
+              data-loader-msg="Evaluando stock de tiendas y generando transferencias sugeridas..."
+              data-loader-icon="store-transfer">
+          
+          <input type="hidden" name="weeks_window" id="autoWeeksWindow">
+          <input type="hidden" name="target_woc_min" id="autoWocMin">
+          <input type="hidden" name="target_woc_target" id="autoWocTarget">
+          <input type="hidden" name="target_woc_max" id="autoWocMax">
+          <input type="hidden" name="retain_woc" id="autoRetainWoc">
+          <input type="hidden" name="stock_floor" id="autoStockFloor">
+          <input type="hidden" name="min_transfer_qty" id="autoMinTransfer">
+
+          <div class="rebal-auto-controls">
+            <div class="rebal-field rebal-field-inline">
+              <label class="rebal-label">Tienda destino (filtro)</label>
+              <select name="store_filter" class="form-select form-select-sm" style="width: 200px;">
+                <option value="">-- Todas --</option>
+                {% for store in stores %}
+                <option value="{{ store.name }}" {% if params.store_filter == store.name %}selected{% endif %}>{{ store.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="rebal-auto-actions">
+              {% if current_user.has_permission('rebalancing:run') %}
+              <label class="rebal-simulate-check">
+                <input type="checkbox" name="simulate" value="1" id="simulateCheck">
+                <span><i class="bi bi-lightning me-1"></i>Simular</span>
+              </label>
+              <button type="submit" class="btn btn-sm rebal-btn-primary">
+                <i class="bi bi-play-circle me-1"></i>Generar
+              </button>
+              {% endif %}
+              {% if run_info and not run_info.is_simulation %}
+              <a href="{{ url_for('export_rebalancing', run_id=run_info.run_id) }}" class="btn btn-sm rebal-btn-secondary">
+                <i class="bi bi-download me-1"></i>Exportar
+              </a>
+              {% elif run_info and run_info.is_simulation %}
+              <a href="{{ url_for('export_simulation', sim_type='rebalancing') }}" class="btn btn-sm rebal-btn-warning">
+                <i class="bi bi-download me-1"></i>Exportar Sim
+              </a>
+              {% endif %}
+            </div>
+          </div>
+        </form>
+      </div>
+
+      {% if current_user.has_permission('rebalancing:run') %}
+      <div id="manualModeContent" class="rebal-mode-content">
+        <div class="rebal-manual-controls">
+          <div class="rebal-manual-stores-row">
+            <div class="rebal-field">
+              <label class="rebal-label">Tienda destino <span class="text-danger">*</span></label>
+              <select id="manualToStore" class="form-select form-select-sm" required>
+                <option value="">-- Seleccionar --</option>
+                {% for store in stores %}
+                <option value="{{ store.id }}">{{ store.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="rebal-field">
+              <label class="rebal-label">Tienda donante <span class="text-muted">(opcional)</span></label>
+              <select id="manualFromStore" class="form-select form-select-sm">
+                <option value="">-- Auto (mejor donante) --</option>
+                {% for store in stores %}
+                <option value="{{ store.id }}">{{ store.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+          <div class="rebal-manual-input-row">
+            <div class="rebal-field rebal-field-file">
+              <label class="rebal-label">Archivo SKUs (CSV/Excel, columna: sku)</label>
+              <input type="file" id="manualSkuFile" class="form-control form-control-sm" accept=".csv,.xlsx,.xls">
+            </div>
+            <div class="rebal-field-divider">o</div>
+            <div class="rebal-field rebal-field-textarea">
+              <label class="rebal-label">Lista SKUs (uno por línea)</label>
+              <textarea id="manualSkuText" class="form-control form-control-sm" rows="3" placeholder="SKU001&#10;SKU002&#10;SKU003"></textarea>
+            </div>
+          </div>
+          <div class="rebal-manual-actions">
+            <button type="button" class="btn btn-sm rebal-btn-primary" id="manualCalculateBtn">
+              <i class="bi bi-calculator me-1"></i>Calcular plan
+            </button>
           </div>
         </div>
 
-        <div class="rebal-actions">
-          {% if current_user.has_permission('rebalancing:run') %}
-          <label class="rebal-simulate-check">
-            <input type="checkbox" name="simulate" value="1" id="simulateCheck">
-            <span><i class="bi bi-lightning me-1"></i>Simular (no guardar)</span>
-          </label>
-          <button type="submit" class="btn rebal-btn-primary">
-            <i class="bi bi-play-circle me-1"></i>Generar sugerencias
-          </button>
-          {% endif %}
-          {% if run_info and not run_info.is_simulation %}
-          <a href="{{ url_for('export_rebalancing', run_id=run_info.run_id) }}" class="btn rebal-btn-secondary">
-            <i class="bi bi-download me-1"></i>Exportar Excel
-          </a>
-          {% elif run_info and run_info.is_simulation %}
-          <a href="{{ url_for('export_simulation', sim_type='rebalancing') }}" class="btn rebal-btn-warning">
-            <i class="bi bi-download me-1"></i>Exportar Simulación
-          </a>
-          {% endif %}
+        <div id="manualPlanSection" class="rebal-manual-plan" style="display:none;">
+          <div class="rebal-manual-plan-header">
+            <h6><i class="bi bi-clipboard-data me-2"></i>Plan Calculado</h6>
+            <div class="rebal-manual-plan-badges">
+              <span class="mt-badge mt-badge-ok" id="manualOkCount">0 OK</span>
+              <span class="mt-badge mt-badge-warn" id="manualNoNeedCount">0 Sin necesidad</span>
+              <span class="mt-badge mt-badge-error" id="manualNoDonorCount">0 Sin donante</span>
+            </div>
+          </div>
+          <div class="rebal-table-wrap rebal-table-compact">
+            <table class="rebal-table">
+              <thead>
+                <tr>
+                  <th>SKU</th>
+                  <th>Producto</th>
+                  <th>Donante</th>
+                  <th>Destino</th>
+                  <th class="text-end">Cantidad</th>
+                  <th class="text-end">WOC Dest</th>
+                  <th class="text-end">Donante da</th>
+                  <th>Estado</th>
+                </tr>
+              </thead>
+              <tbody id="manualPlanBody"></tbody>
+            </table>
+          </div>
+          <div class="rebal-manual-plan-actions">
+            <button type="button" class="btn btn-sm rebal-btn-success" id="manualSavePlanBtn">
+              <i class="bi bi-save me-1"></i>Guardar plan
+            </button>
+            <button type="button" class="btn btn-sm rebal-btn-secondary" id="manualExportPlanBtn">
+              <i class="bi bi-download me-1"></i>Exportar Excel
+            </button>
+            <button type="button" class="btn btn-sm rebal-btn-outline" id="manualClearPlanBtn">
+              <i class="bi bi-x-circle me-1"></i>Limpiar
+            </button>
+          </div>
         </div>
-      </form>
-    </div>
-    <div class="rebal-params-hint">
-      <i class="bi bi-info-circle me-1"></i>Estos parámetros controlan la selección de tiendas donantes y receptoras.
+      </div>
+      {% endif %}
     </div>
   </div>
 
   <div class="rebal-kpi-row">
     <div class="rebal-kpi-card rebal-kpi-blue">
-      <div class="rebal-kpi-badge">
-        <i class="bi bi-box-seam"></i>
-      </div>
+      <div class="rebal-kpi-badge"><i class="bi bi-box-seam"></i></div>
       <div class="rebal-kpi-content">
         <div class="rebal-kpi-value">{{ kpis.total_units | default(0) }}</div>
         <div class="rebal-kpi-label">Unidades a transferir</div>
       </div>
-      <div class="rebal-kpi-deco"></div>
     </div>
     <div class="rebal-kpi-card rebal-kpi-green">
-      <div class="rebal-kpi-badge">
-        <i class="bi bi-arrow-left-right"></i>
-      </div>
+      <div class="rebal-kpi-badge"><i class="bi bi-arrow-left-right"></i></div>
       <div class="rebal-kpi-content">
         <div class="rebal-kpi-value">{{ kpis.num_moves | default(0) }}</div>
         <div class="rebal-kpi-label">Movimientos sugeridos</div>
       </div>
-      <div class="rebal-kpi-deco"></div>
     </div>
     <div class="rebal-kpi-card rebal-kpi-cyan">
-      <div class="rebal-kpi-badge">
-        <i class="bi bi-upc-scan"></i>
-      </div>
+      <div class="rebal-kpi-badge"><i class="bi bi-upc-scan"></i></div>
       <div class="rebal-kpi-content">
         <div class="rebal-kpi-value">{{ kpis.num_skus | default(0) }}</div>
         <div class="rebal-kpi-label">SKUs afectados</div>
       </div>
-      <div class="rebal-kpi-deco"></div>
     </div>
     <div class="rebal-kpi-card rebal-kpi-amber">
-      <div class="rebal-kpi-badge">
-        <i class="bi bi-shop"></i>
-      </div>
+      <div class="rebal-kpi-badge"><i class="bi bi-shop"></i></div>
       <div class="rebal-kpi-content">
         <div class="rebal-kpi-value">{{ kpis.num_receivers | default(0) }}</div>
         <div class="rebal-kpi-label">Tiendas destino</div>
       </div>
-      <div class="rebal-kpi-deco"></div>
     </div>
   </div>
 
@@ -168,7 +257,7 @@
           <i class="bi bi-list-ul me-2"></i>Sugerencias de Redistribución
         </div>
         <div class="rebal-table-hint">
-          <i class="bi bi-arrow-right me-1"></i>De tiendas con exceso → a tiendas con alta demanda (según WOC y velocidad de venta)
+          <i class="bi bi-arrow-right me-1"></i>De tiendas con exceso → a tiendas con alta demanda
         </div>
       </div>
       <span class="rebal-table-badge">Top 50 de {{ total_suggestions | default(0) }}</span>
@@ -222,343 +311,203 @@
       {% endif %}
     </div>
   </div>
-
-  {% if current_user.has_permission('rebalancing:run') %}
-  <div class="rebal-card rebal-manual-card" id="manualTransferSection">
-    <div class="rebal-card-header">
-      <div class="d-flex align-items-center">
-        <i class="bi bi-hand-index-thumb me-2"></i>
-        <span>Constructor de Transferencias Manuales</span>
-      </div>
-      <button class="btn btn-sm rebal-btn-toggle" type="button" data-bs-toggle="collapse" data-bs-target="#manualTransferBody">
-        <i class="bi bi-chevron-down"></i>
-      </button>
-    </div>
-    <div class="collapse show" id="manualTransferBody">
-      <div class="rebal-card-body">
-        <p class="rebal-manual-subtitle">Selecciona tienda origen, destino y SKUs para crear un plan de transferencia personalizado.</p>
-        
-        <form id="manualTransferForm" enctype="multipart/form-data">
-          <div class="rebal-manual-grid">
-            <div class="rebal-field">
-              <label class="rebal-label">Tienda Origen (Donante)</label>
-              <select name="from_store_id" id="mtFromStore" class="form-select" required>
-                <option value="">-- Seleccionar --</option>
-                {% for store in stores %}
-                <option value="{{ store.id }}">{{ store.name }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="rebal-field">
-              <label class="rebal-label">Tienda Destino (Receptora)</label>
-              <select name="to_store_id" id="mtToStore" class="form-select" required>
-                <option value="">-- Seleccionar --</option>
-                {% for store in stores %}
-                <option value="{{ store.id }}">{{ store.name }}</option>
-                {% endfor %}
-              </select>
-            </div>
-            <div class="rebal-field">
-              <label class="rebal-label">Stock mínimo a retener</label>
-              <input type="number" name="donor_floor" id="mtDonorFloor" class="form-control" value="1" min="0">
-            </div>
-          </div>
-
-          <div class="rebal-manual-input-section">
-            <div class="rebal-field">
-              <label class="rebal-label">Archivo CSV/Excel (columnas: sku, qty)</label>
-              <input type="file" name="items_file" id="mtItemsFile" class="form-control" accept=".csv,.xlsx,.xls">
-              <small class="text-muted">O pega la lista de SKUs abajo</small>
-            </div>
-            <div class="rebal-field">
-              <label class="rebal-label">Lista de SKUs (una línea por SKU: sku,cantidad)</label>
-              <textarea name="items_text" id="mtItemsText" class="form-control" rows="4" placeholder="Ejemplo:&#10;SKU001,5&#10;SKU002,10&#10;SKU003,3"></textarea>
-            </div>
-          </div>
-
-          <div class="rebal-manual-actions">
-            <button type="submit" class="btn rebal-btn-primary" id="mtValidateBtn">
-              <i class="bi bi-check2-circle me-1"></i>Validar transferencias
-            </button>
-          </div>
-        </form>
-
-        <div id="mtValidationResults" class="rebal-manual-results" style="display:none;">
-          <div class="rebal-manual-results-header">
-            <h5><i class="bi bi-list-check me-2"></i>Resultados de Validación</h5>
-            <div class="rebal-manual-results-summary">
-              <span class="mt-badge mt-badge-ok" id="mtOkCount">0 OK</span>
-              <span class="mt-badge mt-badge-warn" id="mtWarnCount">0 Advertencias</span>
-              <span class="mt-badge mt-badge-error" id="mtErrorCount">0 Errores</span>
-            </div>
-          </div>
-          <div class="rebal-table-wrap">
-            <table class="rebal-table rebal-manual-table">
-              <thead>
-                <tr>
-                  <th>SKU</th>
-                  <th>Producto</th>
-                  <th>Cantidad</th>
-                  <th>Stock Origen</th>
-                  <th>Estado</th>
-                  <th>Notas</th>
-                </tr>
-              </thead>
-              <tbody id="mtValidationBody"></tbody>
-            </table>
-          </div>
-          <div class="rebal-manual-actions mt-3">
-            <button type="button" class="btn rebal-btn-success" id="mtAddToPlanBtn">
-              <i class="bi bi-plus-circle me-1"></i>Agregar al plan
-            </button>
-            <button type="button" class="btn rebal-btn-secondary" id="mtClearValidationBtn">
-              <i class="bi bi-x-circle me-1"></i>Limpiar validación
-            </button>
-          </div>
-        </div>
-
-        <hr class="rebal-manual-divider">
-
-        <div class="rebal-manual-plan-section">
-          <div class="rebal-manual-plan-header">
-            <h5><i class="bi bi-clipboard-data me-2"></i>Plan de Transferencia Manual</h5>
-            <span class="rebal-table-badge" id="mtPlanCount">0 items</span>
-          </div>
-          <div class="rebal-table-wrap">
-            <table class="rebal-table rebal-manual-table">
-              <thead>
-                <tr>
-                  <th>SKU</th>
-                  <th>Producto</th>
-                  <th>Tienda Origen</th>
-                  <th>Tienda Destino</th>
-                  <th class="text-end">Cantidad</th>
-                  <th>Estado</th>
-                  <th>Notas</th>
-                  <th class="text-center">Acción</th>
-                </tr>
-              </thead>
-              <tbody id="mtPlanBody">
-                <tr class="rebal-empty-row">
-                  <td colspan="8" class="text-center text-muted py-4">
-                    <i class="bi bi-inbox me-2"></i>El plan está vacío. Valida y agrega SKUs arriba.
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="rebal-manual-actions mt-3">
-            <a href="{{ url_for('manual_transfer_export') }}" class="btn rebal-btn-secondary" id="mtExportBtn">
-              <i class="bi bi-download me-1"></i>Exportar plan (Excel)
-            </a>
-            <button type="button" class="btn rebal-btn-danger" id="mtClearPlanBtn">
-              <i class="bi bi-trash me-1"></i>Limpiar plan
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-  {% endif %}
 </div>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-  let validatedItems = [];
-  let validationContext = {};
-
-  const form = document.getElementById('manualTransferForm');
-  const resultsDiv = document.getElementById('mtValidationResults');
-  const validationBody = document.getElementById('mtValidationBody');
-  const planBody = document.getElementById('mtPlanBody');
-
-  if (form) {
-    form.addEventListener('submit', function(e) {
-      e.preventDefault();
+  const modeTabs = document.querySelectorAll('.rebal-mode-tab');
+  const autoContent = document.getElementById('autoModeContent');
+  const manualContent = document.getElementById('manualModeContent');
+  
+  modeTabs.forEach(tab => {
+    tab.addEventListener('click', function() {
+      modeTabs.forEach(t => t.classList.remove('active'));
+      this.classList.add('active');
       
-      const fromStore = document.getElementById('mtFromStore').value;
-      const toStore = document.getElementById('mtToStore').value;
-      
-      if (!fromStore || !toStore) {
-        alert('Selecciona tienda origen y destino');
+      const mode = this.dataset.mode;
+      if (mode === 'auto') {
+        autoContent.classList.add('active');
+        if (manualContent) manualContent.classList.remove('active');
+      } else {
+        autoContent.classList.remove('active');
+        if (manualContent) manualContent.classList.add('active');
+      }
+    });
+  });
+
+  function syncAutoParams() {
+    document.getElementById('autoWeeksWindow').value = document.getElementById('paramWeeksWindow').value;
+    document.getElementById('autoWocMin').value = document.getElementById('paramWocMin').value;
+    document.getElementById('autoWocTarget').value = document.getElementById('paramWocTarget').value;
+    document.getElementById('autoWocMax').value = document.getElementById('paramWocMax').value;
+    document.getElementById('autoRetainWoc').value = document.getElementById('paramRetainWoc').value;
+    document.getElementById('autoStockFloor').value = document.getElementById('paramStockFloor').value;
+    document.getElementById('autoMinTransfer').value = document.getElementById('paramMinTransfer').value;
+  }
+
+  document.getElementById('autoRebalancingForm')?.addEventListener('submit', function() {
+    syncAutoParams();
+  });
+
+  let calculatedPlan = [];
+
+  const calculateBtn = document.getElementById('manualCalculateBtn');
+  if (calculateBtn) {
+    calculateBtn.addEventListener('click', function() {
+      const toStore = document.getElementById('manualToStore').value;
+      if (!toStore) {
+        alert('Selecciona una tienda destino');
         return;
       }
-      
-      if (fromStore === toStore) {
-        alert('Tienda origen no puede ser igual a destino');
+
+      const fromStore = document.getElementById('manualFromStore').value;
+      const fileInput = document.getElementById('manualSkuFile');
+      const textInput = document.getElementById('manualSkuText').value.trim();
+
+      if (!fileInput.files.length && !textInput) {
+        alert('Proporciona un archivo o lista de SKUs');
         return;
       }
-      
-      const formData = new FormData(form);
-      const btn = document.getElementById('mtValidateBtn');
-      btn.disabled = true;
-      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Validando...';
-      
-      fetch('/rebalancing/manual/validate', {
+
+      const params = {
+        weeks_window: document.getElementById('paramWeeksWindow').value,
+        woc_min: document.getElementById('paramWocMin').value,
+        woc_target: document.getElementById('paramWocTarget').value,
+        woc_max: document.getElementById('paramWocMax').value,
+        retain_woc: document.getElementById('paramRetainWoc').value,
+        stock_floor: document.getElementById('paramStockFloor').value,
+        min_transfer_qty: document.getElementById('paramMinTransfer').value
+      };
+
+      const formData = new FormData();
+      formData.append('to_store_id', toStore);
+      if (fromStore) formData.append('from_store_id', fromStore);
+      formData.append('sku_text', textInput);
+      if (fileInput.files.length) formData.append('sku_file', fileInput.files[0]);
+      Object.keys(params).forEach(k => formData.append(k, params[k]));
+
+      calculateBtn.disabled = true;
+      calculateBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Calculando...';
+
+      fetch('/rebalancing/manual/calculate', {
         method: 'POST',
         body: formData
       })
       .then(r => r.json())
       .then(data => {
-        btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Validar transferencias';
-        
+        calculateBtn.disabled = false;
+        calculateBtn.innerHTML = '<i class="bi bi-calculator me-1"></i>Calcular plan';
+
         if (data.error) {
           alert(data.error);
           return;
         }
-        
-        validatedItems = data.items;
-        validationContext = {
-          from_store_id: data.from_store_id,
-          to_store_id: data.to_store_id,
-          from_store: data.from_store,
-          to_store: data.to_store
-        };
-        
-        document.getElementById('mtOkCount').textContent = data.ok_count + ' OK';
-        document.getElementById('mtWarnCount').textContent = data.warning_count + ' Advertencias';
-        document.getElementById('mtErrorCount').textContent = data.error_count + ' Errores';
-        
-        validationBody.innerHTML = '';
-        data.items.forEach(item => {
-          const statusClass = item.status === 'OK' ? 'mt-status-ok' : 
-                             (item.status === 'WARNING' ? 'mt-status-warn' : 'mt-status-error');
-          validationBody.innerHTML += `
-            <tr>
-              <td><code class="rebal-sku">${item.sku}</code></td>
-              <td class="rebal-name">${item.product_name}</td>
-              <td class="text-end">${item.qty}</td>
-              <td class="text-end">${item.donor_stock}</td>
-              <td><span class="mt-status ${statusClass}">${item.status}</span></td>
-              <td class="text-muted">${item.notes || '-'}</td>
-            </tr>
-          `;
-        });
-        
-        resultsDiv.style.display = 'block';
+
+        calculatedPlan = data.items || [];
+        renderManualPlan(data);
       })
       .catch(err => {
-        btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Validar transferencias';
+        calculateBtn.disabled = false;
+        calculateBtn.innerHTML = '<i class="bi bi-calculator me-1"></i>Calcular plan';
         alert('Error: ' + err.message);
       });
     });
   }
 
-  document.getElementById('mtAddToPlanBtn')?.addEventListener('click', function() {
-    const validItems = validatedItems.filter(i => i.status === 'OK' || i.status === 'WARNING');
-    
-    if (validItems.length === 0) {
-      alert('No hay items válidos para agregar');
+  function renderManualPlan(data) {
+    document.getElementById('manualOkCount').textContent = (data.ok_count || 0) + ' OK';
+    document.getElementById('manualNoNeedCount').textContent = (data.no_need_count || 0) + ' Sin necesidad';
+    document.getElementById('manualNoDonorCount').textContent = (data.no_donor_count || 0) + ' Sin donante';
+
+    const tbody = document.getElementById('manualPlanBody');
+    tbody.innerHTML = '';
+
+    (data.items || []).forEach(item => {
+      const statusClass = item.status === 'OK' ? 'mt-status-ok' : 
+                         (item.status === 'NO-NEED' ? 'mt-status-warn' : 'mt-status-error');
+      const statusLabel = item.status === 'OK' ? 'OK' :
+                         (item.status === 'NO-NEED' ? 'Sin necesidad' : 
+                         (item.status === 'NO-DONOR' ? 'Sin donante' : 'Sin ventas'));
+      tbody.innerHTML += `
+        <tr>
+          <td><code class="rebal-sku">${item.sku}</code></td>
+          <td class="rebal-name">${(item.product_name || '').substring(0, 35)}</td>
+          <td>${item.donor_store ? '<span class="badge-donor">' + item.donor_store + '</span>' : '-'}</td>
+          <td><span class="badge-receiver">${item.to_store || ''}</span></td>
+          <td class="text-end fw-bold">${item.transfer_qty || 0}</td>
+          <td class="text-end">${(item.woc_dest || 0).toFixed(1)}</td>
+          <td class="text-end">${item.donor_give || 0}</td>
+          <td><span class="mt-status ${statusClass}">${statusLabel}</span></td>
+        </tr>
+      `;
+    });
+
+    document.getElementById('manualPlanSection').style.display = 'block';
+  }
+
+  document.getElementById('manualSavePlanBtn')?.addEventListener('click', function() {
+    const okItems = calculatedPlan.filter(i => i.status === 'OK' && i.transfer_qty > 0);
+    if (okItems.length === 0) {
+      alert('No hay items con transferencias válidas para guardar');
       return;
     }
-    
+
     const btn = this;
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Agregando...';
-    
-    fetch('/rebalancing/manual/add', {
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Guardando...';
+
+    fetch('/rebalancing/manual/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        from_store_id: validationContext.from_store_id,
-        to_store_id: validationContext.to_store_id,
-        items: validItems
-      })
+      body: JSON.stringify({ items: okItems })
     })
     .then(r => r.json())
     .then(data => {
       btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-plus-circle me-1"></i>Agregar al plan';
-      
-      if (data.error) {
-        alert(data.error);
-        return;
+      btn.innerHTML = '<i class="bi bi-save me-1"></i>Guardar plan';
+      if (data.success) {
+        alert('Plan guardado exitosamente (' + data.count + ' items)');
+      } else {
+        alert(data.error || 'Error al guardar');
       }
-      
-      loadPlanItems();
-      resultsDiv.style.display = 'none';
-      validatedItems = [];
-      document.getElementById('mtItemsFile').value = '';
-      document.getElementById('mtItemsText').value = '';
     })
     .catch(err => {
       btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-plus-circle me-1"></i>Agregar al plan';
+      btn.innerHTML = '<i class="bi bi-save me-1"></i>Guardar plan';
       alert('Error: ' + err.message);
     });
   });
 
-  document.getElementById('mtClearValidationBtn')?.addEventListener('click', function() {
-    resultsDiv.style.display = 'none';
-    validatedItems = [];
+  document.getElementById('manualExportPlanBtn')?.addEventListener('click', function() {
+    const okItems = calculatedPlan.filter(i => i.status === 'OK' && i.transfer_qty > 0);
+    if (okItems.length === 0) {
+      alert('No hay items para exportar');
+      return;
+    }
+
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = '/rebalancing/manual/export-calculated';
+    form.style.display = 'none';
+
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'items';
+    input.value = JSON.stringify(okItems);
+    form.appendChild(input);
+
+    document.body.appendChild(form);
+    form.submit();
+    document.body.removeChild(form);
   });
 
-  document.getElementById('mtClearPlanBtn')?.addEventListener('click', function() {
-    if (!confirm('¿Estás seguro de limpiar todo el plan de transferencia?')) return;
-    
-    fetch('/rebalancing/manual/clear', { method: 'POST' })
-    .then(r => r.json())
-    .then(data => {
-      loadPlanItems();
-    });
+  document.getElementById('manualClearPlanBtn')?.addEventListener('click', function() {
+    calculatedPlan = [];
+    document.getElementById('manualPlanBody').innerHTML = '';
+    document.getElementById('manualPlanSection').style.display = 'none';
+    document.getElementById('manualSkuFile').value = '';
+    document.getElementById('manualSkuText').value = '';
   });
-
-  function loadPlanItems() {
-    fetch('/rebalancing/manual/items')
-    .then(r => r.json())
-    .then(data => {
-      const items = data.items || [];
-      document.getElementById('mtPlanCount').textContent = items.length + ' items';
-      
-      if (items.length === 0) {
-        planBody.innerHTML = `
-          <tr class="rebal-empty-row">
-            <td colspan="8" class="text-center text-muted py-4">
-              <i class="bi bi-inbox me-2"></i>El plan está vacío. Valida y agrega SKUs arriba.
-            </td>
-          </tr>
-        `;
-        return;
-      }
-      
-      planBody.innerHTML = '';
-      items.forEach(item => {
-        const statusClass = item.status === 'OK' ? 'mt-status-ok' : 
-                           (item.status === 'WARNING' ? 'mt-status-warn' : 'mt-status-error');
-        planBody.innerHTML += `
-          <tr>
-            <td><code class="rebal-sku">${item.sku}</code></td>
-            <td class="rebal-name">${item.product_name}</td>
-            <td><span class="badge-donor">${item.from_store}</span></td>
-            <td><span class="badge-receiver">${item.to_store}</span></td>
-            <td class="text-end fw-bold">${item.qty}</td>
-            <td><span class="mt-status ${statusClass}">${item.status}</span></td>
-            <td class="text-muted">${item.notes || '-'}</td>
-            <td class="text-center">
-              <button class="btn btn-sm btn-outline-danger mt-remove-btn" data-id="${item.id}">
-                <i class="bi bi-trash"></i>
-              </button>
-            </td>
-          </tr>
-        `;
-      });
-      
-      document.querySelectorAll('.mt-remove-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
-          const itemId = this.dataset.id;
-          fetch('/rebalancing/manual/remove/' + itemId, { method: 'POST' })
-          .then(r => r.json())
-          .then(data => {
-            if (data.success) loadPlanItems();
-          });
-        });
-      });
-    });
-  }
-
-  loadPlanItems();
 });
 </script>
 

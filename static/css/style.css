@@ -2553,7 +2553,184 @@ body{
 .impact-med { background: rgba(255,193,7,.16); color:#664d03; border:1px solid rgba(255,193,7,.22); }
 .impact-low { background: rgba(108,117,125,.12); color:#343a40; border:1px solid rgba(108,117,125,.18); }
 
-/* ========== Manual Transfer Builder ========== */
+/* ========== Consolidated Rebalancing Tabs ========== */
+.rebal-main-card {
+  overflow: hidden;
+}
+.rebal-mode-tabs {
+  display: flex;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  border-bottom: 1px solid #e2e8f0;
+}
+.rebal-mode-tab {
+  flex: 1;
+  padding: 14px 20px;
+  background: transparent;
+  border: none;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.2s;
+  border-bottom: 2px solid transparent;
+}
+.rebal-mode-tab:hover {
+  background: rgba(255,255,255,0.5);
+  color: #475569;
+}
+.rebal-mode-tab.active {
+  background: #fff;
+  color: #2563eb;
+  border-bottom-color: #2563eb;
+  font-weight: 600;
+}
+.rebal-mode-content {
+  display: none;
+}
+.rebal-mode-content.active {
+  display: block;
+}
+.rebal-params-section {
+  padding: 16px 0;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.rebal-params-header {
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: #475569;
+  margin-bottom: 12px;
+}
+.rebal-params-compact {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 12px;
+}
+.rebal-params-compact .rebal-field {
+  margin: 0;
+}
+.rebal-params-compact .form-control-sm,
+.rebal-params-compact .form-select-sm {
+  font-size: 0.82rem;
+  padding: 6px 10px;
+}
+.rebal-params-compact .rebal-label {
+  font-size: 0.72rem;
+  margin-bottom: 4px;
+}
+.rebal-auto-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.rebal-field-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.rebal-field-inline .rebal-label {
+  margin: 0;
+  white-space: nowrap;
+}
+.rebal-auto-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Manual Mode - Compact Layout */
+.rebal-manual-controls {
+  padding: 16px 0;
+}
+.rebal-manual-stores-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.rebal-manual-input-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.rebal-field-file { flex: 1; }
+.rebal-field-textarea { flex: 1.5; }
+.rebal-field-divider {
+  padding-top: 28px;
+  color: #94a3b8;
+  font-size: 0.85rem;
+}
+.rebal-manual-plan {
+  margin-top: 20px;
+  padding: 16px;
+  background: #f8fafc;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+}
+.rebal-manual-plan-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.rebal-manual-plan-header h6 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+.rebal-manual-plan-badges {
+  display: flex;
+  gap: 8px;
+}
+.rebal-manual-plan-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+.rebal-btn-outline {
+  background: transparent;
+  color: #64748b;
+  border: 1px solid #cbd5e1;
+  font-weight: 500;
+  padding: 8px 16px;
+  border-radius: 8px;
+}
+.rebal-btn-outline:hover {
+  background: #f1f5f9;
+  color: #1e293b;
+}
+.rebal-table-compact {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+/* Responsive for tabs */
+@media (max-width: 1024px) {
+  .rebal-params-compact {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+@media (max-width: 768px) {
+  .rebal-params-compact {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .rebal-manual-stores-row {
+    grid-template-columns: 1fr;
+  }
+  .rebal-manual-input-row {
+    flex-direction: column;
+  }
+  .rebal-field-divider {
+    padding-top: 0;
+    text-align: center;
+  }
+}
+
+/* ========== Manual Transfer Builder (Legacy) ========== */
 .rebal-manual-card {
   margin-top: 24px;
   border: 1px solid #e2e8f0;
