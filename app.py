@@ -4152,15 +4152,42 @@ def rebalancing():
             kpis['num_skus'] = len(set(s['product_id'] for s in suggestions))
             kpis['num_receivers'] = len(set(s['to_store_id'] for s in suggestions))
     
-    suggestions_limited = suggestions[:50]
+    # Pagination for suggestions (10 per page)
+    sug_per_page = 10
+    try:
+        sug_page = int(request.args.get('sug_page', 1))
+    except:
+        sug_page = 1
+    sug_page = max(1, sug_page)
+    
+    sug_total = len(suggestions)
+    sug_pages = max(1, (sug_total + sug_per_page - 1) // sug_per_page)
+    sug_page = min(sug_page, sug_pages)
+    
+    start_idx = (sug_page - 1) * sug_per_page
+    end_idx = start_idx + sug_per_page
+    suggestions_page = suggestions[start_idx:end_idx]
+    
+    sug_pagination = {
+        'page': sug_page,
+        'pages': sug_pages,
+        'total': sug_total,
+        'per_page': sug_per_page,
+        'has_prev': sug_page > 1,
+        'has_next': sug_page < sug_pages,
+        'prev_num': sug_page - 1,
+        'next_num': sug_page + 1,
+        'start': start_idx + 1 if sug_total > 0 else 0,
+        'end': min(end_idx, sug_total)
+    }
     
     is_simulation = run_info.get('is_simulation', False) if run_info else False
     
     return render_template(
         'rebalancing.html',
         stores=stores,
-        suggestions=suggestions_limited,
-        total_suggestions=len(suggestions),
+        suggestions=suggestions_page,
+        sug_pagination=sug_pagination,
         kpis=kpis,
         run_info=run_info,
         is_simulation=is_simulation,

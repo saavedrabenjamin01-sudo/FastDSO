@@ -260,7 +260,7 @@
           <i class="bi bi-arrow-right me-1"></i>De tiendas con exceso → a tiendas con alta demanda
         </div>
       </div>
-      <span class="rebal-table-badge">Top 50 de {{ total_suggestions | default(0) }}</span>
+      <span class="rebal-table-badge">{{ sug_pagination.start }}-{{ sug_pagination.end }} de {{ sug_pagination.total }}</span>
     </div>
     <div class="rebal-table-wrap">
       {% if suggestions %}
@@ -302,6 +302,27 @@
           {% endfor %}
         </tbody>
       </table>
+      {% if sug_pagination.pages > 1 %}
+      <div class="rebal-pagination">
+        <button type="button" class="rebal-page-btn" onclick="updateSugPage({{ sug_pagination.prev_num }})" {% if not sug_pagination.has_prev %}disabled{% endif %}>
+          <i class="bi bi-chevron-left"></i> Anterior
+        </button>
+        <div class="rebal-page-nums">
+          {% for p in range(1, sug_pagination.pages + 1) %}
+            {% if p == sug_pagination.page %}
+              <span class="rebal-page-num active">{{ p }}</span>
+            {% elif p == 1 or p == sug_pagination.pages or (p >= sug_pagination.page - 2 and p <= sug_pagination.page + 2) %}
+              <button type="button" class="rebal-page-num" onclick="updateSugPage({{ p }})">{{ p }}</button>
+            {% elif p == sug_pagination.page - 3 or p == sug_pagination.page + 3 %}
+              <span class="rebal-page-ellipsis">...</span>
+            {% endif %}
+          {% endfor %}
+        </div>
+        <button type="button" class="rebal-page-btn" onclick="updateSugPage({{ sug_pagination.next_num }})" {% if not sug_pagination.has_next %}disabled{% endif %}>
+          Siguiente <i class="bi bi-chevron-right"></i>
+        </button>
+      </div>
+      {% endif %}
       {% else %}
       <div class="rebal-empty">
         <div class="rebal-empty-icon"><i class="bi bi-shuffle"></i></div>
@@ -314,6 +335,12 @@
 </div>
 
 <script>
+function updateSugPage(page) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('sug_page', page);
+  window.location.href = url.toString();
+}
+
 document.addEventListener('DOMContentLoaded', function() {
   const modeTabs = document.querySelectorAll('.rebal-mode-tab');
   const autoContent = document.getElementById('autoModeContent');

@@ -1,0 +1,60 @@
+REDISTRIBUTION MODULE — Paginate “Suggested Transfers” table (Top 10 per page)
+
+Context:
+In the Store-to-Store Redistribution module (rebalancing), the suggestions table currently renders too many rows (e.g., 50+). We want:
+- Show 10 rows per page by default
+- Provide pagination controls (Prev/Next + page numbers)
+- Keep all existing parameters (history weeks, WOC min/target/max, retain WOC, donor floor, min transfer qty, destination store, etc.)
+- Do NOT change the redistribution algorithm results, only how we display them.
+
+Strict rules:
+- Do NOT change business logic / allocation.
+- Do NOT change routes or form field names.
+- Minimal backend change allowed ONLY to paginate the existing result set.
+- Exports must still export the FULL suggestion dataset, not just current page.
+
+Implementation:
+
+A) Backend route changes (minimal)
+- Identify where redistribution suggestions are produced (likely a list of dicts or a query).
+- Create a pagination object for suggestions:
+  - query param: `sug_page` (avoid collision with other pages)
+  - per_page fixed: 10
+- If suggestions are a Python list:
+  - page = int(request.args.get("sug_page", 1))
+  - per_page = 10
+  - total = len(suggestions)
+  - pages = ceil(total/per_page)
+  - slice = suggestions[(page-1)*per_page : page*per_page]
+  - pass to template:
+     suggestions_page (the slice),
+     sug_page, sug_pages, sug_total, sug_has_prev, sug_has_next, sug_prev, sug_next
+  OR create a small dict object `sug_pagination` similar to Dashboard style.
+- If suggestions come from SQLAlchemy query:
+  - use .paginate(page=sug_page, per_page=10, error_out=False)
+
+B) Template changes (rebalancing.html)
+- Render the suggestions table using ONLY the paginated slice (suggestions_page or sug_pagination.items).
+- Add pagination controls below the suggestions table:
+  - Prev / page numbers / Next
+- Use the same updateParam() helper as dashboard (if already exists in template). If not, add a small helper function updateParam(param,value) that updates URL query params and reloads.
+- Ensure pagination links preserve the existing filters/params.
+
+C) UI requirements
+- Keep table styling (zebra/hover/sticky header) as already polished.
+- Add a small label near title: “Showing 10 per page” (optional).
+- Do not change the KPI cards.
+
+D) Export behavior
+- Ensure the export button still exports the FULL suggestions list (not the current page).
+- If export currently uses the computed list in memory, keep it unchanged.
+
+Acceptance tests:
+1) Suggestions count > 10 shows pagination and only 10 visible rows.
+2) Switching pages changes the table rows.
+3) All existing parameters still apply.
+4) Export still exports full dataset.
+
+Deliverables:
+- Show backend snippet where pagination is applied.
+- Show template snippet for paginated table loop + pager.
