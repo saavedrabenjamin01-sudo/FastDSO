@@ -2775,6 +2775,12 @@ def process_sales_upload(job_id, payload):
         df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0).astype(int)
         df['date'] = pd.to_datetime(df['date'], errors='coerce')
         
+        # Optional category column
+        has_category = 'category' in df.columns
+        if has_category:
+            df['category'] = df['category'].astype(str).str.strip()
+            df['category'] = df['category'].replace(['', 'nan', 'None', 'NaN'], None)
+        
         sales_run_id = str(uuid.uuid4())
         sales_run = Run(
             run_id=sales_run_id,
@@ -2808,11 +2814,29 @@ def process_sales_upload(job_id, payload):
             for s in session.query(Store).filter(Store.name.in_(store_batch)).all():
                 existing_stores[s.name] = s.id
         
-        unique_sku_df = df[['sku', 'product_name']].drop_duplicates('sku')
+        # Build unique SKU dataframe with optional category
+        cols_for_unique = ['sku', 'product_name']
+        if has_category:
+            cols_for_unique.append('category')
+        unique_sku_df = df[cols_for_unique].drop_duplicates('sku')
+        
+        # Prepare category map from upload data for existing product updates
+        sku_category_map = {}
+        if has_category:
+            for _, row in unique_sku_df.iterrows():
+                cat_val = row.get('category')
+                if cat_val and cat_val not in [None, 'None', 'nan', '']:
+                    sku_category_map[row['sku']] = cat_val
+        
         new_products = []
         for _, row in unique_sku_df.iterrows():
             if row['sku'] not in existing_products:
-                new_products.append({'sku': row['sku'], 'name': row['product_name']})
+                prod_data = {'sku': row['sku'], 'name': row['product_name']}
+                if has_category:
+                    cat_val = row.get('category')
+                    if cat_val and cat_val not in [None, 'None', 'nan', '']:
+                        prod_data['category'] = cat_val
+                new_products.append(prod_data)
         
         if new_products:
             update_job_status(job_id, progress=30, message=f'Creando {len(new_products)} productos nuevos...')
@@ -2823,6 +2847,26 @@ def process_sales_upload(job_id, payload):
                 sku_batch = new_skus[i:i + batch_size]
                 for p in session.query(Product).filter(Product.sku.in_(sku_batch)).all():
                     existing_products[p.sku] = p.id
+        
+        # Update category for existing products with NULL category
+        if has_category and sku_category_map:
+            category_updates = 0
+            category_mismatches = 0
+            existing_skus_to_check = [sku for sku in sku_category_map.keys() if sku in existing_products]
+            for i in range(0, len(existing_skus_to_check), batch_size):
+                sku_batch = existing_skus_to_check[i:i + batch_size]
+                for prod in session.query(Product).filter(Product.sku.in_(sku_batch)).all():
+                    incoming_cat = sku_category_map.get(prod.sku)
+                    if incoming_cat:
+                        if not prod.category:
+                            prod.category = incoming_cat
+                            category_updates += 1
+                        elif prod.category != incoming_cat:
+                            print(f"Category mismatch for SKU {prod.sku}: existing={prod.category}, incoming={incoming_cat}")
+                            category_mismatches += 1
+            if category_updates > 0:
+                session.commit()
+                print(f"Updated category for {category_updates} existing products, {category_mismatches} mismatches logged")
         
         new_stores = [{'name': s} for s in unique_store_names if s not in existing_stores]
         
