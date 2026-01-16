@@ -110,10 +110,18 @@ Do not make changes to the folder `Excel tipo/`.
     - Optimized queries: Uses SalesWeeklyAgg.category index directly (no product_ids materialization)
     - Stock queries: Join Product table for category filter on StockCD/StockSnapshot
     - 4 KPI cards: Unidades vendidas, Demanda semanal promedio, Stock CD, Stock tiendas
-    - Health summary: Bar showing healthy vs dead/slow products proportion
+    - Health summary: Bar showing healthy vs dead/slow products proportion with tooltip explaining "Sin movimiento"
     - Charts: Top 10 tiendas por ventas (bar), Distribución de stock CD vs tiendas (pie)
     - Top 10 SKUs accordion with expandable details
     - Access via "Dashboard por categoría" link under Ventas y Compras
+    - **Sin movimiento drilldown**: Explainable and actionable SKU list
+        - Definition: SKUs with stock (CD or stores) but no sales in selected window
+        - Tooltip on health bar explaining the concept
+        - "Ver SKUs sin movimiento" button links to paginated drilldown list
+        - Route: `/dashboard_category/no_movement` with pagination (10 per page)
+        - Table columns: SKU, Producto, Categoría, Stock CD, Stock Tiendas, Stock Total, Última venta
+        - Export endpoint: `/dashboard_category/no_movement/export` generates Excel file
+        - Optimized queries: Uses SalesWeeklyAgg.category index, no product_ids materialization
 
 ## External Dependencies
 - **Database**: SQLite (for `app.db`)
