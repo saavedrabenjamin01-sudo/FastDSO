@@ -54,53 +54,6 @@
   </div>
   {% endif %}
 
-  {# ALERTS SUMMARY WIDGET (lightweight) #}
-  {% if alerts_summary is defined and alerts_summary.total_count > 0 %}
-  <div class="alerts-summary-widget">
-    <div class="alerts-summary-header">
-      <div class="alerts-summary-title-group">
-        <i class="bi bi-bell-fill alerts-summary-icon"></i>
-        <span class="alerts-summary-title">Alertas</span>
-        <span class="alerts-summary-total">{{ alerts_summary.total_count }}</span>
-      </div>
-      <a href="{{ url_for('alerts_page') }}" class="btn btn-sm btn-primary alerts-summary-btn">
-        <i class="bi bi-arrow-right me-1"></i>Ver alertas
-      </a>
-    </div>
-    <div class="alerts-summary-content">
-      <div class="alerts-summary-chips">
-        <div class="alerts-chip alerts-chip-high">
-          <span class="alerts-chip-count">{{ alerts_summary.high_count }}</span>
-          <span class="alerts-chip-label">Alta</span>
-        </div>
-        <div class="alerts-chip alerts-chip-medium">
-          <span class="alerts-chip-count">{{ alerts_summary.medium_count }}</span>
-          <span class="alerts-chip-label">Media</span>
-        </div>
-        <div class="alerts-chip alerts-chip-low">
-          <span class="alerts-chip-count">{{ alerts_summary.low_count }}</span>
-          <span class="alerts-chip-label">Baja</span>
-        </div>
-      </div>
-      {% set total = alerts_summary.total_count if alerts_summary.total_count > 0 else 1 %}
-      {% set high_pct = (alerts_summary.high_count / total * 100)|round|int %}
-      {% set medium_pct = (alerts_summary.medium_count / total * 100)|round|int %}
-      {% set low_pct = (alerts_summary.low_count / total * 100)|round|int %}
-      <div class="alerts-summary-bar">
-        {% if alerts_summary.high_count > 0 %}
-        <div class="alerts-bar-segment alerts-bar-high" style="width: {{ high_pct }}%;" title="Alta: {{ alerts_summary.high_count }}"></div>
-        {% endif %}
-        {% if alerts_summary.medium_count > 0 %}
-        <div class="alerts-bar-segment alerts-bar-medium" style="width: {{ medium_pct }}%;" title="Media: {{ alerts_summary.medium_count }}"></div>
-        {% endif %}
-        {% if alerts_summary.low_count > 0 %}
-        <div class="alerts-bar-segment alerts-bar-low" style="width: {{ low_pct }}%;" title="Baja: {{ alerts_summary.low_count }}"></div>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-  {% endif %}
-
   {# A) Run summary strip #}
   <div class="dashv1-runstrip">
     {% if runs is defined and runs and selected_run_id %}
@@ -119,7 +72,7 @@
     {% endif %}
   </div>
 
-  {# B) Filters row #}
+  {# B) Filters row (compact) #}
   <form class="dashv1-filters" method="get" action="{{ url_for('dashboard') }}">
     <div class="dashv1-filter">
       <label class="dashv1-label">Corrida</label>
@@ -153,183 +106,257 @@
     </div>
 
     <div class="dashv1-actions">
-      <button class="btn btn-primary dashv1-btn-apply">Aplicar filtros</button>
+      <button class="btn btn-primary dashv1-btn-apply">Aplicar</button>
       <a class="btn btn-outline-secondary dashv1-btn-clear" href="{{ url_for('dashboard') }}">Limpiar</a>
     </div>
   </form>
 
-  {# C) KPI row (2 cards only) #}
-  <div class="dashv1-kpis">
-    <div class="dashv1-kpi dash-kpi-card dash-kpi-art-sales">
-      <div class="dashv1-kpi-badge dashv1-kpi-badge-blue">
-        <i class="bi bi-box-seam"></i>
+  {# C) Macro Health Overview - 3 macro KPI cards #}
+  <div class="macro-grid">
+    <div class="macro-card macro-card-stores">
+      <div class="macro-icon"><i class="bi bi-shop"></i></div>
+      <div class="macro-body">
+        <div class="macro-title">Impacto Red</div>
+        <div class="macro-value">{{ "{:,}".format(kpi_tiendas_alcanzadas|int if kpi_tiendas_alcanzadas is defined else 0) }}</div>
+        <div class="macro-sub">tiendas alcanzadas</div>
       </div>
-      <div class="dashv1-kpi-body">
-        <div class="dashv1-kpi-label">Top productos vendidos</div>
-        <div class="dashv1-kpi-number">
-          {% set top_units = namespace(value=0) %}
-          {% if top_sales is defined and top_sales %}
-            {% for r in top_sales %}
-              {% set top_units.value = top_units.value + (r.units if r.units is defined else 0) %}
-            {% endfor %}
-          {% else %}
-            {% set top_units.value = (kpi_units_suggested if kpi_units_suggested is defined else 0) %}
-          {% endif %}
-          {{ "{:,}".format(top_units.value|int) }}
-        </div>
-        <div class="dashv1-kpi-sub">últimos 7 días</div>
-      </div>
-      <div class="dash-kpi-art"></div>
     </div>
 
-    <div class="dashv1-kpi dash-kpi-card dash-kpi-art-cd">
-      <div class="dashv1-kpi-badge dashv1-kpi-badge-green">
-        <i class="bi bi-archive"></i>
+    <div class="macro-card macro-card-cd">
+      <div class="macro-icon"><i class="bi bi-archive"></i></div>
+      <div class="macro-body">
+        <div class="macro-title">Stock CD</div>
+        <div class="macro-value">{{ "{:,}".format(kpi_stock_cd_total|int if kpi_stock_cd_total is defined else 0) }}</div>
+        <div class="macro-sub">unidades disponibles</div>
       </div>
-      <div class="dashv1-kpi-body">
-        <div class="dashv1-kpi-label">Stock CD hoy</div>
-        <div class="dashv1-kpi-number">{{ "{:,}".format(kpi_stock_cd_total|int if kpi_stock_cd_total is defined else 0) }}</div>
-        <div class="dashv1-kpi-sub">disponible</div>
+    </div>
+
+    <div class="macro-card macro-card-units">
+      <div class="macro-icon"><i class="bi bi-box-arrow-right"></i></div>
+      <div class="macro-body">
+        <div class="macro-title">Distribución</div>
+        <div class="macro-value">{{ "{:,}".format(kpi_units_suggested|int if kpi_units_suggested is defined else 0) }}</div>
+        <div class="macro-sub">unidades sugeridas</div>
       </div>
-      <div class="dash-kpi-art"></div>
     </div>
   </div>
 
-  {# D) Main panel (predictions + remanente in ONE card) #}
-  <div class="dashv1-panel">
-
-    {# Predictions header #}
-    <div class="dashv1-panel-head">
-      <div class="dashv1-panel-title-group">
-        <span class="dashv1-panel-title">Distribución sugerida</span>
-        {% if predictions and predictions|length > 0 %}
-          {% set subtitle_text = predictions[0][0].model_name if predictions[0][0].model_name else '' %}
-          <span class="dashv1-subtitle dash-subtitle-truncate" title="{{ subtitle_text }}">{{ subtitle_text }}</span>
-        {% endif %}
+  {# D) Executive Alerts Widget (compact) #}
+  {% if alerts_summary is defined and alerts_summary.total_count > 0 %}
+  <div class="exec-alerts">
+    <div class="exec-alerts-header">
+      <div class="exec-alerts-title">
+        <i class="bi bi-bell-fill"></i>
+        <span>Alertas</span>
+        <span class="exec-alerts-badge">{{ alerts_summary.total_count }}</span>
       </div>
-      <div class="dashv1-panel-tools">
-        {% if current_user.has_permission('admin:reset') %}
-        <div class="dash-quick-actions">
-          <form method="post" action="{{ url_for('reset_sales') }}" onsubmit="return confirm('¿Eliminar TODAS las ventas?')"><button type="submit" class="qa-btn" title="Reset ventas"><i class="bi bi-trash3"></i></button></form>
-          <form method="post" action="{{ url_for('reset_predictions') }}" onsubmit="return confirm('¿Eliminar TODAS las distribuciones?')"><button type="submit" class="qa-btn" title="Reset distribuciones"><i class="bi bi-diagram-3"></i></button></form>
-          <form method="post" action="{{ url_for('reset_store_stock') }}" onsubmit="return confirm('¿Eliminar TODO el stock de tiendas?')"><button type="submit" class="qa-btn" title="Reset stock tiendas"><i class="bi bi-shop"></i></button></form>
-          <form method="post" action="{{ url_for('reset_stock_cd') }}" onsubmit="return confirm('¿Eliminar TODO el stock del CD?')"><button type="submit" class="qa-btn" title="Reset stock CD"><i class="bi bi-box-seam"></i></button></form>
+      <a href="{{ url_for('alerts_page') }}" class="btn btn-sm btn-primary exec-alerts-btn">Ver alertas</a>
+    </div>
+    <div class="exec-alerts-content">
+      <div class="alert-chips">
+        <div class="alert-chip alert-chip-high">
+          <span class="alert-chip-count">{{ alerts_summary.high_count }}</span>
+          <span class="alert-chip-label">Alta</span>
         </div>
-        {% endif %}
-        <input class="form-control form-control-sm dashv1-search" placeholder="Buscar SKU" value="{{ pred_search if pred_search is defined else '' }}" onkeydown="if(event.key==='Enter'){event.preventDefault();updateParam('pred_search', this.value, 'pred_page');}">
-        {% if selected_run_id %}
-          <a class="btn btn-primary dashv1-btn-export" href="{{ url_for('export_predictions', run_id=selected_run_id) }}">Exportar</a>
-        {% else %}
-          <button class="btn btn-outline-secondary dashv1-btn-export" disabled>Exportar</button>
-        {% endif %}
+        <div class="alert-chip alert-chip-med">
+          <span class="alert-chip-count">{{ alerts_summary.medium_count }}</span>
+          <span class="alert-chip-label">Media</span>
+        </div>
+        <div class="alert-chip alert-chip-low">
+          <span class="alert-chip-count">{{ alerts_summary.low_count }}</span>
+          <span class="alert-chip-label">Baja</span>
+        </div>
       </div>
-    </div>
-
-    {# Predictions table #}
-    <div class="dashv1-tablewrap dash-table-scroll">
-      <table class="table table-sm mb-0 dashv1-table dash-table">
-        <thead>
-          <tr>
-            <th>SKU</th>
-            <th>Producto</th>
-            <th>Tienda</th>
-            <th class="text-end">Cant.</th>
-            <th style="width:50px;"></th>
-          </tr>
-        </thead>
-        <tbody>
-          {% set pred_rows = pred_pagination.items if (pred_pagination is defined and pred_pagination) else predictions %}
-          {% if pred_rows and pred_rows|length > 0 %}
-            {% set display_rows = pred_rows if (pred_pagination is defined and pred_pagination) else pred_rows[:10] %}
-            {% for p, prod, st in display_rows %}
-              <tr>
-                <td class="dashv1-mono">{{ prod.sku }}</td>
-                <td>{{ prod.name }}</td>
-                <td>{{ st.name }}</td>
-                <td class="text-end">{{ "{:,}".format(p.quantity|int) }}</td>
-                <td class="text-center">
-                  <button class="explain-btn" onclick="showDistExplanation({{ prod.id }}, {{ st.id }}, {{ p.quantity }}, '{{ selected_run_id or '' }}')" title="¿Por qué?">
-                    <i class="bi bi-question-circle"></i>
-                  </button>
-                </td>
-              </tr>
-            {% endfor %}
-          {% else %}
-            <tr><td colspan="5" class="dash-empty-cell">
-              <div class="dash-empty-wrap">
-                <i class="bi bi-inbox dash-empty-icon"></i>
-                <div class="dash-empty-title">Sin predicciones</div>
-                <div class="dash-empty-hint">Carga ventas para generar distribución</div>
-              </div>
-            </td></tr>
-          {% endif %}
-        </tbody>
-      </table>
-    </div>
-
-    {% if pred_pagination is defined and pred_pagination %}
-      {{ pagination_controls(pred_pagination, 'pred_page', 'pred_size', pred_size) }}
-    {% endif %}
-
-    <div class="dashv1-divider"></div>
-
-    {# Remanente header #}
-    <div class="dashv1-panel-head">
-      <div class="dashv1-panel-title-group">
-        <span class="dashv1-panel-title">Remanente CD</span>
-        <span class="dashv1-subtitle">saldo mínimo CD pos distribución seleccionada</span>
-      </div>
-      <div class="dashv1-panel-tools">
-        <input class="form-control form-control-sm dashv1-search" placeholder="Buscar SKU..." value="{{ cd_search if cd_search is defined else '' }}" onkeydown="if(event.key==='Enter'){event.preventDefault();updateParam('cd_search', this.value, 'cd_page');}">
-        {% if selected_run_id %}
-          <a class="btn btn-outline-secondary dashv1-btn-export" href="{{ url_for('export_cd_remanente', run_id=selected_run_id) }}">Exportar remanente</a>
-        {% else %}
-          <button class="btn btn-outline-secondary dashv1-btn-export" disabled>Exportar remanente</button>
+      {% set total = alerts_summary.total_count if alerts_summary.total_count > 0 else 1 %}
+      {% set high_pct = (alerts_summary.high_count / total * 100)|round|int %}
+      {% set medium_pct = (alerts_summary.medium_count / total * 100)|round|int %}
+      {% set low_pct = (alerts_summary.low_count / total * 100)|round|int %}
+      <div class="alert-bar">
+        {% if alerts_summary.high_count > 0 %}
+        <div class="alert-bar-seg alert-bar-high" style="width: {{ high_pct }}%;" title="Alta: {{ alerts_summary.high_count }}"></div>
+        {% endif %}
+        {% if alerts_summary.medium_count > 0 %}
+        <div class="alert-bar-seg alert-bar-med" style="width: {{ medium_pct }}%;" title="Media: {{ alerts_summary.medium_count }}"></div>
+        {% endif %}
+        {% if alerts_summary.low_count > 0 %}
+        <div class="alert-bar-seg alert-bar-low" style="width: {{ low_pct }}%;" title="Baja: {{ alerts_summary.low_count }}"></div>
         {% endif %}
       </div>
     </div>
-
-    {# Remanente table #}
-    <div class="dashv1-tablewrap dash-table-scroll">
-      <table class="table table-sm mb-0 dashv1-table dash-table">
-        <thead>
-          <tr>
-            <th>SKU</th>
-            <th>Producto</th>
-            <th class="text-end">Stock CD disponible</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% set cd_rows = cd_pagination.items if (cd_pagination is defined and cd_pagination) else stock_cd_filtered %}
-          {% if cd_rows and cd_rows|length > 0 %}
-            {% set display_cd = cd_rows if (cd_pagination is defined and cd_pagination) else cd_rows[:10] %}
-            {% for cd, prod in display_cd %}
-              <tr>
-                <td class="dashv1-mono">{{ prod.sku }}</td>
-                <td>{{ prod.name }}</td>
-                <td class="text-end">{{ "{:,}".format(cd.quantity|int) }}</td>
-              </tr>
-            {% endfor %}
-          {% else %}
-            <tr><td colspan="3" class="dash-empty-cell">
-              <div class="dash-empty-wrap">
-                <i class="bi bi-box dash-empty-icon"></i>
-                <div class="dash-empty-title">Sin remanente CD</div>
-                <div class="dash-empty-hint">Carga stock CD o ejecuta una nueva distribución</div>
-              </div>
-            </td></tr>
-          {% endif %}
-        </tbody>
-      </table>
-    </div>
-
-    {% if cd_pagination is defined and cd_pagination %}
-      {{ pagination_controls(cd_pagination, 'cd_page', 'cd_size', cd_size) }}
-    {% endif %}
-
   </div>
+  {% endif %}
+
+  {# E) Visual Insights - Two charts side by side #}
+  <div class="dash-charts-grid">
+    <div class="chart-card">
+      <div class="chart-title"><i class="bi bi-bar-chart-fill me-2"></i>Distribución por tienda (Top 10)</div>
+      <div id="chartStoreDistribution" class="chart-container"></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title"><i class="bi bi-archive-fill me-2"></i>Remanente CD (Top 10 SKUs)</div>
+      <div id="chartCDRemainder" class="chart-container"></div>
+    </div>
+  </div>
+
+  {# F) Details Accordion (tables collapsed by default) #}
+  <div class="details-accordion">
+    <div class="accordion" id="dashDetailsAccordion">
+      
+      {# Predictions table accordion #}
+      <div class="accordion-item">
+        <h2 class="accordion-header">
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseDistribution">
+            <i class="bi bi-diagram-3 me-2"></i>Detalle distribución sugerida
+            <span class="badge bg-primary ms-2">{{ pred_pagination.total if pred_pagination is defined and pred_pagination else (predictions|length if predictions else 0) }}</span>
+          </button>
+        </h2>
+        <div id="collapseDistribution" class="accordion-collapse collapse" data-bs-parent="#dashDetailsAccordion">
+          <div class="accordion-body">
+            <div class="dashv1-panel-head">
+              <div class="dashv1-panel-title-group">
+                <span class="dashv1-panel-title">Distribución sugerida</span>
+                {% if predictions and predictions|length > 0 %}
+                  {% set subtitle_text = predictions[0][0].model_name if predictions[0][0].model_name else '' %}
+                  <span class="dashv1-subtitle dash-subtitle-truncate" title="{{ subtitle_text }}">{{ subtitle_text }}</span>
+                {% endif %}
+              </div>
+              <div class="dashv1-panel-tools">
+                {% if current_user.has_permission('admin:reset') %}
+                <div class="dash-quick-actions">
+                  <form method="post" action="{{ url_for('reset_sales') }}" onsubmit="return confirm('¿Eliminar TODAS las ventas?')"><button type="submit" class="qa-btn" title="Reset ventas"><i class="bi bi-trash3"></i></button></form>
+                  <form method="post" action="{{ url_for('reset_predictions') }}" onsubmit="return confirm('¿Eliminar TODAS las distribuciones?')"><button type="submit" class="qa-btn" title="Reset distribuciones"><i class="bi bi-diagram-3"></i></button></form>
+                  <form method="post" action="{{ url_for('reset_store_stock') }}" onsubmit="return confirm('¿Eliminar TODO el stock de tiendas?')"><button type="submit" class="qa-btn" title="Reset stock tiendas"><i class="bi bi-shop"></i></button></form>
+                  <form method="post" action="{{ url_for('reset_stock_cd') }}" onsubmit="return confirm('¿Eliminar TODO el stock del CD?')"><button type="submit" class="qa-btn" title="Reset stock CD"><i class="bi bi-box-seam"></i></button></form>
+                </div>
+                {% endif %}
+                <input class="form-control form-control-sm dashv1-search" placeholder="Buscar SKU" value="{{ pred_search if pred_search is defined else '' }}" onkeydown="if(event.key==='Enter'){event.preventDefault();updateParam('pred_search', this.value, 'pred_page');}">
+                {% if selected_run_id %}
+                  <a class="btn btn-primary dashv1-btn-export" href="{{ url_for('export_predictions', run_id=selected_run_id) }}">Exportar</a>
+                {% else %}
+                  <button class="btn btn-outline-secondary dashv1-btn-export" disabled>Exportar</button>
+                {% endif %}
+              </div>
+            </div>
+
+            <div class="dashv1-tablewrap dash-table-scroll">
+              <table class="table table-sm mb-0 dashv1-table dash-table">
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th>Producto</th>
+                    <th>Tienda</th>
+                    <th class="text-end">Cant.</th>
+                    <th style="width:50px;"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% set pred_rows = pred_pagination.items if (pred_pagination is defined and pred_pagination) else predictions %}
+                  {% if pred_rows and pred_rows|length > 0 %}
+                    {% set display_rows = pred_rows if (pred_pagination is defined and pred_pagination) else pred_rows[:10] %}
+                    {% for p, prod, st in display_rows %}
+                      <tr>
+                        <td class="dashv1-mono">{{ prod.sku }}</td>
+                        <td>{{ prod.name }}</td>
+                        <td>{{ st.name }}</td>
+                        <td class="text-end">{{ "{:,}".format(p.quantity|int) }}</td>
+                        <td class="text-center">
+                          <button class="explain-btn" onclick="showDistExplanation({{ prod.id }}, {{ st.id }}, {{ p.quantity }}, '{{ selected_run_id or '' }}')" title="¿Por qué?">
+                            <i class="bi bi-question-circle"></i>
+                          </button>
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  {% else %}
+                    <tr><td colspan="5" class="dash-empty-cell">
+                      <div class="dash-empty-wrap">
+                        <i class="bi bi-inbox dash-empty-icon"></i>
+                        <div class="dash-empty-title">Sin predicciones</div>
+                        <div class="dash-empty-hint">Carga ventas para generar distribución</div>
+                      </div>
+                    </td></tr>
+                  {% endif %}
+                </tbody>
+              </table>
+            </div>
+
+            {% if pred_pagination is defined and pred_pagination %}
+              {{ pagination_controls(pred_pagination, 'pred_page', 'pred_size', pred_size) }}
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      {# Remanente CD table accordion #}
+      <div class="accordion-item">
+        <h2 class="accordion-header">
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseRemanente">
+            <i class="bi bi-archive me-2"></i>Detalle remanente CD
+            <span class="badge bg-secondary ms-2">{{ cd_pagination.total if cd_pagination is defined and cd_pagination else (stock_cd_filtered|length if stock_cd_filtered else 0) }}</span>
+          </button>
+        </h2>
+        <div id="collapseRemanente" class="accordion-collapse collapse" data-bs-parent="#dashDetailsAccordion">
+          <div class="accordion-body">
+            <div class="dashv1-panel-head">
+              <div class="dashv1-panel-title-group">
+                <span class="dashv1-panel-title">Remanente CD</span>
+                <span class="dashv1-subtitle">saldo mínimo CD pos distribución seleccionada</span>
+              </div>
+              <div class="dashv1-panel-tools">
+                <input class="form-control form-control-sm dashv1-search" placeholder="Buscar SKU..." value="{{ cd_search if cd_search is defined else '' }}" onkeydown="if(event.key==='Enter'){event.preventDefault();updateParam('cd_search', this.value, 'cd_page');}">
+                {% if selected_run_id %}
+                  <a class="btn btn-outline-secondary dashv1-btn-export" href="{{ url_for('export_cd_remanente', run_id=selected_run_id) }}">Exportar remanente</a>
+                {% else %}
+                  <button class="btn btn-outline-secondary dashv1-btn-export" disabled>Exportar remanente</button>
+                {% endif %}
+              </div>
+            </div>
+
+            <div class="dashv1-tablewrap dash-table-scroll">
+              <table class="table table-sm mb-0 dashv1-table dash-table">
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th>Producto</th>
+                    <th class="text-end">Stock CD disponible</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% set cd_rows = cd_pagination.items if (cd_pagination is defined and cd_pagination) else stock_cd_filtered %}
+                  {% if cd_rows and cd_rows|length > 0 %}
+                    {% set display_cd = cd_rows if (cd_pagination is defined and cd_pagination) else cd_rows[:10] %}
+                    {% for cd, prod in display_cd %}
+                      <tr>
+                        <td class="dashv1-mono">{{ prod.sku }}</td>
+                        <td>{{ prod.name }}</td>
+                        <td class="text-end">{{ "{:,}".format(cd.quantity|int) }}</td>
+                      </tr>
+                    {% endfor %}
+                  {% else %}
+                    <tr><td colspan="3" class="dash-empty-cell">
+                      <div class="dash-empty-wrap">
+                        <i class="bi bi-box dash-empty-icon"></i>
+                        <div class="dash-empty-title">Sin remanente CD</div>
+                        <div class="dash-empty-hint">Carga stock CD o ejecuta una nueva distribución</div>
+                      </div>
+                    </td></tr>
+                  {% endif %}
+                </tbody>
+              </table>
+            </div>
+
+            {% if cd_pagination is defined and cd_pagination %}
+              {{ pagination_controls(cd_pagination, 'cd_page', 'cd_size', cd_size) }}
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
 </div>
 
+{# Explain Modal #}
 <div class="modal fade" id="explainModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content explain-modal-content">
@@ -353,6 +380,9 @@
   </div>
 </div>
 
+{# Plotly CDN #}
+<script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+
 <script>
 function updateParam(param, value, resetPageParam) {
   const url = new URL(window.location.href);
@@ -367,7 +397,84 @@ document.addEventListener('DOMContentLoaded', function() {
   if (modalEl && typeof bootstrap !== 'undefined') {
     explainModal = new bootstrap.Modal(modalEl);
   }
+  
+  // Build charts from page data
+  buildCharts();
 });
+
+function buildCharts() {
+  // Chart 1: Distribution by Store (Top 10)
+  // Raw prediction data - will aggregate in JS
+  const rawPredictions = [
+    {% if predictions and predictions|length > 0 %}
+      {% for p, prod, st in predictions %}
+        {store: "{{ st.name }}", qty: {{ p.quantity }}},
+      {% endfor %}
+    {% endif %}
+  ];
+  
+  // Aggregate by store in JavaScript
+  const storeAgg = {};
+  rawPredictions.forEach(item => {
+    if (storeAgg[item.store]) {
+      storeAgg[item.store] += item.qty;
+    } else {
+      storeAgg[item.store] = item.qty;
+    }
+  });
+  
+  // Convert to array and sort
+  const storeData = Object.entries(storeAgg).map(([store, qty]) => ({store, qty}));
+  storeData.sort((a, b) => b.qty - a.qty);
+  const top10Stores = storeData.slice(0, 10);
+  
+  if (top10Stores.length > 0) {
+    Plotly.newPlot('chartStoreDistribution', [{
+      x: top10Stores.map(d => d.store),
+      y: top10Stores.map(d => d.qty),
+      type: 'bar',
+      marker: { color: '#3b82f6', cornerradius: 4 }
+    }], {
+      margin: { t: 20, b: 80, l: 50, r: 20 },
+      xaxis: { tickangle: -45, tickfont: { size: 10 } },
+      yaxis: { title: 'Unidades' },
+      paper_bgcolor: 'transparent',
+      plot_bgcolor: 'transparent'
+    }, { responsive: true, displayModeBar: false });
+  } else {
+    document.getElementById('chartStoreDistribution').innerHTML = '<div class="chart-empty"><i class="bi bi-bar-chart"></i><span>Sin datos de distribución</span></div>';
+  }
+  
+  // Chart 2: CD Remainder (Top 10 SKUs)
+  const cdData = [
+    {% if stock_cd_filtered and stock_cd_filtered|length > 0 %}
+      {% for cd, prod in stock_cd_filtered[:50] %}
+        {sku: "{{ prod.sku }}", qty: {{ cd.quantity }}},
+      {% endfor %}
+    {% endif %}
+  ];
+  
+  // Sort and take top 10
+  cdData.sort((a, b) => b.qty - a.qty);
+  const top10CD = cdData.slice(0, 10);
+  
+  if (top10CD.length > 0) {
+    Plotly.newPlot('chartCDRemainder', [{
+      x: top10CD.map(d => d.sku),
+      y: top10CD.map(d => d.qty),
+      type: 'bar',
+      marker: { color: '#10b981', cornerradius: 4 }
+    }], {
+      margin: { t: 20, b: 80, l: 50, r: 20 },
+      xaxis: { tickangle: -45, tickfont: { size: 10 } },
+      yaxis: { title: 'Stock CD' },
+      paper_bgcolor: 'transparent',
+      plot_bgcolor: 'transparent'
+    }, { responsive: true, displayModeBar: false });
+  } else {
+    document.getElementById('chartCDRemainder').innerHTML = '<div class="chart-empty"><i class="bi bi-archive"></i><span>Sin datos de stock CD</span></div>';
+  }
+}
 
 async function showDistExplanation(productId, storeId, qty, runId) {
   if (!explainModal) {
@@ -419,6 +526,173 @@ async function showDistExplanation(productId, storeId, qty, runId) {
 </script>
 
 <style>
+/* Macro Grid - 3 KPI cards */
+.macro-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+@media (max-width: 768px) {
+  .macro-grid { grid-template-columns: 1fr; }
+}
+.macro-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  border: 1px solid #e2e8f0;
+}
+.macro-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+}
+.macro-card-stores .macro-icon { background: #dbeafe; color: #2563eb; }
+.macro-card-cd .macro-icon { background: #d1fae5; color: #059669; }
+.macro-card-units .macro-icon { background: #fef3c7; color: #d97706; }
+.macro-body { flex: 1; }
+.macro-title { font-size: 0.75rem; text-transform: uppercase; color: #64748b; font-weight: 600; letter-spacing: 0.5px; }
+.macro-value { font-size: 1.75rem; font-weight: 700; color: #1e293b; line-height: 1.2; }
+.macro-sub { font-size: 0.8rem; color: #94a3b8; }
+
+/* Executive Alerts (compact) */
+.exec-alerts {
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.exec-alerts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.exec-alerts-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: #1e293b;
+}
+.exec-alerts-title i { color: #f59e0b; }
+.exec-alerts-badge {
+  background: #fee2e2;
+  color: #dc2626;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.exec-alerts-btn { font-size: 0.8rem; }
+.exec-alerts-content { display: flex; align-items: center; gap: 16px; }
+.alert-chips { display: flex; gap: 12px; }
+.alert-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 16px;
+  border-radius: 8px;
+  min-width: 60px;
+}
+.alert-chip-high { background: #fee2e2; }
+.alert-chip-med { background: #ffedd5; }
+.alert-chip-low { background: #fef9c3; }
+.alert-chip-count { font-size: 1.25rem; font-weight: 700; }
+.alert-chip-high .alert-chip-count { color: #dc2626; }
+.alert-chip-med .alert-chip-count { color: #ea580c; }
+.alert-chip-low .alert-chip-count { color: #ca8a04; }
+.alert-chip-label { font-size: 0.7rem; text-transform: uppercase; color: #64748b; }
+.alert-bar {
+  flex: 1;
+  height: 8px;
+  background: #f1f5f9;
+  border-radius: 4px;
+  display: flex;
+  overflow: hidden;
+}
+.alert-bar-seg { height: 100%; }
+.alert-bar-high { background: #ef4444; }
+.alert-bar-med { background: #f97316; }
+.alert-bar-low { background: #eab308; }
+
+/* Charts Grid */
+.dash-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+  margin-bottom: 20px;
+}
+@media (max-width: 992px) {
+  .dash-charts-grid { grid-template-columns: 1fr; }
+}
+.chart-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.chart-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #1e293b;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+}
+.chart-title i { color: #64748b; }
+.chart-container { height: 280px; }
+.chart-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  gap: 8px;
+}
+.chart-empty i { font-size: 2rem; opacity: 0.5; }
+.chart-empty span { font-size: 0.875rem; }
+
+/* Details Accordion */
+.details-accordion {
+  margin-bottom: 20px;
+}
+.details-accordion .accordion-item {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px !important;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+.details-accordion .accordion-button {
+  font-weight: 600;
+  color: #1e293b;
+  background: #f8fafc;
+}
+.details-accordion .accordion-button:not(.collapsed) {
+  background: #fff;
+  color: #3b82f6;
+  box-shadow: none;
+}
+.details-accordion .accordion-button::after {
+  background-size: 1rem;
+}
+.details-accordion .accordion-body {
+  padding: 16px;
+}
+
+/* Explain Button */
 .explain-btn {
   background: transparent;
   border: none;

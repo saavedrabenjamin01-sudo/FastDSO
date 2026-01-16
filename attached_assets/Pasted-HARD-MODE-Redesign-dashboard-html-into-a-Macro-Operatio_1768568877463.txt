@@ -1,0 +1,113 @@
+HARD MODE — Redesign dashboard.html into a Macro-Operational Executive Dashboard (FastDSO V01)
+
+CONTEXT
+FastDSO is Flask + Jinja + Bootstrap + custom CSS. Dashboard currently shows heavy tables and text. We need a macro-operational visual dashboard that communicates the state of the business, not raw tables. Keep existing functionality and variables. Do NOT break anything.
+
+STRICT RULES
+1) Do NOT change backend logic, routes, queries, or DB.
+2) Use only variables already provided to dashboard.html (stores, selected_store, runs, selected_run_id, predictions, stock_cd_filtered, KPI vars, top_sales if present, etc.).
+3) Tables must NOT be removed, only moved into collapsible “Details” sections.
+4) Keep exports and filters working exactly as before.
+5) Keep permissions: admin resets remain available but not visually dominant.
+6) Keep the overall FastDSO style consistent with current Dashboard look (cards, spacing, soft shadows).
+
+TARGET DASHBOARD STRUCTURE (MANDATORY)
+Dashboard must have these blocks in this order:
+
+A) Header strip (already exists)
+- Title “Panel” + global search disabled (keep)
+- Run strip with Folio/Resp/Date (keep)
+
+B) Macro Health Overview (NEW)
+A single row of 3 macro KPI cards:
+1) Network Health (Stores):
+   - Show counts: Healthy / Attention / Critical stores
+   - Use Store Health categories if already computed; if not available, show placeholders “—”.
+2) CD Risk:
+   - Show counts: Dead/SLOW CD SKUs (if available) else “—”.
+3) Active Run Impact:
+   - Units suggested (kpi_units_suggested)
+   - Stores reached (kpi_tiendas_alcanzadas)
+
+These are “macro cards”, not detailed cards.
+
+C) Visual Insights (2 charts, NEW)
+Two charts side-by-side (desktop), stacked (mobile):
+1) Chart 1 — “Distribución por tienda (Top 10)”:
+   - Bar chart: store vs total assigned units from current run predictions.
+   - Use predictions list already available (Prediction, Product, Store).
+   - Aggregate quantities by store in template or in a small inline JS dataset.
+   - Plotly preferred (use CDN if not already loaded globally).
+2) Chart 2 — “Remanente CD (Top 10 SKUs)”:
+   - Bar chart: SKU vs remaining CD quantity from stock_cd_filtered.
+   - Use stock_cd_filtered already available.
+   - Show top 10 only.
+   - SKU displayed as text (leading zeros).
+
+D) Executive Alerts (NEW — minimal text)
+Replace heavy alerts table with a compact alerts summary widget:
+- Show 3 small chips:
+  High / Medium / Low counts (if available; else show 0 or —)
+- A segmented mini bar (red/orange/yellow proportion)
+- A button: “Ver alertas” linking to /alerts
+NO long text list here.
+
+E) Details (Collapsible sections, NEW)
+Add an accordion “Detalles” with 2 collapsible panels:
+1) “Detalle distribución sugerida (tabla)”:
+   - Show only 10 rows per page, keep existing pagination and search.
+   - Keep export button.
+2) “Detalle remanente CD (tabla)”:
+   - Show 10 rows per page, keep existing pagination and search.
+   - Keep export button.
+
+Tables must be the SAME data as before, just hidden until expanded.
+
+FILTERS (must remain)
+Keep the filter card as it is:
+- run_id selector
+- store/folio/responsable
+But visually place it just after header/run strip (before macro overview), compact.
+
+PERFORMANCE REQUIREMENTS (front-end)
+- Charts must be built from already available page data; no new heavy backend calls.
+- Do not render large tables by default; they stay collapsed.
+- Only top 10 items in charts.
+
+IMPLEMENTATION DETAILS
+1) Modify templates/dashboard.html:
+- Keep existing filter form and pagination macros.
+- Move tables into a Bootstrap accordion (“Detalles”).
+- Add two Plotly charts using JS:
+  - Build a JS array for store distribution:
+    use Jinja loop to output:
+      [{store:"X", qty:123}, ...]
+  - Build a JS array for CD remainder:
+      [{sku:"000123", qty:45}, ...]
+- Sort and slice top 10 in JS before plotting.
+
+2) Add minimal CSS (append to static/css/style.css):
+- Create new classes:
+  .macro-grid, .macro-card, .macro-title, .macro-value, .macro-sub
+  .dash-charts-grid, .chart-card, .chart-title
+  .exec-alerts, .alert-chip, .alert-chip-high/.med/.low, .alert-bar
+  .details-accordion
+Keep consistent rounded corners, shadows, spacing.
+
+3) Plotly loading:
+- If Plotly is not already in base.html, include it in dashboard.html only:
+  <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+Do not include duplicates elsewhere.
+
+DELIVERABLES
+- Provide the full updated templates/dashboard.html
+- Provide only the appended CSS snippet
+- Confirm tables still exist and still paginate, but are collapsed by default.
+- Confirm exports and filters still work.
+
+ACCEPTANCE CHECKLIST
+- Dashboard loads faster (less HTML tables visible).
+- Two charts show correct Top 10 data.
+- Alerts section is compact and graphic (not text-heavy).
+- Tables are accessible in “Detalles” accordion, not removed.
+- No backend changes required; only template + CSS + Plotly JS.
