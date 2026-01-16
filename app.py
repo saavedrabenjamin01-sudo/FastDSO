@@ -6925,15 +6925,23 @@ def flag_slow_stock():
 def flag_slow_stock_bulk():
     """Bulk flag products as managed by Slow Stock."""
     skus = request.form.getlist('skus')
-    product_ids = request.form.getlist('product_ids')
+    product_ids_raw = request.form.get('product_ids', '')
+    
+    # Parse comma-separated product IDs
+    product_ids = []
+    if product_ids_raw:
+        product_ids = [pid.strip() for pid in product_ids_raw.split(',') if pid.strip()]
     
     # Collect products
     products = []
     if product_ids:
         for pid in product_ids:
-            p = db.session.get(Product, int(pid))
-            if p:
-                products.append(p)
+            try:
+                p = db.session.get(Product, int(pid))
+                if p:
+                    products.append(p)
+            except (ValueError, TypeError):
+                continue
     elif skus:
         for sku in skus:
             p = Product.query.filter_by(sku=sku.strip()).first()
