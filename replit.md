@@ -104,6 +104,16 @@ Do not make changes to the folder `Excel tipo/`.
     - Modes: `core` (sales in 90 days OR in runs OR has store stock), `runs` (last 5 distribution runs), `full` (all SKUs)
     - Transparency: Shows SKUs in scope, excluded count, exclusion reasons
     - Uses SalesWeeklyAgg when available for scope calculations
+- **Dashboard por Categoría**: Category-level executive dashboard with:
+    - Route: `/dashboard_category` for category-filtered analytics
+    - Filters: Category selector, time window (7-180 days), optional store filter
+    - Optimized queries: Uses SalesWeeklyAgg.category index directly (no product_ids materialization)
+    - Stock queries: Join Product table for category filter on StockCD/StockSnapshot
+    - 4 KPI cards: Unidades vendidas, Demanda semanal promedio, Stock CD, Stock tiendas
+    - Health summary: Bar showing healthy vs dead/slow products proportion
+    - Charts: Top 10 tiendas por ventas (bar), Distribución de stock CD vs tiendas (pie)
+    - Top 10 SKUs accordion with expandable details
+    - Access via "Dashboard por categoría" link under Ventas y Compras
 
 ## External Dependencies
 - **Database**: SQLite (for `app.db`)
