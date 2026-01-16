@@ -1,0 +1,479 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<div class="dashv1">
+
+  {# A) Header strip #}
+  <div class="dashcat-header">
+    <div class="dashcat-title-group">
+      <h1 class="dashcat-title"><i class="bi bi-grid-3x3-gap me-2"></i>Dashboard por categoría</h1>
+      <p class="dashcat-subtitle">Visión macro operacional basada en ventas y stock recientes</p>
+    </div>
+  </div>
+
+  {# B) Filter card #}
+  <form class="dashcat-filters" method="get" action="{{ url_for('dashboard_category') }}">
+    <div class="dashcat-filter">
+      <label class="dashcat-label">Categoría</label>
+      <select class="form-select form-select-sm dashcat-input" name="category" required>
+        <option value="">Seleccionar categoría</option>
+        {% for cat in categories %}
+          <option value="{{ cat }}" {% if selected_category == cat %}selected{% endif %}>{{ cat }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="dashcat-filter">
+      <label class="dashcat-label">Ventana</label>
+      <select class="form-select form-select-sm dashcat-input" name="window">
+        <option value="30" {% if window_days == 30 %}selected{% endif %}>30 días</option>
+        <option value="60" {% if window_days == 60 %}selected{% endif %}>60 días</option>
+        <option value="90" {% if window_days == 90 %}selected{% endif %}>90 días</option>
+      </select>
+    </div>
+
+    <div class="dashcat-filter">
+      <label class="dashcat-label">Tienda (opcional)</label>
+      <select class="form-select form-select-sm dashcat-input" name="store">
+        <option value="">Todas las tiendas</option>
+        {% for s in stores %}
+          <option value="{{ s.name }}" {% if selected_store == s.name %}selected{% endif %}>{{ s.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="dashcat-actions">
+      <button class="btn btn-primary dashcat-btn-apply">Aplicar</button>
+      <a class="btn btn-outline-secondary dashcat-btn-clear" href="{{ url_for('dashboard_category') }}">Limpiar</a>
+    </div>
+  </form>
+
+  {% if selected_category %}
+
+  {# C) KPI row (4 cards) #}
+  <div class="dashcat-kpi-grid">
+    <div class="dashcat-kpi-card">
+      <div class="dashcat-kpi-icon dashcat-kpi-icon-sales"><i class="bi bi-graph-up"></i></div>
+      <div class="dashcat-kpi-body">
+        <div class="dashcat-kpi-label">Ventas</div>
+        <div class="dashcat-kpi-value">{{ "{:,}".format(kpi_sales_units|int) }}</div>
+        <div class="dashcat-kpi-sub">unidades ({{ window_days }} días)</div>
+      </div>
+    </div>
+
+    <div class="dashcat-kpi-card">
+      <div class="dashcat-kpi-icon dashcat-kpi-icon-demand"><i class="bi bi-speedometer"></i></div>
+      <div class="dashcat-kpi-body">
+        <div class="dashcat-kpi-label">Demanda promedio</div>
+        <div class="dashcat-kpi-value">{{ "{:,.1f}".format(kpi_avg_weekly_demand) }}</div>
+        <div class="dashcat-kpi-sub">unidades/semana</div>
+      </div>
+    </div>
+
+    <div class="dashcat-kpi-card">
+      <div class="dashcat-kpi-icon dashcat-kpi-icon-cd"><i class="bi bi-archive"></i></div>
+      <div class="dashcat-kpi-body">
+        <div class="dashcat-kpi-label">Stock CD</div>
+        <div class="dashcat-kpi-value">{{ "{:,}".format(kpi_cd_stock|int) }}</div>
+        <div class="dashcat-kpi-sub">unidades</div>
+      </div>
+    </div>
+
+    <div class="dashcat-kpi-card">
+      <div class="dashcat-kpi-icon dashcat-kpi-icon-stores"><i class="bi bi-shop"></i></div>
+      <div class="dashcat-kpi-body">
+        <div class="dashcat-kpi-label">Stock Tiendas</div>
+        <div class="dashcat-kpi-value">{{ "{:,}".format(kpi_stores_stock|int) }}</div>
+        <div class="dashcat-kpi-sub">unidades</div>
+      </div>
+    </div>
+  </div>
+
+  {# D) Health summary (graphic only) #}
+  {% set total_health = health_data.healthy + health_data.dead_slow %}
+  {% if total_health > 0 %}
+  {% set healthy_pct = (health_data.healthy / total_health * 100)|round|int %}
+  {% set dead_pct = (health_data.dead_slow / total_health * 100)|round|int %}
+  <div class="dashcat-health">
+    <div class="dashcat-health-header">
+      <span class="dashcat-health-title"><i class="bi bi-heart-pulse me-2"></i>Estado de SKUs</span>
+      <a href="{{ url_for('slow_stock') }}?category={{ selected_category }}" class="btn btn-sm btn-outline-secondary">Ver stock lento</a>
+    </div>
+    <div class="dashcat-health-content">
+      <div class="dashcat-health-chips">
+        <div class="health-chip health-chip-ok">
+          <span class="health-chip-pct">{{ healthy_pct }}%</span>
+          <span class="health-chip-label">Activos</span>
+        </div>
+        <div class="health-chip health-chip-warn">
+          <span class="health-chip-pct">{{ dead_pct }}%</span>
+          <span class="health-chip-label">Sin movimiento</span>
+        </div>
+      </div>
+      <div class="dashcat-health-bar-wrap">
+        <div class="dashcat-health-bar">
+          {% if healthy_pct > 0 %}
+          <div class="health-bar-seg health-bar-ok" style="width: {{ healthy_pct }}%;"></div>
+          {% endif %}
+          {% if dead_pct > 0 %}
+          <div class="health-bar-seg health-bar-warn" style="width: {{ dead_pct }}%;"></div>
+          {% endif %}
+        </div>
+      </div>
+      <div class="dashcat-health-footer">
+        <span class="text-muted">{{ total_health }} SKUs en categoría</span>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {# E) Visual charts (2 cards) #}
+  <div class="dashcat-charts-grid">
+    <div class="dashcat-chart-card">
+      <div class="dashcat-chart-title"><i class="bi bi-bar-chart-fill me-2"></i>Top 10 tiendas por ventas (categoría)</div>
+      <div id="chartTopStores" class="dashcat-chart-container"></div>
+    </div>
+    <div class="dashcat-chart-card">
+      <div class="dashcat-chart-title"><i class="bi bi-archive-fill me-2"></i>Stock CD vs Stock tiendas (categoría)</div>
+      <div id="chartStockComparison" class="dashcat-chart-container"></div>
+    </div>
+  </div>
+
+  {# F) Details accordion #}
+  <div class="dashcat-accordion">
+    <div class="accordion" id="dashCatAccordion">
+      <div class="accordion-item">
+        <h2 class="accordion-header">
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseTopSKUs">
+            <i class="bi bi-box me-2"></i>Top 10 SKUs por ventas
+            <span class="badge bg-primary ms-2">{{ top_skus|length }}</span>
+          </button>
+        </h2>
+        <div id="collapseTopSKUs" class="accordion-collapse collapse" data-bs-parent="#dashCatAccordion">
+          <div class="accordion-body">
+            <div class="dashcat-tablewrap">
+              <table class="table table-sm mb-0 dashcat-table">
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th>Producto</th>
+                    <th class="text-end">Ventas ({{ window_days }}d)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% if top_skus and top_skus|length > 0 %}
+                    {% for sku in top_skus %}
+                      <tr>
+                        <td class="dashcat-mono">{{ sku.sku }}</td>
+                        <td>{{ sku.name }}</td>
+                        <td class="text-end">{{ "{:,}".format(sku.units) }}</td>
+                      </tr>
+                    {% endfor %}
+                  {% else %}
+                    <tr><td colspan="3" class="text-center text-muted py-4">Sin datos de SKUs</td></tr>
+                  {% endif %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% else %}
+  {# No category selected - show prompt #}
+  <div class="dashcat-empty">
+    <div class="dashcat-empty-icon"><i class="bi bi-grid-3x3-gap"></i></div>
+    <div class="dashcat-empty-title">Selecciona una categoría</div>
+    <div class="dashcat-empty-hint">Elige una categoría del menú superior para ver métricas y gráficos</div>
+  </div>
+  {% endif %}
+
+</div>
+
+<script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  {% if selected_category %}
+  buildCharts();
+  {% endif %}
+});
+
+function buildCharts() {
+  // Chart 1: Top 10 stores by sales
+  const storesData = [
+    {% for item in top_stores_chart %}
+      {store: "{{ item.store }}", units: {{ item.units }}},
+    {% endfor %}
+  ];
+  
+  if (storesData.length > 0) {
+    Plotly.newPlot('chartTopStores', [{
+      x: storesData.map(d => d.store),
+      y: storesData.map(d => d.units),
+      type: 'bar',
+      marker: { color: '#3b82f6', cornerradius: 4 }
+    }], {
+      margin: { t: 20, b: 80, l: 60, r: 20 },
+      xaxis: { tickangle: -45, tickfont: { size: 10 } },
+      yaxis: { title: 'Unidades vendidas' },
+      paper_bgcolor: 'transparent',
+      plot_bgcolor: 'transparent'
+    }, { responsive: true, displayModeBar: false });
+  } else {
+    document.getElementById('chartTopStores').innerHTML = '<div class="chart-empty"><i class="bi bi-bar-chart"></i><span>Sin datos de tiendas</span></div>';
+  }
+  
+  // Chart 2: Stock comparison (CD vs Stores)
+  const cdStock = {{ stock_comparison.cd }};
+  const storesStock = {{ stock_comparison.stores }};
+  
+  if (cdStock > 0 || storesStock > 0) {
+    Plotly.newPlot('chartStockComparison', [{
+      x: ['Stock CD', 'Stock Tiendas'],
+      y: [cdStock, storesStock],
+      type: 'bar',
+      marker: { color: ['#10b981', '#f59e0b'], cornerradius: 4 }
+    }], {
+      margin: { t: 20, b: 40, l: 60, r: 20 },
+      yaxis: { title: 'Unidades' },
+      paper_bgcolor: 'transparent',
+      plot_bgcolor: 'transparent'
+    }, { responsive: true, displayModeBar: false });
+  } else {
+    document.getElementById('chartStockComparison').innerHTML = '<div class="chart-empty"><i class="bi bi-archive"></i><span>Sin datos de stock</span></div>';
+  }
+}
+</script>
+
+<style>
+/* Dashboard Category styles */
+.dashcat-header {
+  margin-bottom: 20px;
+}
+.dashcat-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0;
+  display: flex;
+  align-items: center;
+}
+.dashcat-title i { color: #3b82f6; }
+.dashcat-subtitle {
+  font-size: 0.875rem;
+  color: #64748b;
+  margin: 4px 0 0 0;
+}
+
+/* Filters */
+.dashcat-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  background: #fff;
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  margin-bottom: 20px;
+}
+.dashcat-filter { display: flex; flex-direction: column; gap: 4px; }
+.dashcat-label { font-size: 0.7rem; text-transform: uppercase; color: #64748b; font-weight: 600; }
+.dashcat-input { min-width: 160px; }
+.dashcat-actions { display: flex; gap: 8px; margin-left: auto; }
+.dashcat-btn-apply { font-size: 0.8rem; }
+.dashcat-btn-clear { font-size: 0.8rem; }
+
+/* KPI Grid - 4 cards */
+.dashcat-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+@media (max-width: 992px) {
+  .dashcat-kpi-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 576px) {
+  .dashcat-kpi-grid { grid-template-columns: 1fr; }
+}
+.dashcat-kpi-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.dashcat-kpi-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+}
+.dashcat-kpi-icon-sales { background: #dbeafe; color: #2563eb; }
+.dashcat-kpi-icon-demand { background: #fce7f3; color: #db2777; }
+.dashcat-kpi-icon-cd { background: #d1fae5; color: #059669; }
+.dashcat-kpi-icon-stores { background: #fef3c7; color: #d97706; }
+.dashcat-kpi-body { flex: 1; }
+.dashcat-kpi-label { font-size: 0.7rem; text-transform: uppercase; color: #64748b; font-weight: 600; }
+.dashcat-kpi-value { font-size: 1.5rem; font-weight: 700; color: #1e293b; line-height: 1.2; }
+.dashcat-kpi-sub { font-size: 0.75rem; color: #94a3b8; }
+
+/* Health summary */
+.dashcat-health {
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+  margin-bottom: 20px;
+}
+.dashcat-health-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.dashcat-health-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #475569;
+}
+.dashcat-health-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.dashcat-health-chips { display: flex; gap: 10px; }
+.health-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+}
+.health-chip-ok { background: #f0fdf4; }
+.health-chip-warn { background: #fefce8; }
+.health-chip-pct { font-size: 0.875rem; font-weight: 600; }
+.health-chip-ok .health-chip-pct { color: #15803d; }
+.health-chip-warn .health-chip-pct { color: #a16207; }
+.health-chip-label { font-size: 0.7rem; text-transform: uppercase; color: #64748b; }
+.dashcat-health-bar-wrap { max-width: 50%; }
+.dashcat-health-bar {
+  height: 6px;
+  background: #f1f5f9;
+  border-radius: 3px;
+  display: flex;
+  overflow: hidden;
+}
+.health-bar-seg { height: 100%; }
+.health-bar-ok { background: #86efac; }
+.health-bar-warn { background: #fde047; }
+.dashcat-health-footer { font-size: 0.7rem; }
+
+/* Charts grid */
+.dashcat-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+  margin-bottom: 20px;
+}
+@media (max-width: 992px) {
+  .dashcat-charts-grid { grid-template-columns: 1fr; }
+}
+.dashcat-chart-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+}
+.dashcat-chart-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #1e293b;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+}
+.dashcat-chart-title i { color: #64748b; }
+.dashcat-chart-container { height: 280px; }
+.chart-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  gap: 8px;
+}
+.chart-empty i { font-size: 2rem; opacity: 0.5; }
+.chart-empty span { font-size: 0.875rem; }
+
+/* Accordion */
+.dashcat-accordion .accordion-item {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px !important;
+  overflow: hidden;
+}
+.dashcat-accordion .accordion-button {
+  font-weight: 600;
+  color: #1e293b;
+  background: #f8fafc;
+}
+.dashcat-accordion .accordion-button:not(.collapsed) {
+  background: #fff;
+  color: #3b82f6;
+  box-shadow: none;
+}
+
+/* Table */
+.dashcat-tablewrap {
+  max-height: 400px;
+  overflow-y: auto;
+}
+.dashcat-table thead th {
+  background: #f8fafc;
+  position: sticky;
+  top: 0;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: #64748b;
+}
+.dashcat-mono {
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 0.8rem;
+}
+
+/* Empty state */
+.dashcat-empty {
+  background: #fff;
+  border-radius: 12px;
+  padding: 60px 20px;
+  text-align: center;
+  border: 1px dashed #e2e8f0;
+}
+.dashcat-empty-icon {
+  font-size: 3rem;
+  color: #cbd5e1;
+  margin-bottom: 16px;
+}
+.dashcat-empty-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #475569;
+  margin-bottom: 8px;
+}
+.dashcat-empty-hint {
+  font-size: 0.875rem;
+  color: #94a3b8;
+}
+</style>
+{% endblock %}

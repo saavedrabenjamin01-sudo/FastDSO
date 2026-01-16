@@ -1755,6 +1755,157 @@ def dashboard():
         selected_run_id=selected_run_id,
     )
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DASHBOARD BY CATEGORY - Macro operational view per category
+# ─────────────────────────────────────────────────────────────────────────────
+@app.route('/dashboard_category', methods=['GET'])
+@login_required
+@require_permission('dashboard:view')
+def dashboard_category():
+    """
+    Dashboard by Category - Macro operational visibility based on recent sales and stock.
+    Uses SalesWeeklyAgg for performance (indexed queries).
+    """
+    from sqlalchemy import distinct as sql_distinct
+    
+    # --- Get filter params ---
+    selected_category = request.args.get('category', '').strip()
+    window_days = int(request.args.get('window', 30))
+    selected_store = request.args.get('store', '').strip()
+    
+    # Validate window
+    if window_days not in [30, 60, 90]:
+        window_days = 30
+    
+    # Calculate date window
+    today = date.today()
+    window_start = today - timedelta(days=window_days)
+    
+    # --- Get distinct categories (non-null, non-empty) ---
+    categories = db.session.query(sql_distinct(Product.category)).filter(
+        Product.category.isnot(None),
+        Product.category != ''
+    ).order_by(Product.category).all()
+    categories = [c[0] for c in categories if c[0]]
+    
+    # --- Get stores for filter ---
+    stores = Store.query.order_by(Store.name.asc()).all()
+    
+    # --- Default KPIs ---
+    kpi_sales_units = 0
+    kpi_avg_weekly_demand = 0.0
+    kpi_cd_stock = 0
+    kpi_stores_stock = 0
+    
+    # Chart data
+    top_stores_chart = []
+    stock_comparison = {'cd': 0, 'stores': 0}
+    
+    # Top 10 SKUs
+    top_skus = []
+    
+    # Health proportions
+    health_data = {'dead_slow': 0, 'healthy': 0}
+    
+    if selected_category:
+        # --- Optimized queries using SalesWeeklyAgg.category index (no product_ids list) ---
+        
+        # Resolve store filter once
+        store_id_filter = None
+        if selected_store:
+            store_obj = Store.query.filter_by(name=selected_store).first()
+            if store_obj:
+                store_id_filter = store_obj.id
+        
+        # --- KPI 1: Sales in window (using SalesWeeklyAgg.category index) ---
+        sales_query = db.session.query(func.sum(SalesWeeklyAgg.units)).filter(
+            SalesWeeklyAgg.category == selected_category,
+            SalesWeeklyAgg.week_start >= window_start
+        )
+        if store_id_filter:
+            sales_query = sales_query.filter(SalesWeeklyAgg.store_id == store_id_filter)
+        kpi_sales_units = sales_query.scalar() or 0
+        
+        # --- KPI 2: Avg weekly demand ---
+        weeks_in_window = max(window_days / 7, 1)
+        kpi_avg_weekly_demand = round(kpi_sales_units / weeks_in_window, 1)
+        
+        # --- KPI 3: CD Stock (join Product for category filter) ---
+        cd_stock_query = db.session.query(func.sum(StockCD.quantity)).join(
+            Product, StockCD.product_id == Product.id
+        ).filter(Product.category == selected_category)
+        kpi_cd_stock = cd_stock_query.scalar() or 0
+        
+        # --- KPI 4: Stores Stock (join Product for category filter) ---
+        stores_stock_query = db.session.query(func.sum(StockSnapshot.quantity)).join(
+            Product, StockSnapshot.product_id == Product.id
+        ).filter(Product.category == selected_category)
+        if store_id_filter:
+            stores_stock_query = stores_stock_query.filter(StockSnapshot.store_id == store_id_filter)
+        kpi_stores_stock = stores_stock_query.scalar() or 0
+        
+        # --- Chart 1: Top 10 stores by category sales (using category index) ---
+        top_stores_query = db.session.query(
+            Store.name,
+            func.sum(SalesWeeklyAgg.units).label('total_units')
+        ).join(Store, SalesWeeklyAgg.store_id == Store.id).filter(
+            SalesWeeklyAgg.category == selected_category,
+            SalesWeeklyAgg.week_start >= window_start
+        ).group_by(Store.name).order_by(func.sum(SalesWeeklyAgg.units).desc()).limit(10).all()
+        
+        top_stores_chart = [{'store': r[0], 'units': int(r[1] or 0)} for r in top_stores_query]
+        
+        # --- Chart 2: Stock comparison ---
+        stock_comparison = {'cd': kpi_cd_stock, 'stores': kpi_stores_stock}
+        
+        # --- Top 10 SKUs by sales (using category index) ---
+        top_skus_query = db.session.query(
+            Product.sku,
+            Product.name,
+            func.sum(SalesWeeklyAgg.units).label('total_units')
+        ).join(Product, SalesWeeklyAgg.product_id == Product.id).filter(
+            SalesWeeklyAgg.category == selected_category,
+            SalesWeeklyAgg.week_start >= window_start
+        ).group_by(Product.sku, Product.name).order_by(func.sum(SalesWeeklyAgg.units).desc()).limit(10).all()
+        
+        top_skus = [{'sku': r[0], 'name': r[1], 'units': int(r[2] or 0)} for r in top_skus_query]
+        
+        # --- Health proportions (count by category in SQL) ---
+        recent_window = today - timedelta(days=60)
+        total_products = db.session.query(func.count(Product.id)).filter(
+            Product.category == selected_category
+        ).scalar() or 0
+        
+        active_products = db.session.query(func.count(sql_distinct(SalesWeeklyAgg.product_id))).filter(
+            SalesWeeklyAgg.category == selected_category,
+            SalesWeeklyAgg.week_start >= recent_window,
+            SalesWeeklyAgg.units > 0
+        ).scalar() or 0
+        
+        health_data['healthy'] = active_products
+        health_data['dead_slow'] = max(total_products - active_products, 0)
+    
+    return render_template(
+        'dashboard_category.html',
+        categories=categories,
+        selected_category=selected_category,
+        stores=stores,
+        selected_store=selected_store,
+        window_days=window_days,
+        
+        kpi_sales_units=kpi_sales_units,
+        kpi_avg_weekly_demand=kpi_avg_weekly_demand,
+        kpi_cd_stock=kpi_cd_stock,
+        kpi_stores_stock=kpi_stores_stock,
+        
+        top_stores_chart=top_stores_chart,
+        stock_comparison=stock_comparison,
+        top_skus=top_skus,
+        health_data=health_data,
+    )
+
+
 @app.route('/purchase_forecast', methods=['GET', 'POST'])
 @login_required
 @require_permission('forecast_v2:view')

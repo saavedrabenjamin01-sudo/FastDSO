@@ -55,6 +55,10 @@
           <span class="nav-icon"><i class="bi bi-speedometer2"></i></span>
           <span class="nav-text">Dashboard</span>
         </a>
+        <a class="nav-link" href="{{ url_for('dashboard_category') }}">
+          <span class="nav-icon"><i class="bi bi-grid-3x3-gap"></i></span>
+          <span class="nav-text">Dashboard por categoría</span>
+        </a>
         {% endif %}
 
         {% if current_user.has_permission('sales:upload') %}

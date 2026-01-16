@@ -1,0 +1,53 @@
+Implement a new “Dashboard by Category” view in FastDSO, optimized for macro operational visibility, without breaking the existing Dashboard.
+
+GOALS
+- Keep current /dashboard unchanged.
+- Add a new route: /dashboard_category (or /dashboard?view=category if you prefer, but separate route is safer).
+- Allow selecting a category + time window (30/60/90 days).
+- Show macro KPIs, alert proportions (aggregated), and two charts:
+  1) Top 10 stores by category sales (weekly rate)
+  2) CD vs Stores stock for the category (units)
+- Tables must be minimal (Top 10 only) and details collapsible.
+- Must be fast: use SalesWeeklyAgg and indexed queries. No scanning DistributionRecord for dashboard.
+
+SCOPE
+- Backend: add a new route + optimized SQL queries.
+- Template: add templates/dashboard_category.html using existing styling classes (same design system).
+- Sidebar: add a link under “Ventas y Compras” called “Dashboard por categoría”.
+- No schema changes required (assumes Product.category and SalesWeeklyAgg exist).
+
+UI REQUIREMENTS (dashboard_category.html)
+A) Header strip:
+- Title: “Dashboard por categoría”
+- Subtitle: “Visión macro operacional basada en ventas y stock recientes”
+B) Filter card:
+- Category dropdown (distinct Product.category, excluding null/empty)
+- Window dropdown: 30/60/90 days
+- Optional store filter (All stores)
+- Apply/Clear buttons
+C) KPI row (4 cards):
+- Sales (units in window)
+- Avg weekly demand (units/week)
+- CD stock (units)
+- Stores stock (units)
+D) Alerts summary (graphic only):
+- Dead/SLOW vs Healthy proportions for the category (no long table)
+- Link to “Slow stock” module with category prefilter (optional)
+E) Visual charts (2 cards):
+- Chart 1: “Top 10 tiendas por ventas (categoría)” (bar)
+- Chart 2: “Stock CD vs Stock tiendas (categoría)” (bar)
+Use Plotly (already used in app) or Chart.js.
+F) Details accordion:
+- Top 10 SKUs by category sales (table)
+- Top 10 CD overstock SKUs (table, optional)
+
+BACKEND REQUIREMENTS (performance)
+- Use SalesWeeklyAgg for sales metrics in the window.
+- Use StockCD and StockSnapshot for stock metrics, joined to Product.category.
+- Only aggregate and return Top 10 lists; avoid returning huge datasets.
+
+DELIVERABLES
+- New route + queries
+- New template
+- Sidebar link
+- Confirm the page loads fast and does not slow down the main dashboard
