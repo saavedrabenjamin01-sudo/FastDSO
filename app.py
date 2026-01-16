@@ -172,6 +172,9 @@ class Product(db.Model):
     sku = db.Column(db.String(64), unique=True, nullable=False)
     name = db.Column(db.String(255), nullable=False)
     category = db.Column(db.String(100), nullable=True, index=True)
+    eligible_for_distribution = db.Column(db.Boolean, default=True, nullable=False)
+    risk_score = db.Column(db.Integer, nullable=True)
+    risk_reason = db.Column(db.Text, nullable=True)
 
 
 class Store(db.Model):
@@ -1976,6 +1979,8 @@ def category_no_movement():
         Product.id,
         Product.sku,
         Product.name,
+        Product.eligible_for_distribution,
+        Product.risk_score,
         func.coalesce(sales_subq.c.total_sales, 0).label('total_sales'),
         func.coalesce(cd_stock_subq.c.stock_cd, 0).label('stock_cd'),
         func.coalesce(store_stock_subq.c.stock_stores, 0).label('stock_stores'),
@@ -2003,14 +2008,26 @@ def category_no_movement():
     for r in results:
         total_stock = int(r.stock_cd or 0) + int(r.stock_stores or 0)
         last_sale = r.last_sale_date.strftime('%Y-%m-%d') if r.last_sale_date else None
+        risk_band = None
+        if r.risk_score is not None:
+            if r.risk_score >= 70:
+                risk_band = 'HIGH'
+            elif r.risk_score >= 40:
+                risk_band = 'MEDIUM'
+            else:
+                risk_band = 'LOW'
         items.append({
+            'id': r.id,
             'sku': r.sku,
             'name': r.name,
             'category': category,
             'stock_cd': int(r.stock_cd or 0),
             'stock_stores': int(r.stock_stores or 0),
             'total_stock': total_stock,
-            'last_sale': last_sale
+            'last_sale': last_sale,
+            'flagged': not r.eligible_for_distribution,
+            'risk_score': r.risk_score,
+            'risk_band': risk_band
         })
     
     return render_template(
@@ -6511,6 +6528,8 @@ def slow_stock():
     sku_search = request.args.get('sku_search', '').strip()
     store_filter = request.args.get('store_filter', '').strip()
     status_filter = request.args.get('status_filter', '').strip()
+    flagged_only = request.args.get('flagged', '').strip() == '1'
+    category_filter = request.args.get('category', '').strip()
     
     # Pagination parameters (fixed 10 per page)
     slow_page = request.args.get('slow_page', 1, type=int)
@@ -6524,6 +6543,18 @@ def slow_stock():
     cd_pag = None
     global_pag = None
     
+    # Build flagged product lookup if flagged filter is active
+    flagged_product_ids = set()
+    if flagged_only:
+        flagged_prods = Product.query.filter(Product.eligible_for_distribution == False).all()
+        flagged_product_ids = {p.id for p in flagged_prods}
+    
+    # Build category product lookup if category filter is active
+    category_product_ids = set()
+    if category_filter:
+        cat_prods = Product.query.filter(Product.category == category_filter).all()
+        category_product_ids = {p.id for p in cat_prods}
+    
     if results:
         # Apply filters to store analysis
         store_data = results.get('store_analysis', [])
@@ -6533,6 +6564,10 @@ def slow_stock():
             store_data = [r for r in store_data if r['store'] == store_filter]
         if status_filter:
             store_data = [r for r in store_data if r['status'] == status_filter]
+        if flagged_only:
+            store_data = [r for r in store_data if r.get('product_id') in flagged_product_ids]
+        if category_filter:
+            store_data = [r for r in store_data if r.get('product_id') in category_product_ids]
         
         slow_pag = paginate_list(store_data, slow_page, 10)
         sug_pag = paginate_list(results.get('transfers', []), sug_page, 10)
@@ -6547,8 +6582,15 @@ def slow_stock():
             global_status_map = {'DEAD_STORE': 'DEAD', 'DEAD_CD': 'DEAD', 'SLOW_STORE': 'SLOW', 'HEALTHY': 'HEALTHY', 'DEAD': 'DEAD', 'SLOW': 'SLOW'}
             normalized_status = global_status_map.get(status_filter, status_filter)
             global_data = [r for r in global_data if r['status'] == normalized_status]
+        if flagged_only:
+            global_data = [r for r in global_data if r.get('product_id') in flagged_product_ids]
+        if category_filter:
+            global_data = [r for r in global_data if r.get('product_id') in category_product_ids]
         
         global_pag = paginate_list(global_data, global_page, 10)
+    
+    # Get flagged products for display
+    flagged_products = Product.query.filter(Product.eligible_for_distribution == False).order_by(Product.sku).all()
     
     return render_template('slow_stock.html',
                            products=products,
@@ -6566,7 +6608,10 @@ def slow_stock():
                            global_page=global_page,
                            sku_search=sku_search,
                            store_filter=store_filter,
-                           status_filter=status_filter)
+                           status_filter=status_filter,
+                           flagged_only=flagged_only,
+                           category_filter=category_filter,
+                           flagged_products=flagged_products)
 
 
 @app.route('/slow_stock/upload_lifecycle', methods=['POST'])
@@ -6729,6 +6774,261 @@ def export_slow_stock(export_type):
     )
 
 
+# ------------------ Slow Stock Flagging Module ------------------
+
+def compute_risk_score(product_id):
+    """
+    Compute risk score (0-100) for a SKU based on lifecycle and stock data.
+    Returns: (risk_score, risk_reason)
+    """
+    import math
+    
+    today = date.today()
+    product = db.session.get(Product, product_id)
+    if not product:
+        return 0, "Producto no encontrado"
+    
+    # Get lifecycle data
+    lifecycle = SkuLifecycle.query.filter_by(product_id=product_id).first()
+    
+    # Get days since last sale (from lifecycle or SalesWeeklyAgg)
+    days_since_last_sale = None
+    if lifecycle and lifecycle.last_sale_date_global:
+        days_since_last_sale = (today - lifecycle.last_sale_date_global).days
+    else:
+        # Fallback to SalesWeeklyAgg
+        last_sale = db.session.query(func.max(SalesWeeklyAgg.week_start)).filter(
+            SalesWeeklyAgg.product_id == product_id,
+            SalesWeeklyAgg.units > 0
+        ).scalar()
+        if last_sale:
+            days_since_last_sale = (today - last_sale).days
+    
+    # Get days since last purchase
+    days_since_last_purchase = 0
+    if lifecycle and lifecycle.last_purchase_date:
+        days_since_last_purchase = (today - lifecycle.last_purchase_date).days
+    
+    # Get total stock (CD + stores)
+    stock_cd = db.session.query(func.coalesce(func.sum(StockCD.quantity), 0)).filter(
+        StockCD.product_id == product_id
+    ).scalar() or 0
+    
+    stock_stores = db.session.query(func.coalesce(func.sum(StockSnapshot.quantity), 0)).filter(
+        StockSnapshot.product_id == product_id
+    ).scalar() or 0
+    
+    total_stock = int(stock_cd) + int(stock_stores)
+    
+    # Calculate score components
+    score_sale = 0
+    if days_since_last_sale is not None:
+        score_sale = min(100, (days_since_last_sale / 120) * 100)
+    else:
+        score_sale = 100  # No sales ever = max score for sale component
+    
+    score_stock = min(40, math.log10(total_stock + 1) * 10)
+    score_purchase = min(30, (days_since_last_purchase / 180) * 30) if days_since_last_purchase > 0 else 0
+    
+    risk_score = max(0, min(100, int(score_sale + score_stock + score_purchase)))
+    
+    # Build reason text
+    reasons = []
+    if days_since_last_sale is not None:
+        reasons.append(f"Sin ventas hace {days_since_last_sale} días")
+    else:
+        reasons.append("Sin registro de ventas")
+    reasons.append(f"Stock total: {total_stock:,}")
+    if days_since_last_purchase > 0:
+        reasons.append(f"Última compra hace {days_since_last_purchase} días")
+    
+    risk_reason = ", ".join(reasons)
+    
+    return risk_score, risk_reason
+
+
+def get_risk_band(score):
+    """Return risk band label based on score."""
+    if score >= 70:
+        return 'HIGH'
+    elif score >= 40:
+        return 'MEDIUM'
+    return 'LOW'
+
+
+@app.route('/slow_stock/flag', methods=['POST'])
+@login_required
+@require_permission('slow_stock:run')
+def flag_slow_stock():
+    """Flag a product as managed by Slow Stock (exclude from distribution)."""
+    sku = request.form.get('sku', '').strip()
+    product_id = request.form.get('product_id')
+    
+    # Find product
+    product = None
+    if product_id:
+        product = db.session.get(Product, int(product_id))
+    elif sku:
+        product = Product.query.filter_by(sku=sku).first()
+    
+    if not product:
+        flash('Producto no encontrado.', 'warning')
+        return redirect(request.referrer or url_for('slow_stock'))
+    
+    # Store previous state for audit
+    prev_eligible = product.eligible_for_distribution
+    
+    # Compute risk score
+    risk_score, risk_reason = compute_risk_score(product.id)
+    
+    # Update product
+    product.eligible_for_distribution = False
+    product.risk_score = risk_score
+    product.risk_reason = risk_reason
+    
+    try:
+        db.session.commit()
+        
+        log_audit(
+            action='slow_stock.flag',
+            status='success',
+            message=f'SKU {product.sku} flagged for slow stock management',
+            entity_type='Product',
+            entity_id=product.id,
+            metadata={
+                'sku': product.sku,
+                'risk_score': risk_score,
+                'risk_reason': risk_reason,
+                'prev_eligible_for_distribution': prev_eligible,
+                'new_eligible_for_distribution': False
+            }
+        )
+        
+        flash(f'SKU {product.sku} marcado para gestión de stock lento (Riesgo: {risk_score}).', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error al marcar producto: {str(e)}', 'danger')
+        log_audit(
+            action='slow_stock.flag',
+            status='fail',
+            message=str(e),
+            entity_type='Product',
+            entity_id=product.id
+        )
+    
+    return redirect(request.referrer or url_for('slow_stock'))
+
+
+@app.route('/slow_stock/flag_bulk', methods=['POST'])
+@login_required
+@require_permission('slow_stock:run')
+def flag_slow_stock_bulk():
+    """Bulk flag products as managed by Slow Stock."""
+    skus = request.form.getlist('skus')
+    product_ids = request.form.getlist('product_ids')
+    
+    # Collect products
+    products = []
+    if product_ids:
+        for pid in product_ids:
+            p = db.session.get(Product, int(pid))
+            if p:
+                products.append(p)
+    elif skus:
+        for sku in skus:
+            p = Product.query.filter_by(sku=sku.strip()).first()
+            if p:
+                products.append(p)
+    
+    if not products:
+        flash('No se encontraron productos para marcar.', 'warning')
+        return redirect(request.referrer or url_for('slow_stock'))
+    
+    flagged = 0
+    for product in products:
+        prev_eligible = product.eligible_for_distribution
+        risk_score, risk_reason = compute_risk_score(product.id)
+        
+        product.eligible_for_distribution = False
+        product.risk_score = risk_score
+        product.risk_reason = risk_reason
+        flagged += 1
+    
+    try:
+        db.session.commit()
+        
+        log_audit(
+            action='slow_stock.flag_bulk',
+            status='success',
+            message=f'Bulk flagged {flagged} products for slow stock management',
+            metadata={
+                'count': flagged,
+                'skus': [p.sku for p in products]
+            }
+        )
+        
+        flash(f'{flagged} SKUs marcados para gestión de stock lento.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error al marcar productos: {str(e)}', 'danger')
+        log_audit(
+            action='slow_stock.flag_bulk',
+            status='fail',
+            message=str(e)
+        )
+    
+    return redirect(request.referrer or url_for('slow_stock'))
+
+
+@app.route('/slow_stock/unflag', methods=['POST'])
+@login_required
+@require_permission('slow_stock:run')
+def unflag_slow_stock():
+    """Unflag a product (re-enable for distribution)."""
+    sku = request.form.get('sku', '').strip()
+    product_id = request.form.get('product_id')
+    
+    product = None
+    if product_id:
+        product = db.session.get(Product, int(product_id))
+    elif sku:
+        product = Product.query.filter_by(sku=sku).first()
+    
+    if not product:
+        flash('Producto no encontrado.', 'warning')
+        return redirect(request.referrer or url_for('slow_stock'))
+    
+    prev_eligible = product.eligible_for_distribution
+    prev_score = product.risk_score
+    
+    product.eligible_for_distribution = True
+    product.risk_score = None
+    product.risk_reason = None
+    
+    try:
+        db.session.commit()
+        
+        log_audit(
+            action='slow_stock.unflag',
+            status='success',
+            message=f'SKU {product.sku} unflagged from slow stock management',
+            entity_type='Product',
+            entity_id=product.id,
+            metadata={
+                'sku': product.sku,
+                'prev_risk_score': prev_score,
+                'prev_eligible_for_distribution': prev_eligible
+            }
+        )
+        
+        flash(f'SKU {product.sku} rehabilitado para distribución.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error al rehabilitar producto: {str(e)}', 'danger')
+    
+    return redirect(request.referrer or url_for('slow_stock'))
+
+
 # ------------------ Store Health Index Module ------------------
 
 STORE_HEALTH_WEIGHTS = {
@@ -6768,6 +7068,9 @@ def compute_store_health_index(weights=None, sku_scope='core'):
     
     stores = {s.id: s for s in Store.query.all()}
     all_products = {p.id: p for p in Product.query.all()}
+    
+    # Get flagged products (excluded from distribution) - exclude from health metrics
+    flagged_product_ids = {p.id for p in Product.query.filter(Product.eligible_for_distribution == False).all()}
     
     if not stores or not all_products:
         return {'error': 'Sin tiendas o productos registrados', 'stores': []}
@@ -6828,6 +7131,9 @@ def compute_store_health_index(weights=None, sku_scope='core'):
         scope_skus = skus_with_sales | skus_in_runs | skus_with_store_stock
         if not scope_skus:
             scope_skus = all_product_ids
+    
+    # Exclude flagged products from scope (flagged = managed by Slow Stock)
+    scope_skus = scope_skus - flagged_product_ids
     
     # Compute exclusion stats
     excluded_skus = all_product_ids - scope_skus

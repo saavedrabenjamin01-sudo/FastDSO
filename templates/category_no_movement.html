@@ -35,73 +35,128 @@
       <a href="{{ url_for('category_no_movement_export', category=category, window_days=window_days, store=store_name) }}" class="btn btn-success">
         <i class="bi bi-file-earmark-excel me-1"></i>Exportar Excel
       </a>
+      <a href="{{ url_for('slow_stock', flagged=1, category=category) }}" class="btn btn-outline-warning ms-2">
+        <i class="bi bi-eye me-1"></i>Ver en Stock Lento
+      </a>
     </div>
   </div>
 
   {% if items|length > 0 %}
-  <div class="nomovement-card">
-    <div class="table-responsive">
-      <table class="table table-sm table-hover mb-0 nomovement-table">
-        <thead>
-          <tr>
-            <th>SKU</th>
-            <th>Producto</th>
-            <th>Categoría</th>
-            <th class="text-end">Stock CD</th>
-            <th class="text-end">Stock Tiendas</th>
-            <th class="text-end">Stock Total</th>
-            <th>Última venta</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for item in items %}
-          <tr>
-            <td class="nomovement-mono">{{ item.sku }}</td>
-            <td>{{ item.name or '-' }}</td>
-            <td>{{ item.category }}</td>
-            <td class="text-end">{{ "{:,}".format(item.stock_cd) }}</td>
-            <td class="text-end">{{ "{:,}".format(item.stock_stores) }}</td>
-            <td class="text-end fw-semibold">{{ "{:,}".format(item.total_stock) }}</td>
-            <td class="text-muted">{{ item.last_sale or 'Sin registro' }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+  <form id="bulk-flag-form" method="POST" action="{{ url_for('flag_slow_stock_bulk') }}">
+    <div class="nomovement-bulk-actions mb-3">
+      <button type="submit" class="btn btn-warning btn-sm" id="bulk-flag-btn" disabled>
+        <i class="bi bi-flag me-1"></i>Enviar seleccionados a Stock Lento
+      </button>
+      <span class="nomovement-selection-info ms-2">(<span id="selected-count">0</span> seleccionados)</span>
     </div>
+    
+    <div class="nomovement-card">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 nomovement-table">
+          <thead>
+            <tr>
+              <th class="text-center" style="width: 40px;">
+                <input type="checkbox" id="select-all" class="form-check-input">
+              </th>
+              <th>SKU</th>
+              <th>Producto</th>
+              <th class="text-end">Stock CD</th>
+              <th class="text-end">Stock Tiendas</th>
+              <th class="text-end">Stock Total</th>
+              <th>Última venta</th>
+              <th class="text-center">Estado</th>
+              <th class="text-center">Acción</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in items %}
+            <tr class="{% if item.flagged %}table-warning{% endif %}">
+              <td class="text-center">
+                {% if not item.flagged %}
+                <input type="checkbox" name="product_ids" value="{{ item.id }}" class="form-check-input row-checkbox">
+                {% endif %}
+              </td>
+              <td class="nomovement-mono">{{ item.sku }}</td>
+              <td>{{ item.name or '-' }}</td>
+              <td class="text-end">{{ "{:,}".format(item.stock_cd) }}</td>
+              <td class="text-end">{{ "{:,}".format(item.stock_stores) }}</td>
+              <td class="text-end fw-semibold">{{ "{:,}".format(item.total_stock) }}</td>
+              <td class="text-muted">{{ item.last_sale or 'Sin registro' }}</td>
+              <td class="text-center">
+                {% if item.flagged %}
+                  <span class="badge bg-warning text-dark">
+                    <i class="bi bi-flag-fill me-1"></i>Marcado
+                  </span>
+                  {% if item.risk_score is not none %}
+                    {% if item.risk_band == 'HIGH' %}
+                    <span class="badge bg-danger ms-1">Alto {{ item.risk_score }}</span>
+                    {% elif item.risk_band == 'MEDIUM' %}
+                    <span class="badge bg-warning text-dark ms-1">Medio {{ item.risk_score }}</span>
+                    {% else %}
+                    <span class="badge bg-success ms-1">Bajo {{ item.risk_score }}</span>
+                    {% endif %}
+                  {% endif %}
+                {% else %}
+                  <span class="text-muted">-</span>
+                {% endif %}
+              </td>
+              <td class="text-center">
+                {% if item.flagged %}
+                <form method="POST" action="{{ url_for('unflag_slow_stock') }}" class="d-inline">
+                  <input type="hidden" name="product_id" value="{{ item.id }}">
+                  <button type="submit" class="btn btn-outline-success btn-sm" title="Rehabilitar para distribución">
+                    <i class="bi bi-arrow-counterclockwise"></i>
+                  </button>
+                </form>
+                {% else %}
+                <form method="POST" action="{{ url_for('flag_slow_stock') }}" class="d-inline">
+                  <input type="hidden" name="product_id" value="{{ item.id }}">
+                  <button type="submit" class="btn btn-warning btn-sm" title="Enviar a Stock Lento">
+                    <i class="bi bi-flag"></i>
+                  </button>
+                </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
 
-    {% if total_pages > 1 %}
-    <div class="nomovement-pagination">
-      <nav>
-        <ul class="pagination pagination-sm mb-0">
-          {% if page > 1 %}
-          <li class="page-item">
-            <a class="page-link" href="{{ url_for('category_no_movement', category=category, window_days=window_days, store=store_name, page=page-1) }}">&laquo;</a>
-          </li>
-          {% endif %}
-          
-          {% for p in range(1, total_pages + 1) %}
-            {% if p == page %}
-            <li class="page-item active"><span class="page-link">{{ p }}</span></li>
-            {% elif p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
+      {% if total_pages > 1 %}
+      <div class="nomovement-pagination">
+        <nav>
+          <ul class="pagination pagination-sm mb-0">
+            {% if page > 1 %}
             <li class="page-item">
-              <a class="page-link" href="{{ url_for('category_no_movement', category=category, window_days=window_days, store=store_name, page=p) }}">{{ p }}</a>
+              <a class="page-link" href="{{ url_for('category_no_movement', category=category, window_days=window_days, store=store_name, page=page-1) }}">&laquo;</a>
             </li>
-            {% elif p == page - 3 or p == page + 3 %}
-            <li class="page-item disabled"><span class="page-link">...</span></li>
             {% endif %}
-          {% endfor %}
-          
-          {% if page < total_pages %}
-          <li class="page-item">
-            <a class="page-link" href="{{ url_for('category_no_movement', category=category, window_days=window_days, store=store_name, page=page+1) }}">&raquo;</a>
-          </li>
-          {% endif %}
-        </ul>
-      </nav>
-      <span class="nomovement-page-info">Página {{ page }} de {{ total_pages }} ({{ total_count }} SKUs)</span>
+            
+            {% for p in range(1, total_pages + 1) %}
+              {% if p == page %}
+              <li class="page-item active"><span class="page-link">{{ p }}</span></li>
+              {% elif p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
+              <li class="page-item">
+                <a class="page-link" href="{{ url_for('category_no_movement', category=category, window_days=window_days, store=store_name, page=p) }}">{{ p }}</a>
+              </li>
+              {% elif p == page - 3 or p == page + 3 %}
+              <li class="page-item disabled"><span class="page-link">...</span></li>
+              {% endif %}
+            {% endfor %}
+            
+            {% if page < total_pages %}
+            <li class="page-item">
+              <a class="page-link" href="{{ url_for('category_no_movement', category=category, window_days=window_days, store=store_name, page=page+1) }}">&raquo;</a>
+            </li>
+            {% endif %}
+          </ul>
+        </nav>
+        <span class="nomovement-page-info">Página {{ page }} de {{ total_pages }} ({{ total_count }} SKUs)</span>
+      </div>
+      {% endif %}
     </div>
-    {% endif %}
-  </div>
+  </form>
   {% else %}
   <div class="nomovement-empty">
     <div class="nomovement-empty-icon"><i class="bi bi-check-circle"></i></div>
@@ -192,6 +247,15 @@
   font-weight: 600;
 }
 
+.nomovement-bulk-actions {
+  display: flex;
+  align-items: center;
+}
+.nomovement-selection-info {
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
 .nomovement-card {
   background: #fff;
   border-radius: 12px;
@@ -252,5 +316,35 @@
   font-size: 0.875rem;
   color: #94a3b8;
 }
+
+.table-warning {
+  background-color: #fefce8 !important;
+}
 </style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const selectAll = document.getElementById('select-all');
+  const rowCheckboxes = document.querySelectorAll('.row-checkbox');
+  const bulkBtn = document.getElementById('bulk-flag-btn');
+  const selectedCount = document.getElementById('selected-count');
+  
+  function updateSelection() {
+    const checked = document.querySelectorAll('.row-checkbox:checked').length;
+    selectedCount.textContent = checked;
+    bulkBtn.disabled = checked === 0;
+  }
+  
+  if (selectAll) {
+    selectAll.addEventListener('change', function() {
+      rowCheckboxes.forEach(cb => cb.checked = this.checked);
+      updateSelection();
+    });
+  }
+  
+  rowCheckboxes.forEach(cb => {
+    cb.addEventListener('change', updateSelection);
+  });
+});
+</script>
 {% endblock %}

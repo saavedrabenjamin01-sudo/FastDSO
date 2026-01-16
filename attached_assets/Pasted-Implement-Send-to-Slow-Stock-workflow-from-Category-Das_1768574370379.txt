@@ -1,0 +1,116 @@
+Implement “Send to Slow Stock” workflow from Category Dashboard “No movement” list, including:
+1) an automatic flag on Product (eligible_for_distribution)
+2) a calculated risk score per SKU
+3) seamless navigation into Slow Stock module with prefiltered view
+Do NOT break existing modules.
+
+CONTEXT
+We have:
+- Category dashboard with “No movement” drilldown list (SKUs with stock > 0 and sales = 0 in window)
+- Slow Stock / Dead Stock module already exists (or is being built)
+We want a workflow button so the user can mark selected SKUs as “managed by Slow Stock”, and optionally exclude them from distribution/store health.
+
+HARD RULES
+- Preserve SKU leading zeros
+- Do not slow down dashboard load (actions must happen only on click, not on render)
+- Keep permissions: only admin / category manager can flag SKUs
+- Keep audit logging for this action
+
+PART A — DATA MODEL
+1) Extend Product model:
+- Product.eligible_for_distribution (boolean) default True
+- Product.risk_score (integer 0–100) nullable (or default 0)
+- Product.risk_reason (text) nullable (optional)
+Migration: since SQLite, ensure DB reset or auto-migration for new columns.
+
+PART B — RISK SCORE (V01)
+Compute risk score for a SKU when flagged, using available lifecycle/sales/stock:
+
+Inputs:
+- days_since_last_sale_global (if available; else compute from SalesWeeklyAgg max week with units>0)
+- days_since_last_purchase (if available; else 0)
+- total_stock = stock_cd + stock_stores
+- category sales velocity (optional)
+
+Simple deterministic score (no ML):
+- Base from days since last sale:
+  score_sale = min(100, (days_since_last_sale_global / 120) * 100)
+- Add stock weight:
+  score_stock = min(40, log10(total_stock+1) * 10)   (or any simple capped scaling)
+- Add purchase aging weight (optional):
+  score_purchase = min(30, (days_since_last_purchase / 180) * 30)
+Final:
+  risk_score = clamp(int(score_sale + score_stock + score_purchase), 0, 100)
+
+Risk bands:
+- 0–39 = Low
+- 40–69 = Medium
+- 70–100 = High
+
+Risk reason (text):
+- “No sales in X days, total stock Y”
+- plus purchase info if available
+
+PART C — UI: NO MOVEMENT LIST ACTIONS
+In category_no_movement.html:
+1) Add a “Send to Slow Stock” button in each row (or multi-select + bulk action).
+V01 simplest:
+- Per-row button: “Send to Stock Lento”
+- It triggers POST /slow_stock/flag (or similar) with product_id or sku.
+
+2) Visual feedback:
+- After action, row shows a badge:
+  “Flagged” + risk score badge (High/Med/Low)
+
+3) Also add a top bulk action:
+- Checkboxes per row
+- Button “Send selected to Stock Lento”
+This is optional; implement if easy.
+
+PART D — BACKEND ROUTES
+Add routes:
+1) POST /slow_stock/flag
+- Inputs: sku (or product_id), optional category context
+- Action:
+  - find product
+  - set eligible_for_distribution = False
+  - compute and store risk_score + risk_reason
+  - log audit event “slow_stock.flag”
+  - redirect back to no_movement list preserving filters
+2) Optional: POST /slow_stock/flag_bulk
+- Inputs: list of sku/product_id
+- Apply same logic in batch
+
+PART E — INTEGRATION: PREFILTER SLOW STOCK MODULE
+In slow stock module:
+- Add filter “Only flagged” (default OFF)
+- Add query param support: flagged=1
+When user clicks “View in Stock Lento”, it should open:
+  /slow_stock?flagged=1&category=<cat>
+
+PART F — EXCLUSION LOGIC (V01 safe)
+Use eligible_for_distribution flag to clean macro dashboards:
+- Store Health: exclude products where eligible_for_distribution = False from denominator scope
+- Distribution engine: do NOT automatically distribute flagged products unless explicitly included in a run (manual override).
+This must be implemented carefully:
+- Only exclude flagged SKUs from “auto selection” and macro metrics, not from explicit user-selected SKU lists.
+
+PART G — AUDIT
+Record:
+- user
+- timestamp
+- sku/product_id
+- risk_score
+- previous eligible_for_distribution
+- new eligible_for_distribution
+
+DELIVERABLES
+- Product model changes
+- Routes + templates changes
+- Risk scoring function
+- Store Health denominator exclusion
+- Distribution selection exclusion (only for auto; allow explicit include)
+- Confirmation tests:
+  1) Flagging works and stores score
+  2) Flagged SKUs disappear from Store Health “critical noise”
+  3) Dashboard category still loads fast
