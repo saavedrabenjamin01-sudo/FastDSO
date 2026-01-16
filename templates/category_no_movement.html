@@ -1,0 +1,256 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<div class="dashv1">
+
+  <div class="nomovement-header">
+    <div class="nomovement-title-group">
+      <a href="{{ url_for('dashboard_category', category=category, window=window_days, store=store_name) }}" class="btn btn-sm btn-outline-secondary me-3">
+        <i class="bi bi-arrow-left me-1"></i>Volver
+      </a>
+      <div>
+        <h1 class="nomovement-title"><i class="bi bi-pause-circle me-2"></i>SKUs sin movimiento</h1>
+        <p class="nomovement-subtitle">Productos con stock pero sin ventas en la ventana seleccionada</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="nomovement-filters-bar">
+    <div class="nomovement-chip"><i class="bi bi-tag me-1"></i>{{ category }}</div>
+    <div class="nomovement-chip"><i class="bi bi-calendar me-1"></i>{{ window_days }} días</div>
+    {% if store_name %}
+    <div class="nomovement-chip"><i class="bi bi-shop me-1"></i>{{ store_name }}</div>
+    {% endif %}
+  </div>
+
+  <div class="nomovement-kpi-row">
+    <div class="nomovement-kpi">
+      <div class="nomovement-kpi-icon"><i class="bi bi-exclamation-triangle"></i></div>
+      <div class="nomovement-kpi-body">
+        <div class="nomovement-kpi-value">{{ total_count }}</div>
+        <div class="nomovement-kpi-label">SKUs sin movimiento</div>
+      </div>
+    </div>
+    <div class="nomovement-actions">
+      <a href="{{ url_for('category_no_movement_export', category=category, window_days=window_days, store=store_name) }}" class="btn btn-success">
+        <i class="bi bi-file-earmark-excel me-1"></i>Exportar Excel
+      </a>
+    </div>
+  </div>
+
+  {% if items|length > 0 %}
+  <div class="nomovement-card">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0 nomovement-table">
+        <thead>
+          <tr>
+            <th>SKU</th>
+            <th>Producto</th>
+            <th>Categoría</th>
+            <th class="text-end">Stock CD</th>
+            <th class="text-end">Stock Tiendas</th>
+            <th class="text-end">Stock Total</th>
+            <th>Última venta</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in items %}
+          <tr>
+            <td class="nomovement-mono">{{ item.sku }}</td>
+            <td>{{ item.name or '-' }}</td>
+            <td>{{ item.category }}</td>
+            <td class="text-end">{{ "{:,}".format(item.stock_cd) }}</td>
+            <td class="text-end">{{ "{:,}".format(item.stock_stores) }}</td>
+            <td class="text-end fw-semibold">{{ "{:,}".format(item.total_stock) }}</td>
+            <td class="text-muted">{{ item.last_sale or 'Sin registro' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if total_pages > 1 %}
+    <div class="nomovement-pagination">
+      <nav>
+        <ul class="pagination pagination-sm mb-0">
+          {% if page > 1 %}
+          <li class="page-item">
+            <a class="page-link" href="{{ url_for('category_no_movement', category=category, window_days=window_days, store=store_name, page=page-1) }}">&laquo;</a>
+          </li>
+          {% endif %}
+          
+          {% for p in range(1, total_pages + 1) %}
+            {% if p == page %}
+            <li class="page-item active"><span class="page-link">{{ p }}</span></li>
+            {% elif p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
+            <li class="page-item">
+              <a class="page-link" href="{{ url_for('category_no_movement', category=category, window_days=window_days, store=store_name, page=p) }}">{{ p }}</a>
+            </li>
+            {% elif p == page - 3 or p == page + 3 %}
+            <li class="page-item disabled"><span class="page-link">...</span></li>
+            {% endif %}
+          {% endfor %}
+          
+          {% if page < total_pages %}
+          <li class="page-item">
+            <a class="page-link" href="{{ url_for('category_no_movement', category=category, window_days=window_days, store=store_name, page=page+1) }}">&raquo;</a>
+          </li>
+          {% endif %}
+        </ul>
+      </nav>
+      <span class="nomovement-page-info">Página {{ page }} de {{ total_pages }} ({{ total_count }} SKUs)</span>
+    </div>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="nomovement-empty">
+    <div class="nomovement-empty-icon"><i class="bi bi-check-circle"></i></div>
+    <div class="nomovement-empty-title">Sin SKUs inmovilizados</div>
+    <div class="nomovement-empty-hint">Todos los productos con stock tienen ventas en el período seleccionado</div>
+  </div>
+  {% endif %}
+
+</div>
+
+<style>
+.nomovement-header {
+  margin-bottom: 20px;
+}
+.nomovement-title-group {
+  display: flex;
+  align-items: center;
+}
+.nomovement-title {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0;
+  display: flex;
+  align-items: center;
+}
+.nomovement-title i { color: #f59e0b; }
+.nomovement-subtitle {
+  font-size: 0.85rem;
+  color: #64748b;
+  margin: 4px 0 0 0;
+}
+
+.nomovement-filters-bar {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.nomovement-chip {
+  background: #f1f5f9;
+  color: #475569;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+.nomovement-chip i { color: #94a3b8; }
+
+.nomovement-kpi-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.nomovement-kpi {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px 20px;
+}
+.nomovement-kpi-icon {
+  width: 48px;
+  height: 48px;
+  background: #fef3c7;
+  color: #d97706;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.3rem;
+}
+.nomovement-kpi-value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #1e293b;
+  line-height: 1;
+}
+.nomovement-kpi-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.nomovement-card {
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  overflow: hidden;
+}
+.nomovement-table thead th {
+  background: #f8fafc;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  color: #64748b;
+  font-weight: 600;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.nomovement-table tbody td {
+  padding: 10px 12px;
+  font-size: 0.85rem;
+  vertical-align: middle;
+}
+.nomovement-mono {
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 0.8rem;
+}
+
+.nomovement-pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+.nomovement-page-info {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.nomovement-empty {
+  background: #fff;
+  border-radius: 12px;
+  padding: 60px 20px;
+  text-align: center;
+  border: 1px dashed #e2e8f0;
+}
+.nomovement-empty-icon {
+  font-size: 3rem;
+  color: #10b981;
+  margin-bottom: 16px;
+}
+.nomovement-empty-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #475569;
+  margin-bottom: 8px;
+}
+.nomovement-empty-hint {
+  font-size: 0.875rem;
+  color: #94a3b8;
+}
+</style>
+{% endblock %}

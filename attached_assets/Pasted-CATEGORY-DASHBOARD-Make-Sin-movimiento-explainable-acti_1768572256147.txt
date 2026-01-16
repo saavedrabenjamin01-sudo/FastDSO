@@ -1,0 +1,70 @@
+CATEGORY DASHBOARD — Make “Sin movimiento” explainable + actionable (drilldown list)
+
+Context:
+In dashboard_category.html we show a SKU status bar with percentages:
+- Activos
+- Sin movimiento
+We must clarify what “Sin movimiento” means and allow users to identify those SKUs to take actions, without making the dashboard heavy.
+
+Goal:
+1) Add a tooltip/definition for “Sin movimiento”
+2) Add a “View list” action that shows the SKUs with no movement (on demand)
+3) Provide export to Excel/CSV for that list
+4) Keep performance: do not compute or render large tables by default.
+
+Definition (V01):
+“Sin movimiento” = units_sold_in_window == 0 AND (stock_cd + stock_stores) > 0
+Window = selected window (30/60/90 days)
+Category = selected category filter
+Optional store filter applies if selected.
+
+Implementation requirements:
+
+A) UI (dashboard_category.html)
+1) Next to “Sin movimiento” label add an info icon (bi-info-circle).
+2) Tooltip text (Spanish):
+   “Sin movimiento: SKUs con stock (CD o tiendas) pero sin ventas en la ventana seleccionada.”
+3) Add a small action button/link near the status bar:
+   “Ver SKUs sin movimiento”
+   This should NOT expand a big table on page load.
+
+B) New route (fast, paginated)
+Create a new route:
+GET /dashboard_category/no_movement
+Query params:
+- category
+- window_days
+- store (optional)
+- page (default 1)
+Return a paginated list (10 per page) and allow export:
+- /dashboard_category/no_movement/export (exports full list)
+
+C) SQL / performance
+Use aggregated tables if available (SalesWeeklyAgg). Avoid scanning raw DistributionRecord.
+Compute:
+- sku sales in window (sum units)
+- stock cd for latest snapshot date
+- stock stores for latest snapshot date
+Filter where sales_sum == 0 AND (stock_cd + stock_store) > 0.
+Order by total_stock DESC, then SKU.
+
+D) Page for drilldown
+Create template:
+templates/category_no_movement.html
+Must match dashboard style:
+- header with category + window + store
+- KPI: number of SKUs with no movement
+- table with:
+  SKU | Product | Category | Stock CD | Stock Stores | Total Stock | Last sale date (if available)
+- pagination 10/page + export button
+- link back to dashboard_category with same filters
+
+E) Don’t make dashboard heavy
+The dashboard_category page should only display the percent bar and the button.
+It should NOT pre-render the no-movement table.
+
+Deliverables:
+- Updated dashboard_category.html (tooltip + link)
+- New route + template for no movement list
+- Export endpoint
+- Confirm dashboard_category load time unchanged

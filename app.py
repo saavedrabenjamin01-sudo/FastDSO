@@ -1906,6 +1906,236 @@ def dashboard_category():
     )
 
 
+@app.route('/dashboard_category/no_movement')
+@login_required
+@require_permission('dashboard:view')
+def category_no_movement():
+    """
+    Paginated list of SKUs with no movement (stock but no sales in window).
+    Optimized: Uses category index directly, no product_ids materialization.
+    """
+    category = request.args.get('category', '')
+    window_days = int(request.args.get('window_days', 30))
+    store_name = request.args.get('store', '')
+    page = int(request.args.get('page', 1))
+    per_page = 10
+    
+    if not category:
+        flash('Debe seleccionar una categoría.', 'warning')
+        return redirect(url_for('dashboard_category'))
+    
+    today = date.today()
+    window_start = today - timedelta(days=window_days)
+    
+    store_id_filter = None
+    if store_name:
+        store_obj = Store.query.filter_by(name=store_name).first()
+        if store_obj:
+            store_id_filter = store_obj.id
+    
+    sales_subq = db.session.query(
+        SalesWeeklyAgg.product_id,
+        func.sum(SalesWeeklyAgg.units).label('total_sales')
+    ).filter(
+        SalesWeeklyAgg.category == category,
+        SalesWeeklyAgg.week_start >= window_start
+    )
+    if store_id_filter:
+        sales_subq = sales_subq.filter(SalesWeeklyAgg.store_id == store_id_filter)
+    sales_subq = sales_subq.group_by(SalesWeeklyAgg.product_id).subquery()
+    
+    last_sale_subq = db.session.query(
+        SalesWeeklyAgg.product_id,
+        func.max(SalesWeeklyAgg.week_start).label('last_sale_date')
+    ).filter(
+        SalesWeeklyAgg.category == category,
+        SalesWeeklyAgg.units > 0
+    )
+    if store_id_filter:
+        last_sale_subq = last_sale_subq.filter(SalesWeeklyAgg.store_id == store_id_filter)
+    last_sale_subq = last_sale_subq.group_by(SalesWeeklyAgg.product_id).subquery()
+    
+    cd_stock_subq = db.session.query(
+        StockCD.product_id,
+        func.sum(StockCD.quantity).label('stock_cd')
+    ).join(Product, StockCD.product_id == Product.id).filter(
+        Product.category == category
+    ).group_by(StockCD.product_id).subquery()
+    
+    store_stock_subq = db.session.query(
+        StockSnapshot.product_id,
+        func.sum(StockSnapshot.quantity).label('stock_stores')
+    ).join(Product, StockSnapshot.product_id == Product.id).filter(
+        Product.category == category
+    )
+    if store_id_filter:
+        store_stock_subq = store_stock_subq.filter(StockSnapshot.store_id == store_id_filter)
+    store_stock_subq = store_stock_subq.group_by(StockSnapshot.product_id).subquery()
+    
+    main_query = db.session.query(
+        Product.id,
+        Product.sku,
+        Product.name,
+        func.coalesce(sales_subq.c.total_sales, 0).label('total_sales'),
+        func.coalesce(cd_stock_subq.c.stock_cd, 0).label('stock_cd'),
+        func.coalesce(store_stock_subq.c.stock_stores, 0).label('stock_stores'),
+        last_sale_subq.c.last_sale_date.label('last_sale_date')
+    ).outerjoin(sales_subq, Product.id == sales_subq.c.product_id
+    ).outerjoin(cd_stock_subq, Product.id == cd_stock_subq.c.product_id
+    ).outerjoin(store_stock_subq, Product.id == store_stock_subq.c.product_id
+    ).outerjoin(last_sale_subq, Product.id == last_sale_subq.c.product_id
+    ).filter(
+        Product.category == category,
+        func.coalesce(sales_subq.c.total_sales, 0) == 0,
+        (func.coalesce(cd_stock_subq.c.stock_cd, 0) + func.coalesce(store_stock_subq.c.stock_stores, 0)) > 0
+    )
+    
+    total_count = main_query.count()
+    total_pages = max((total_count + per_page - 1) // per_page, 1)
+    page = max(1, min(page, total_pages))
+    
+    results = main_query.order_by(
+        (func.coalesce(cd_stock_subq.c.stock_cd, 0) + func.coalesce(store_stock_subq.c.stock_stores, 0)).desc(),
+        Product.sku
+    ).offset((page - 1) * per_page).limit(per_page).all()
+    
+    items = []
+    for r in results:
+        total_stock = int(r.stock_cd or 0) + int(r.stock_stores or 0)
+        last_sale = r.last_sale_date.strftime('%Y-%m-%d') if r.last_sale_date else None
+        items.append({
+            'sku': r.sku,
+            'name': r.name,
+            'category': category,
+            'stock_cd': int(r.stock_cd or 0),
+            'stock_stores': int(r.stock_stores or 0),
+            'total_stock': total_stock,
+            'last_sale': last_sale
+        })
+    
+    return render_template(
+        'category_no_movement.html',
+        category=category,
+        window_days=window_days,
+        store_name=store_name,
+        items=items,
+        total_count=total_count,
+        page=page,
+        total_pages=total_pages
+    )
+
+
+@app.route('/dashboard_category/no_movement/export')
+@login_required
+@require_permission('dashboard:view')
+def category_no_movement_export():
+    """
+    Export full list of no-movement SKUs to Excel.
+    """
+    category = request.args.get('category', '')
+    window_days = int(request.args.get('window_days', 30))
+    store_name = request.args.get('store', '')
+    
+    if not category:
+        flash('Debe seleccionar una categoría.', 'warning')
+        return redirect(url_for('dashboard_category'))
+    
+    today = date.today()
+    window_start = today - timedelta(days=window_days)
+    
+    store_id_filter = None
+    if store_name:
+        store_obj = Store.query.filter_by(name=store_name).first()
+        if store_obj:
+            store_id_filter = store_obj.id
+    
+    sales_subq = db.session.query(
+        SalesWeeklyAgg.product_id,
+        func.sum(SalesWeeklyAgg.units).label('total_sales')
+    ).filter(
+        SalesWeeklyAgg.category == category,
+        SalesWeeklyAgg.week_start >= window_start
+    )
+    if store_id_filter:
+        sales_subq = sales_subq.filter(SalesWeeklyAgg.store_id == store_id_filter)
+    sales_subq = sales_subq.group_by(SalesWeeklyAgg.product_id).subquery()
+    
+    last_sale_subq = db.session.query(
+        SalesWeeklyAgg.product_id,
+        func.max(SalesWeeklyAgg.week_start).label('last_sale_date')
+    ).filter(
+        SalesWeeklyAgg.category == category,
+        SalesWeeklyAgg.units > 0
+    )
+    if store_id_filter:
+        last_sale_subq = last_sale_subq.filter(SalesWeeklyAgg.store_id == store_id_filter)
+    last_sale_subq = last_sale_subq.group_by(SalesWeeklyAgg.product_id).subquery()
+    
+    cd_stock_subq = db.session.query(
+        StockCD.product_id,
+        func.sum(StockCD.quantity).label('stock_cd')
+    ).join(Product, StockCD.product_id == Product.id).filter(
+        Product.category == category
+    ).group_by(StockCD.product_id).subquery()
+    
+    store_stock_subq = db.session.query(
+        StockSnapshot.product_id,
+        func.sum(StockSnapshot.quantity).label('stock_stores')
+    ).join(Product, StockSnapshot.product_id == Product.id).filter(
+        Product.category == category
+    )
+    if store_id_filter:
+        store_stock_subq = store_stock_subq.filter(StockSnapshot.store_id == store_id_filter)
+    store_stock_subq = store_stock_subq.group_by(StockSnapshot.product_id).subquery()
+    
+    results = db.session.query(
+        Product.sku,
+        Product.name,
+        func.coalesce(cd_stock_subq.c.stock_cd, 0).label('stock_cd'),
+        func.coalesce(store_stock_subq.c.stock_stores, 0).label('stock_stores'),
+        last_sale_subq.c.last_sale_date.label('last_sale_date')
+    ).outerjoin(sales_subq, Product.id == sales_subq.c.product_id
+    ).outerjoin(cd_stock_subq, Product.id == cd_stock_subq.c.product_id
+    ).outerjoin(store_stock_subq, Product.id == store_stock_subq.c.product_id
+    ).outerjoin(last_sale_subq, Product.id == last_sale_subq.c.product_id
+    ).filter(
+        Product.category == category,
+        func.coalesce(sales_subq.c.total_sales, 0) == 0,
+        (func.coalesce(cd_stock_subq.c.stock_cd, 0) + func.coalesce(store_stock_subq.c.stock_stores, 0)) > 0
+    ).order_by(
+        (func.coalesce(cd_stock_subq.c.stock_cd, 0) + func.coalesce(store_stock_subq.c.stock_stores, 0)).desc(),
+        Product.sku
+    ).all()
+    
+    rows = []
+    for r in results:
+        total_stock = int(r.stock_cd or 0) + int(r.stock_stores or 0)
+        last_sale = r.last_sale_date.strftime('%Y-%m-%d') if r.last_sale_date else ''
+        rows.append({
+            'SKU': r.sku,
+            'Producto': r.name,
+            'Categoría': category,
+            'Stock CD': int(r.stock_cd or 0),
+            'Stock Tiendas': int(r.stock_stores or 0),
+            'Stock Total': total_stock,
+            'Última Venta': last_sale
+        })
+    
+    df = pd.DataFrame(rows)
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Sin Movimiento')
+    output.seek(0)
+    
+    filename = f"sin_movimiento_{category}_{window_days}d.xlsx"
+    return send_file(
+        output,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=filename
+    )
+
+
 @app.route('/purchase_forecast', methods=['GET', 'POST'])
 @login_required
 @require_permission('forecast_v2:view')

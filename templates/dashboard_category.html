@@ -107,9 +107,16 @@
         </div>
         <div class="health-chip health-chip-warn">
           <span class="health-chip-pct">{{ dead_pct }}%</span>
-          <span class="health-chip-label">Sin movimiento</span>
+          <span class="health-chip-label">Sin movimiento <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="SKUs con stock (CD o tiendas) pero sin ventas en la ventana seleccionada."></i></span>
         </div>
       </div>
+      {% if health_data.dead_slow > 0 %}
+      <div class="dashcat-nomovement-action">
+        <a href="{{ url_for('category_no_movement', category=selected_category, window_days=window_days, store=selected_store or '') }}" class="btn btn-sm btn-outline-warning">
+          <i class="bi bi-eye me-1"></i>Ver SKUs sin movimiento ({{ health_data.dead_slow }})
+        </a>
+      </div>
+      {% endif %}
       <div class="dashcat-health-bar-wrap">
         <div class="dashcat-health-bar">
           {% if healthy_pct > 0 %}
@@ -196,6 +203,10 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+  // Initialize Bootstrap tooltips
+  var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+  tooltipTriggerList.map(function (el) { return new bootstrap.Tooltip(el); });
+  
   {% if selected_category %}
   buildCharts();
   {% endif %}
@@ -378,6 +389,9 @@ function buildCharts() {
 .health-bar-ok { background: #86efac; }
 .health-bar-warn { background: #fde047; }
 .dashcat-health-footer { font-size: 0.7rem; }
+.dashcat-nomovement-action { margin-top: 4px; }
+.dashcat-nomovement-action .btn { font-size: 0.75rem; }
+.health-chip-label i { font-size: 0.65rem; color: #94a3b8; cursor: pointer; margin-left: 2px; }
 
 /* Charts grid */
 .dashcat-charts-grid {
