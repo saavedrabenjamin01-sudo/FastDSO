@@ -111,32 +111,32 @@
     </div>
   </form>
 
-  {# C) Macro Health Overview - 3 macro KPI cards #}
-  <div class="macro-grid">
-    <div class="macro-card macro-card-stores">
+  {# C) Macro Health Overview - 3 macro KPI cards (primary + 2 secondary) #}
+  <div class="macro-grid macro-grid-hierarchy">
+    <div class="macro-card macro-card-stores macro-card-primary">
       <div class="macro-icon"><i class="bi bi-shop"></i></div>
       <div class="macro-body">
         <div class="macro-title">Impacto Red</div>
         <div class="macro-value">{{ "{:,}".format(kpi_tiendas_alcanzadas|int if kpi_tiendas_alcanzadas is defined else 0) }}</div>
-        <div class="macro-sub">tiendas alcanzadas</div>
+        <div class="macro-sub">Tiendas alcanzadas por la corrida activa</div>
       </div>
     </div>
 
-    <div class="macro-card macro-card-cd">
+    <div class="macro-card macro-card-cd macro-card-secondary">
       <div class="macro-icon"><i class="bi bi-archive"></i></div>
       <div class="macro-body">
         <div class="macro-title">Stock CD</div>
         <div class="macro-value">{{ "{:,}".format(kpi_stock_cd_total|int if kpi_stock_cd_total is defined else 0) }}</div>
-        <div class="macro-sub">unidades disponibles</div>
+        <div class="macro-sub">Unidades disponibles en CD</div>
       </div>
     </div>
 
-    <div class="macro-card macro-card-units">
+    <div class="macro-card macro-card-units macro-card-secondary">
       <div class="macro-icon"><i class="bi bi-box-arrow-right"></i></div>
       <div class="macro-body">
         <div class="macro-title">Distribución</div>
         <div class="macro-value">{{ "{:,}".format(kpi_units_suggested|int if kpi_units_suggested is defined else 0) }}</div>
-        <div class="macro-sub">unidades sugeridas</div>
+        <div class="macro-sub">Unidades sugeridas (corrida activa)</div>
       </div>
     </div>
   </div>
@@ -567,6 +567,39 @@ async function showDistExplanation(productId, storeId, qty, runId) {
 .macro-title { font-size: 0.75rem; text-transform: uppercase; color: #64748b; font-weight: 600; letter-spacing: 0.5px; }
 .macro-value { font-size: 1.75rem; font-weight: 700; color: #1e293b; line-height: 1.2; }
 .macro-sub { font-size: 0.8rem; color: #94a3b8; }
+
+/* Dashboard KPI hierarchy */
+.macro-grid-hierarchy {
+  grid-template-columns: 1.15fr 1fr 1fr;
+}
+@media (max-width: 768px) {
+  .macro-grid-hierarchy { grid-template-columns: 1fr; }
+}
+.macro-card-primary {
+  border: 1.5px solid #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.08), 0 2px 6px rgba(0,0,0,0.06);
+}
+.macro-card-primary .macro-value {
+  font-size: 2rem;
+}
+.macro-card-primary .macro-icon {
+  width: 52px;
+  height: 52px;
+  font-size: 1.35rem;
+}
+.macro-card-primary .macro-sub {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+.macro-card-secondary {
+  border: 1px solid #e2e8f0;
+}
+.macro-card-secondary .macro-value {
+  font-size: 1.6rem;
+}
+.macro-card-secondary .macro-sub {
+  font-size: 0.7rem;
+}
 
 /* Dashboard alerts polish - Executive v2 */
 .exec-alerts-v2 {
