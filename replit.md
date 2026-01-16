@@ -58,9 +58,17 @@ Do not make changes to the folder `Excel tipo/`.
         - CD-level classification: DEAD_CD (incl. stale purchases), SLOW_CD (uses CD-only WOC)
         - KPI cards: Dead Store, Slow Store, Dead CD, Healthy Store, Transfers
         - Coverage weeks (WOC) calculation: store-level and CD-only for accurate immobilization detection
-        - Filter controls (SKU search, store dropdown, classification filter)
+        - Filter controls (SKU search, store dropdown, classification filter, flagged filter)
         - Smart transfer suggestions from DEAD/SLOW donors to active receivers
         - 4-tab layout: Tiendas, Global, Transferencias, CD
+        - **Product Flagging Workflow**: Mark products for slow stock management:
+            - Product model extensions: eligible_for_distribution, risk_score, risk_reason
+            - Risk score (0-100): score_sale (max 100, days_since_last_sale/120), score_stock (max 40, log10 scale), score_purchase (max 30, days_since_last_purchase/180)
+            - Risk bands: HIGH (≥70), MEDIUM (40-69), LOW (<40)
+            - Routes: /slow_stock/flag, /slow_stock/unflag, /slow_stock/flag_bulk
+            - Category dashboard integration: Per-row and bulk flag actions in "Sin movimiento" drilldown
+            - Store Health exclusion: Flagged products excluded from scope calculation
+            - Audit logging: All flag/unflag operations logged with risk score and state change
 - **Run Management**: Centralized "Runs Center" for managing, activating, comparing, and tracking the status of various data processing runs.
 - **User & Access Management**: Admin users can manage other users and their roles, with permissions governing feature access.
 - **Reporting & Exports**: Export predictions, forecasts, and analysis results to Excel.
