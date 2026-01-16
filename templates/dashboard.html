@@ -141,46 +141,51 @@
     </div>
   </div>
 
-  {# D) Executive Alerts Widget (compact) #}
+  {# D) Executive Alerts Widget (compact, proportional) #}
   {% if alerts_summary is defined and alerts_summary.total_count > 0 %}
-  <div class="exec-alerts">
+  {% set total = alerts_summary.total_count if alerts_summary.total_count > 0 else 1 %}
+  {% set high_pct = (alerts_summary.high_count / total * 100)|round|int %}
+  {% set medium_pct = (alerts_summary.medium_count / total * 100)|round|int %}
+  {% set low_pct = (100 - high_pct - medium_pct) if (alerts_summary.low_count > 0) else 0 %}
+  <div class="exec-alerts exec-alerts-v2">
     <div class="exec-alerts-header">
       <div class="exec-alerts-title">
-        <i class="bi bi-bell-fill"></i>
+        <i class="bi bi-bell"></i>
         <span>Alertas</span>
-        <span class="exec-alerts-badge">{{ alerts_summary.total_count }}</span>
       </div>
-      <a href="{{ url_for('alerts_page') }}" class="btn btn-sm btn-primary exec-alerts-btn">Ver alertas</a>
+      <a href="{{ url_for('alerts_page') }}" class="btn btn-sm btn-outline-primary exec-alerts-btn">Ver alertas</a>
     </div>
-    <div class="exec-alerts-content">
-      <div class="alert-chips">
-        <div class="alert-chip alert-chip-high">
-          <span class="alert-chip-count">{{ alerts_summary.high_count }}</span>
-          <span class="alert-chip-label">Alta</span>
+    <div class="exec-alerts-body">
+      <div class="alert-chips-v2">
+        <div class="alert-chip-v2 alert-chip-v2-high">
+          <span class="alert-chip-v2-pct">{{ high_pct }}%</span>
+          <span class="alert-chip-v2-label">Alta</span>
         </div>
-        <div class="alert-chip alert-chip-med">
-          <span class="alert-chip-count">{{ alerts_summary.medium_count }}</span>
-          <span class="alert-chip-label">Media</span>
+        <div class="alert-chip-v2 alert-chip-v2-med">
+          <span class="alert-chip-v2-pct">{{ medium_pct }}%</span>
+          <span class="alert-chip-v2-label">Media</span>
         </div>
-        <div class="alert-chip alert-chip-low">
-          <span class="alert-chip-count">{{ alerts_summary.low_count }}</span>
-          <span class="alert-chip-label">Baja</span>
+        <div class="alert-chip-v2 alert-chip-v2-low">
+          <span class="alert-chip-v2-pct">{{ low_pct }}%</span>
+          <span class="alert-chip-v2-label">Baja</span>
         </div>
       </div>
-      {% set total = alerts_summary.total_count if alerts_summary.total_count > 0 else 1 %}
-      {% set high_pct = (alerts_summary.high_count / total * 100)|round|int %}
-      {% set medium_pct = (alerts_summary.medium_count / total * 100)|round|int %}
-      {% set low_pct = (alerts_summary.low_count / total * 100)|round|int %}
-      <div class="alert-bar">
-        {% if alerts_summary.high_count > 0 %}
-        <div class="alert-bar-seg alert-bar-high" style="width: {{ high_pct }}%;" title="Alta: {{ alerts_summary.high_count }}"></div>
-        {% endif %}
-        {% if alerts_summary.medium_count > 0 %}
-        <div class="alert-bar-seg alert-bar-med" style="width: {{ medium_pct }}%;" title="Media: {{ alerts_summary.medium_count }}"></div>
-        {% endif %}
-        {% if alerts_summary.low_count > 0 %}
-        <div class="alert-bar-seg alert-bar-low" style="width: {{ low_pct }}%;" title="Baja: {{ alerts_summary.low_count }}"></div>
-        {% endif %}
+      <div class="alert-bar-wrap">
+        <div class="alert-bar-v2">
+          {% if high_pct > 0 %}
+          <div class="alert-bar-seg-v2 alert-bar-seg-high" style="width: {{ high_pct }}%;" title="Alta: {{ high_pct }}%"></div>
+          {% endif %}
+          {% if medium_pct > 0 %}
+          <div class="alert-bar-seg-v2 alert-bar-seg-med" style="width: {{ medium_pct }}%;" title="Media: {{ medium_pct }}%"></div>
+          {% endif %}
+          {% if low_pct > 0 %}
+          <div class="alert-bar-seg-v2 alert-bar-seg-low" style="width: {{ low_pct }}%;" title="Baja: {{ low_pct }}%"></div>
+          {% endif %}
+        </div>
+      </div>
+      <div class="exec-alerts-footer">
+        <span class="exec-alerts-hint">Proporción de alertas (no listado completo)</span>
+        <span class="exec-alerts-total">{{ "{:,}".format(alerts_summary.total_count) }} alertas</span>
       </div>
     </div>
   </div>
@@ -563,68 +568,69 @@ async function showDistExplanation(productId, storeId, qty, runId) {
 .macro-value { font-size: 1.75rem; font-weight: 700; color: #1e293b; line-height: 1.2; }
 .macro-sub { font-size: 0.8rem; color: #94a3b8; }
 
-/* Executive Alerts (compact) */
-.exec-alerts {
+/* Dashboard alerts polish - Executive v2 */
+.exec-alerts-v2 {
   background: #fff;
   border-radius: 12px;
   padding: 16px 20px;
   margin-bottom: 20px;
   border: 1px solid #e2e8f0;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
 }
-.exec-alerts-header {
+.exec-alerts-v2 .exec-alerts-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
-.exec-alerts-title {
+.exec-alerts-v2 .exec-alerts-title {
   display: flex;
   align-items: center;
   gap: 8px;
   font-weight: 600;
-  color: #1e293b;
+  font-size: 0.9rem;
+  color: #475569;
 }
-.exec-alerts-title i { color: #f59e0b; }
-.exec-alerts-badge {
-  background: #fee2e2;
-  color: #dc2626;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 0.75rem;
-  font-weight: 600;
-}
-.exec-alerts-btn { font-size: 0.8rem; }
-.exec-alerts-content { display: flex; align-items: center; gap: 16px; }
-.alert-chips { display: flex; gap: 12px; }
-.alert-chip {
+.exec-alerts-v2 .exec-alerts-title i { color: #94a3b8; font-size: 1rem; }
+.exec-alerts-v2 .exec-alerts-btn { font-size: 0.75rem; padding: 4px 12px; }
+.exec-alerts-body { display: flex; flex-direction: column; gap: 12px; }
+.alert-chips-v2 { display: flex; gap: 10px; }
+.alert-chip-v2 {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  padding: 8px 16px;
-  border-radius: 8px;
-  min-width: 60px;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: #f8fafc;
 }
-.alert-chip-high { background: #fee2e2; }
-.alert-chip-med { background: #ffedd5; }
-.alert-chip-low { background: #fef9c3; }
-.alert-chip-count { font-size: 1.25rem; font-weight: 700; }
-.alert-chip-high .alert-chip-count { color: #dc2626; }
-.alert-chip-med .alert-chip-count { color: #ea580c; }
-.alert-chip-low .alert-chip-count { color: #ca8a04; }
-.alert-chip-label { font-size: 0.7rem; text-transform: uppercase; color: #64748b; }
-.alert-bar {
-  flex: 1;
-  height: 8px;
+.alert-chip-v2-high { background: #fef2f2; }
+.alert-chip-v2-med { background: #fff7ed; }
+.alert-chip-v2-low { background: #fefce8; }
+.alert-chip-v2-pct { font-size: 0.875rem; font-weight: 600; }
+.alert-chip-v2-high .alert-chip-v2-pct { color: #b91c1c; }
+.alert-chip-v2-med .alert-chip-v2-pct { color: #c2410c; }
+.alert-chip-v2-low .alert-chip-v2-pct { color: #a16207; }
+.alert-chip-v2-label { font-size: 0.7rem; text-transform: uppercase; color: #64748b; letter-spacing: 0.3px; }
+.alert-bar-wrap { max-width: 65%; }
+.alert-bar-v2 {
+  height: 6px;
   background: #f1f5f9;
-  border-radius: 4px;
+  border-radius: 3px;
   display: flex;
   overflow: hidden;
 }
-.alert-bar-seg { height: 100%; }
-.alert-bar-high { background: #ef4444; }
-.alert-bar-med { background: #f97316; }
-.alert-bar-low { background: #eab308; }
+.alert-bar-seg-v2 { height: 100%; transition: width 0.3s ease; }
+.alert-bar-seg-high { background: #fca5a5; }
+.alert-bar-seg-med { background: #fdba74; }
+.alert-bar-seg-low { background: #fde047; }
+.exec-alerts-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 4px;
+}
+.exec-alerts-hint { font-size: 0.7rem; color: #94a3b8; font-style: italic; }
+.exec-alerts-total { font-size: 0.7rem; color: #64748b; }
 
 /* Charts Grid */
 .dash-charts-grid {
