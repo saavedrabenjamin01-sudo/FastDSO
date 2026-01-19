@@ -215,6 +215,34 @@ class SalesWeeklyAgg(db.Model):
     store = db.relationship('Store')
 
 
+class SkuLifecycle(db.Model):
+    """Global lifecycle tracking per SKU - updated during macro sales upload."""
+    __tablename__ = 'sku_lifecycle'
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False, unique=True, index=True)
+    last_sale_date_global = db.Column(db.Date, nullable=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    product = db.relationship('Product')
+
+
+class SkuStoreLifecycle(db.Model):
+    """Store-level lifecycle tracking per SKU-Store pair - updated during macro sales upload."""
+    __tablename__ = 'sku_store_lifecycle'
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False, index=True)
+    store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False, index=True)
+    last_sale_date_store = db.Column(db.Date, nullable=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    __table_args__ = (
+        db.Index('ix_sku_store_lifecycle_prod_store', 'product_id', 'store_id', unique=True),
+    )
+    
+    product = db.relationship('Product')
+    store = db.relationship('Store')
+
+
 class StockCD(db.Model):
     __tablename__ = 'stock_cd'
     id = db.Column(db.Integer, primary_key=True)
