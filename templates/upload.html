@@ -36,11 +36,11 @@
 
           <div class="upload-row">
             <div class="upload-field upload-field-half">
-              <label class="query-label">Archivo de ventas</label>
+              <label class="query-label">Archivo de solicitud de distribución</label>
               <input type="file" class="form-control" name="file"
                      accept=".csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
                      required>
-              <small class="text-muted">Acepta <code>.csv</code> y <code>.xlsx</code></small>
+              <small class="text-muted">Acepta <code>.csv</code> y <code>.xlsx</code> con lista de SKUs</small>
             </div>
 
             <div class="upload-field upload-field-half">
@@ -92,17 +92,17 @@
         </button>
         <div class="collapse" id="fileReqCollapse">
           <div class="upload-collapse-body">
-            <p class="mb-2"><strong>Columnas requeridas:</strong></p>
+            <p class="mb-2"><strong>Formato de solicitud de distribución:</strong></p>
             <ul class="upload-req-list">
-              <li><code>sku</code> — Código del producto (texto, ceros a la izquierda preservados)</li>
-              <li><code>product_name</code> — Nombre del producto</li>
-              <li><code>store</code> — Nombre de la tienda</li>
-              <li><code>quantity</code> — Cantidad vendida</li>
-              <li><code>date</code> — Fecha de venta (YYYY-MM-DD)</li>
+              <li><code>sku</code> — Código del producto <strong>(requerido)</strong></li>
+              <li><code>product_name</code> — Nombre del producto (opcional)</li>
+              <li><code>category</code> — Categoría del producto (opcional, se asigna si el producto no tiene)</li>
             </ul>
-            <p class="mb-2"><strong>Columna opcional:</strong></p>
+            <p class="mb-2 text-muted">El sistema generará distribución sugerida usando datos de ventas macro.</p>
+            <hr class="my-2">
+            <p class="mb-2"><strong>Formato legacy (ventas históricas):</strong></p>
             <ul class="upload-req-list">
-              <li><code>category</code> — Categoría del producto (se asigna si el producto no tiene categoría)</li>
+              <li><code>sku</code>, <code>product_name</code>, <code>store</code>, <code>quantity</code>, <code>date</code></li>
             </ul>
             <p class="mb-1"><strong>Formatos aceptados:</strong> <code>.csv</code>, <code>.xlsx</code></p>
             <p class="text-muted mb-0">El SKU debe ser texto para preservar ceros a la izquierda.</p>
@@ -112,11 +112,19 @@
     </div>
 
     <div class="col-12 col-lg-4">
+      {% if pending_skus and pending_skus|length > 0 %}
+      <div class="upload-sidecard border-warning">
+        <div class="upload-sidecard-title text-warning"><i class="bi bi-hourglass-split me-2"></i>SKUs pendientes</div>
+        <p class="small text-muted mb-2">Se han cargado {{ pending_skus|length }} SKUs para distribución.</p>
+        <p class="small mb-0">El siguiente paso generará distribución desde ventas macro.</p>
+      </div>
+      {% endif %}
+
       <div class="upload-sidecard">
         <div class="upload-sidecard-title"><i class="bi bi-list-check me-2"></i>Guía rápida</div>
         <ol class="upload-guide-list">
-          <li>Sube archivo de ventas (CSV/XLSX)</li>
-          <li>Selecciona método de análisis</li>
+          <li>Sube archivo con lista de SKUs</li>
+          <li>Selecciona modelo de análisis</li>
           <li>Completa folio, responsable y campaña</li>
           <li>Genera distribución sugerida</li>
           <li>Exporta resultados desde Dashboard</li>
@@ -131,35 +139,30 @@
               <tr>
                 <th>sku</th>
                 <th>product_name</th>
-                <th>store</th>
-                <th>quantity</th>
-                <th>date</th>
+                <th>category</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td>000123</td>
                 <td>Producto A</td>
-                <td>Tienda Norte</td>
-                <td>5</td>
-                <td>2025-01-01</td>
+                <td>Navidad</td>
               </tr>
               <tr>
                 <td>000456</td>
                 <td>Producto B</td>
-                <td>Tienda Sur</td>
-                <td>3</td>
-                <td>2025-01-02</td>
+                <td>Navidad</td>
               </tr>
             </tbody>
           </table>
         </div>
+        <p class="small text-muted mt-2 mb-0">Solo <code>sku</code> es requerido</p>
       </div>
 
       <div class="upload-sidecard">
         <div class="upload-sidecard-title"><i class="bi bi-lightbulb me-2"></i>Tips</div>
         <ul class="upload-tips-list">
-          <li>Carga primero Stock CD, luego Stock Tiendas, y finalmente Ventas</li>
+          <li>Carga primero Stock CD, Stock Tiendas y Ventas macro</li>
           <li>Evita cargas duplicadas salvo que sea necesario</li>
           <li>Usa Categoría/campaña para trazabilidad</li>
         </ul>

@@ -3370,10 +3370,29 @@ def upload():
             flash('Formato no soportado. Usa .csv o .xlsx', 'danger')
             return redirect(url_for('upload'))
         
+        try:
+            if filename.endswith('.csv'):
+                df_preview = pd.read_csv(file, dtype=str, nrows=5)
+                file.seek(0)
+            else:
+                df_preview = pd.read_excel(file, dtype=str, nrows=5)
+                file.seek(0)
+        except Exception as e:
+            if is_ajax:
+                return jsonify({'ok': False, 'message': f'Error leyendo archivo: {str(e)[:200]}', 'category': 'danger'}), 400
+            flash(f'Error leyendo archivo: {str(e)[:200]}', 'danger')
+            return redirect(url_for('upload'))
+        
+        df_preview.columns = [str(c).strip().lower() for c in df_preview.columns]
+        cols = set(df_preview.columns)
+        
+        sales_required = {'store', 'date', 'quantity'}
+        request_mode = 'sku' in cols and not sales_required.issubset(cols)
+        
         upload_dir = os.path.join(BASE_DIR, 'instance', 'uploads')
         os.makedirs(upload_dir, exist_ok=True)
         
-        saved_filename = f"sales_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
+        saved_filename = f"dist_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
         filepath = os.path.join(upload_dir, saved_filename)
         file.save(filepath)
         
@@ -3385,6 +3404,85 @@ def upload():
             "fecha_doc": request.form.get('fecha_doc', '').strip() or None,
         }
         user_id = current_user.id if current_user.is_authenticated else None
+        
+        if request_mode:
+            try:
+                if filepath.endswith('.csv'):
+                    df_full = pd.read_csv(filepath, dtype=str)
+                else:
+                    df_full = pd.read_excel(filepath, dtype=str)
+                
+                df_full.columns = [str(c).strip().lower() for c in df_full.columns]
+                
+                if 'sku' not in df_full.columns:
+                    if is_ajax:
+                        return jsonify({'ok': False, 'message': 'Archivo debe contener columna "sku".', 'category': 'danger'}), 400
+                    flash('Archivo debe contener columna "sku".', 'danger')
+                    return redirect(url_for('upload'))
+                
+                df_full['sku'] = df_full['sku'].astype(str).str.strip()
+                df_full = df_full[df_full['sku'].notna() & (df_full['sku'] != '') & (df_full['sku'] != 'nan')]
+                
+                if len(df_full) == 0:
+                    if is_ajax:
+                        return jsonify({'ok': False, 'message': 'Archivo no contiene SKUs válidos.', 'category': 'warning'}), 400
+                    flash('Archivo no contiene SKUs válidos.', 'warning')
+                    return redirect(url_for('upload'))
+                
+                has_name = 'product_name' in df_full.columns
+                has_category = 'category' in df_full.columns
+                
+                upserted_count = 0
+                for _, row in df_full.iterrows():
+                    sku_val = row['sku']
+                    product = Product.query.filter_by(sku=sku_val).first()
+                    
+                    if product:
+                        if has_name and pd.notna(row.get('product_name')) and str(row['product_name']).strip():
+                            if not product.name or product.name == sku_val:
+                                product.name = str(row['product_name']).strip()
+                        if has_category and pd.notna(row.get('category')) and str(row['category']).strip():
+                            cat_val = str(row['category']).strip()
+                            if cat_val not in ['', 'nan', 'None', 'NaN'] and not product.category:
+                                product.category = cat_val
+                    else:
+                        new_prod = Product(sku=sku_val)
+                        if has_name and pd.notna(row.get('product_name')) and str(row['product_name']).strip():
+                            new_prod.name = str(row['product_name']).strip()
+                        else:
+                            new_prod.name = sku_val
+                        if has_category and pd.notna(row.get('category')) and str(row['category']).strip():
+                            cat_val = str(row['category']).strip()
+                            if cat_val not in ['', 'nan', 'None', 'NaN']:
+                                new_prod.category = cat_val
+                        db.session.add(new_prod)
+                    upserted_count += 1
+                
+                db.session.commit()
+                
+                sku_list = df_full['sku'].unique().tolist()
+                session['distribution_request_skus'] = sku_list
+                session['distribution_request_mode'] = analysis_mode
+                session['distribution_request_meta'] = meta
+                
+                msg = f'Archivo de solicitud cargado: {len(sku_list)} SKUs. El siguiente paso generará distribución desde ventas macro.'
+                
+                if is_ajax:
+                    return jsonify({
+                        'ok': True,
+                        'message': msg,
+                        'category': 'info',
+                        'redirect_url': url_for('upload')
+                    })
+                flash(msg, 'info')
+                return redirect(url_for('upload'))
+                
+            except Exception as e:
+                db.session.rollback()
+                if is_ajax:
+                    return jsonify({'ok': False, 'message': f'Error procesando archivo: {str(e)[:200]}', 'category': 'danger'}), 400
+                flash(f'Error procesando archivo: {str(e)[:200]}', 'danger')
+                return redirect(url_for('upload'))
         
         payload = {
             'filepath': filepath,
@@ -3413,7 +3511,8 @@ def upload():
         
         return redirect(url_for('job_status_view', job_id=job_id))
 
-    return render_template('upload.html', require_stock_confirm=require_stock_confirm)
+    pending_skus = session.get('distribution_request_skus', [])
+    return render_template('upload.html', require_stock_confirm=require_stock_confirm, pending_skus=pending_skus)
 
 
 @app.route('/sales_macro_upload', methods=['GET', 'POST'])
