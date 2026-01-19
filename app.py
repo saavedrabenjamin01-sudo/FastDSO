@@ -215,34 +215,6 @@ class SalesWeeklyAgg(db.Model):
     store = db.relationship('Store')
 
 
-class SkuLifecycle(db.Model):
-    """Global lifecycle tracking per SKU - updated during macro sales upload."""
-    __tablename__ = 'sku_lifecycle'
-    id = db.Column(db.Integer, primary_key=True)
-    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False, unique=True, index=True)
-    last_sale_date_global = db.Column(db.Date, nullable=True)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    product = db.relationship('Product')
-
-
-class SkuStoreLifecycle(db.Model):
-    """Store-level lifecycle tracking per SKU-Store pair - updated during macro sales upload."""
-    __tablename__ = 'sku_store_lifecycle'
-    id = db.Column(db.Integer, primary_key=True)
-    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False, index=True)
-    store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False, index=True)
-    last_sale_date_store = db.Column(db.Date, nullable=True)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    __table_args__ = (
-        db.Index('ix_sku_store_lifecycle_prod_store', 'product_id', 'store_id', unique=True),
-    )
-    
-    product = db.relationship('Product')
-    store = db.relationship('Store')
-
-
 class StockCD(db.Model):
     __tablename__ = 'stock_cd'
     id = db.Column(db.Integer, primary_key=True)
@@ -3642,6 +3614,73 @@ def process_macro_sales_upload(job_id, payload):
             update_job_status(job_id, progress=min(progress, 95), 
                             message=f'Insertando... {total_inserted}/{len(records)}')
         
+        update_job_status(job_id, progress=96, message='Actualizando lifecycle SKUs...')
+        
+        lifecycle_store_df = df.groupby(['product_id', 'store_id']).agg({
+            'date': 'max'
+        }).reset_index()
+        lifecycle_store_df.rename(columns={'date': 'last_sale_date_store'}, inplace=True)
+        
+        lifecycle_global_df = df.groupby(['product_id']).agg({
+            'date': 'max'
+        }).reset_index()
+        lifecycle_global_df.rename(columns={'date': 'last_sale_date_global'}, inplace=True)
+        
+        for _, row in lifecycle_store_df.iterrows():
+            pid = int(row['product_id'])
+            sid = int(row['store_id'])
+            raw_date = row['last_sale_date_store']
+            if pd.isna(raw_date):
+                continue
+            last_date = raw_date.date() if hasattr(raw_date, 'date') else raw_date
+            if not last_date:
+                continue
+            
+            existing = session.query(SkuStoreLifecycle).filter(
+                SkuStoreLifecycle.product_id == pid,
+                SkuStoreLifecycle.store_id == sid
+            ).first()
+            
+            if existing:
+                if existing.last_sale_date_store is None or last_date > existing.last_sale_date_store:
+                    existing.last_sale_date_store = last_date
+                    existing.updated_at = datetime.utcnow()
+            else:
+                session.add(SkuStoreLifecycle(
+                    product_id=pid,
+                    store_id=sid,
+                    last_sale_date_store=last_date,
+                    updated_at=datetime.utcnow()
+                ))
+        
+        session.commit()
+        
+        for _, row in lifecycle_global_df.iterrows():
+            pid = int(row['product_id'])
+            raw_date = row['last_sale_date_global']
+            if pd.isna(raw_date):
+                continue
+            last_date = raw_date.date() if hasattr(raw_date, 'date') else raw_date
+            if not last_date:
+                continue
+            
+            existing = session.query(SkuLifecycle).filter(
+                SkuLifecycle.product_id == pid
+            ).first()
+            
+            if existing:
+                if existing.last_sale_date_global is None or last_date > existing.last_sale_date_global:
+                    existing.last_sale_date_global = last_date
+                    existing.updated_at = datetime.utcnow()
+            else:
+                session.add(SkuLifecycle(
+                    product_id=pid,
+                    last_sale_date_global=last_date,
+                    updated_at=datetime.utcnow()
+                ))
+        
+        session.commit()
+        
         try:
             os.remove(filepath)
         except:
@@ -3649,7 +3688,7 @@ def process_macro_sales_upload(job_id, payload):
         
         session.close()
         
-        msg = f'Ventas macro cargadas: {len(agg_df)} registros semanales de {total_rows} filas originales'
+        msg = f'Ventas macro cargadas: {len(agg_df)} registros semanales de {total_rows} filas originales (lifecycle actualizado)'
         update_job_status(
             job_id,
             status='done',
@@ -7866,23 +7905,24 @@ def compute_store_health_index(weights=None, sku_scope='core'):
     
     today = date.today()
     recent_window = 4
-    cutoff = today - timedelta(weeks=recent_window)
+    cutoff_week = today - timedelta(weeks=recent_window)
+    cutoff_week = cutoff_week - timedelta(days=cutoff_week.weekday())
     
     sales_query = db.session.query(
-        DistributionRecord.store_id,
-        DistributionRecord.product_id,
-        db.func.sum(DistributionRecord.quantity).label('total_qty')
+        SalesWeeklyAgg.store_id,
+        SalesWeeklyAgg.product_id,
+        db.func.sum(SalesWeeklyAgg.units).label('total_units')
     ).filter(
-        DistributionRecord.event_date >= cutoff
+        SalesWeeklyAgg.week_start >= cutoff_week
     ).group_by(
-        DistributionRecord.store_id,
-        DistributionRecord.product_id
+        SalesWeeklyAgg.store_id,
+        SalesWeeklyAgg.product_id
     ).all()
     
     sales_rate = {}
     store_total_sales = {}
     for row in sales_query:
-        weekly_rate = row.total_qty / recent_window if recent_window > 0 else 0
+        weekly_rate = row.total_units / recent_window if recent_window > 0 else 0
         if row.store_id not in sales_rate:
             sales_rate[row.store_id] = {}
             store_total_sales[row.store_id] = 0
@@ -8466,8 +8506,14 @@ def get_alerts_summary(store_filter=None):
 
 def compute_alerts(params=None):
     """
-    Compute dynamic alerts for stock and sales velocity.
+    Compute dynamic alerts using Macro Sales (SalesWeeklyAgg) and lifecycle tables.
     Returns list of alert dicts sorted by severity (HIGH > MEDIUM > LOW).
+    
+    Alert types:
+    - PROJECTED_STOCKOUT: Store has stock but low WOC
+    - OVERSTOCK: Stock exceeds WOC threshold
+    - SILENT_SKU: No sales for extended period (uses lifecycle)
+    - BROKEN_STOCK: Store has zero stock but recent demand (uses lifecycle)
     """
     if params is None:
         params = ALERT_PARAMS.copy()
@@ -8495,44 +8541,40 @@ def compute_alerts(params=None):
             cd_stock[cd.product_id] = cd.quantity
     
     recent_window = params.get('RECENT_WINDOW_WEEKS', 4)
-    cutoff_date = today - timedelta(weeks=recent_window)
+    cutoff_week = today - timedelta(weeks=recent_window)
+    cutoff_week = cutoff_week - timedelta(days=cutoff_week.weekday())
     
     sales_query = db.session.query(
-        DistributionRecord.product_id,
-        DistributionRecord.store_id,
-        db.func.sum(DistributionRecord.quantity).label('total_qty')
+        SalesWeeklyAgg.product_id,
+        SalesWeeklyAgg.store_id,
+        db.func.sum(SalesWeeklyAgg.units).label('total_units')
     ).filter(
-        DistributionRecord.event_date >= cutoff_date
+        SalesWeeklyAgg.week_start >= cutoff_week
     ).group_by(
-        DistributionRecord.product_id,
-        DistributionRecord.store_id
+        SalesWeeklyAgg.product_id,
+        SalesWeeklyAgg.store_id
     ).all()
     
     sales_rate = {}
     for row in sales_query:
-        weekly_rate = row.total_qty / recent_window if recent_window > 0 else 0
+        weekly_rate = row.total_units / recent_window if recent_window > 0 else 0
         sales_rate[(row.product_id, row.store_id)] = weekly_rate
     
-    last_sale_query = db.session.query(
-        DistributionRecord.product_id,
-        DistributionRecord.store_id,
-        db.func.max(DistributionRecord.event_date).label('last_date')
-    ).group_by(
-        DistributionRecord.product_id,
-        DistributionRecord.store_id
-    ).all()
-    
     last_sale_store = {}
+    for lc in SkuStoreLifecycle.query.all():
+        if lc.last_sale_date_store:
+            last_sale_store[(lc.product_id, lc.store_id)] = lc.last_sale_date_store
+    
     last_sale_global = {}
-    for row in last_sale_query:
-        last_sale_store[(row.product_id, row.store_id)] = row.last_date
-        if row.product_id not in last_sale_global or row.last_date > last_sale_global[row.product_id]:
-            last_sale_global[row.product_id] = row.last_date
+    for lc in SkuLifecycle.query.all():
+        if lc.last_sale_date_global:
+            last_sale_global[lc.product_id] = lc.last_sale_date_global
     
     min_woc = params.get('MIN_WOC', 1.5)
     max_woc = params.get('MAX_WOC', 6.0)
     dead_days_store = params.get('DEAD_DAYS_STORE', 60)
     dead_days_global = params.get('DEAD_DAYS_GLOBAL', 90)
+    broken_stock_days = params.get('BROKEN_STOCK_DAYS', 45)
     
     for (pid, sid), qty in store_stock.items():
         if qty <= 0:
@@ -8628,6 +8670,40 @@ def compute_alerts(params=None):
                 'days_since_sale': days_since if days_since < 9999 else None,
                 'reason': f'{days_since} días sin venta' if days_since < 9999 else 'Sin ventas registradas',
                 'action': 'Liquidar' if severity == 'HIGH' else 'Revisar'
+            })
+    
+    for (pid, sid), last_date in last_sale_store.items():
+        stock_qty = store_stock.get((pid, sid), 0)
+        if stock_qty > 0:
+            continue
+        
+        product = products.get(pid)
+        store = stores.get(sid)
+        if not product or not store:
+            continue
+        
+        days_since = (today - last_date).days if last_date else 9999
+        if days_since <= broken_stock_days:
+            rate = sales_rate.get((pid, sid), 0)
+            if days_since <= 14:
+                severity = 'HIGH'
+            elif days_since <= 30:
+                severity = 'MEDIUM'
+            else:
+                severity = 'LOW'
+            alerts.append({
+                'type': 'BROKEN_STOCK',
+                'severity': severity,
+                'sku': product.sku,
+                'product_name': product.name,
+                'location': store.name,
+                'location_type': 'store',
+                'woc': None,
+                'stock': 0,
+                'rate': round(rate, 2) if rate else None,
+                'days_since_sale': days_since,
+                'reason': f'Quiebre: {days_since} días desde última venta',
+                'action': 'Reponer'
             })
     
     for pid, qty in cd_stock.items():
@@ -8739,6 +8815,7 @@ def alerts_page():
     kpi_stockout = sum(1 for a in all_alerts if a['type'] == 'PROJECTED_STOCKOUT')
     kpi_overstock = sum(1 for a in all_alerts if a['type'] == 'OVERSTOCK')
     kpi_silent = sum(1 for a in all_alerts if a['type'] == 'SILENT_SKU')
+    kpi_broken = sum(1 for a in all_alerts if a['type'] == 'BROKEN_STOCK')
     
     return render_template(
         'alerts.html',
@@ -8756,7 +8833,8 @@ def alerts_page():
         kpi_low=kpi_low,
         kpi_stockout=kpi_stockout,
         kpi_overstock=kpi_overstock,
-        kpi_silent=kpi_silent
+        kpi_silent=kpi_silent,
+        kpi_broken=kpi_broken
     )
 
 

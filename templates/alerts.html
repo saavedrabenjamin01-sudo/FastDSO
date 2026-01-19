@@ -51,6 +51,13 @@
         <div class="alerts-kpi-label">Sin movimiento</div>
       </div>
     </div>
+    <div class="alerts-kpi alerts-kpi-broken">
+      <div class="alerts-kpi-icon"><i class="bi bi-x-circle-fill"></i></div>
+      <div class="alerts-kpi-body">
+        <div class="alerts-kpi-number">{{ kpi_broken|default(0) }}</div>
+        <div class="alerts-kpi-label">Quiebre reciente</div>
+      </div>
+    </div>
   </div>
 
   <form class="alerts-filters" method="get" action="{{ url_for('alerts_page') }}">
@@ -61,6 +68,7 @@
         <option value="PROJECTED_STOCKOUT" {% if type_filter == 'PROJECTED_STOCKOUT' %}selected{% endif %}>Quiebre proyectado</option>
         <option value="OVERSTOCK" {% if type_filter == 'OVERSTOCK' %}selected{% endif %}>Sobrestock</option>
         <option value="SILENT_SKU" {% if type_filter == 'SILENT_SKU' %}selected{% endif %}>Sin movimiento</option>
+        <option value="BROKEN_STOCK" {% if type_filter == 'BROKEN_STOCK' %}selected{% endif %}>Quiebre reciente</option>
       </select>
     </div>
     <div class="alerts-filter">
@@ -126,8 +134,12 @@
                 <span class="alerts-type-badge alerts-type-stockout"><i class="bi bi-box me-1"></i>Quiebre</span>
                 {% elif alert.type == 'OVERSTOCK' %}
                 <span class="alerts-type-badge alerts-type-overstock"><i class="bi bi-boxes me-1"></i>Sobrestock</span>
+                {% elif alert.type == 'BROKEN_STOCK' %}
+                <span class="alerts-type-badge alerts-type-broken"><i class="bi bi-x-circle-fill me-1"></i>Quiebre reciente</span>
+                {% elif alert.type == 'SILENT_SKU' %}
+                <span class="alerts-type-badge alerts-type-silent"><i class="bi bi-moon-stars me-1"></i>Sin movimiento</span>
                 {% else %}
-                <span class="alerts-type-badge alerts-type-silent"><i class="bi bi-moon-stars me-1"></i>Silencioso</span>
+                <span class="alerts-type-badge alerts-type-silent"><i class="bi bi-question-circle me-1"></i>{{ alert.type }}</span>
                 {% endif %}
               </td>
               <td class="alerts-mono">{{ alert.sku }}</td>
@@ -240,6 +252,7 @@
 .alerts-kpi-stockout .alerts-kpi-icon { background: #fef2f2; color: #dc2626; }
 .alerts-kpi-overstock .alerts-kpi-icon { background: #f0fdf4; color: #16a34a; }
 .alerts-kpi-silent .alerts-kpi-icon { background: #f8fafc; color: #64748b; }
+.alerts-kpi-broken .alerts-kpi-icon { background: #fef3c7; color: #b45309; }
 .alerts-kpi-body { flex: 1; }
 .alerts-kpi-number {
   font-size: 1.5rem;
@@ -371,6 +384,10 @@
 .alerts-type-silent {
   background: #f8fafc;
   color: #64748b;
+}
+.alerts-type-broken {
+  background: #fef3c7;
+  color: #b45309;
 }
 .alerts-loc-badge {
   display: inline-flex;

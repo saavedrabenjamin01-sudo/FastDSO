@@ -78,12 +78,17 @@ Do not make changes to the folder `Excel tipo/`.
     - Edge case handling: Redistributes velocity weight when no sales data chain-wide
     - KPI summary cards, paginated table with sorting, weights configuration form, Excel export
     - Access via "Salud Tiendas" link under Operaciones (requires store_health:view permission)
-- **In-app Alerts Module**: Proactive alerts based on stock and sales velocity (read-only, computed dynamically):
-    - Alert types: PROJECTED_STOCKOUT (WOC < MIN_WOC), OVERSTOCK (WOC > MAX_WOC), SILENT_SKU (no sales for DEAD_DAYS)
+- **In-app Alerts Module**: Proactive alerts based on Macro Sales (SalesWeeklyAgg) and lifecycle tables (read-only, computed dynamically):
+    - Alert types: 
+        - PROJECTED_STOCKOUT (WOC < MIN_WOC): Store has stock but low coverage
+        - OVERSTOCK (WOC > MAX_WOC): Stock exceeds WOC threshold
+        - SILENT_SKU (no sales for DEAD_DAYS): No movement using SkuLifecycle.last_sale_date_global
+        - BROKEN_STOCK (NEW): Store has zero stock but recent demand within 45 days using SkuStoreLifecycle
+    - Data sources: SalesWeeklyAgg for sales rates, SkuLifecycle/SkuStoreLifecycle for last sale dates
     - Severity levels: HIGH (critical threshold breached), MEDIUM (warning level), LOW (minor concern)
     - Dashboard integration: Top 10 alerts panel with highest severity first
     - Dedicated /alerts page with filters: type, severity, store, SKU search
-    - KPI cards: High/Medium/Low counts, Quiebres, Sobrestock, Sin movimiento
+    - KPI cards: High/Medium/Low counts, Quiebres, Sobrestock, Sin movimiento, Quiebre reciente
     - Suggested actions: Reponer, Redistribuir, Revisar, Liquidar
     - Access via "Alertas" link under Operaciones (requires alerts:view permission)
 - **Explainability Layer**: Transparent explanation system for distribution and forecast suggestions:
@@ -101,6 +106,15 @@ Do not make changes to the folder `Excel tipo/`.
     - Load modes: `replace_range` (default, replaces weeks), `append_range` (adds to existing)
     - Automatic Product.category population from uploads
     - Distribution generation uses macro layer when available for demand estimation
+    - **Single Source of Truth**: SalesWeeklyAgg is the primary data source for:
+        - Alerts module (sales rates, WOC calculations)
+        - Store Health Index (sales velocity metrics)
+        - Forecast V2 (demand estimation)
+- **SKU Lifecycle Layer**: Tracks last sale dates for faster alert computation:
+    - `SkuLifecycle` model: Global last sale date per SKU (last_sale_date_global)
+    - `SkuStoreLifecycle` model: Store-level last sale date per SKU-Store pair (last_sale_date_store)
+    - Automatically populated during Macro Sales upload
+    - Enables BROKEN_STOCK alert detection without querying raw sales tables
 - **Category-Based Cold Start**: Distribution suggestions for new SKUs without sales history:
     - Parameters: min_fill=2, target_WOC_new=1.0, eligible_store_top_n=10, category_window_days=90
     - Eligibility: SKU must have category set in Product.category
