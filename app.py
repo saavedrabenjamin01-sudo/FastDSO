@@ -1632,9 +1632,9 @@ def generate_predictions_from_macro(
     skus_eligible_for_cold_start = skus_without_macro_sales - skus_with_any_store_stock
     
     COLD_START_MIN_FILL = 2
-    COLD_START_TARGET_WOC = 1.0
     COLD_START_TOP_STORES = 20
     COLD_START_WINDOW_WEEKS = 12
+    MAX_CAT_WOC = 6.0
     
     cold_start_window = date.today() - timedelta(weeks=COLD_START_WINDOW_WEEKS)
     
@@ -1642,6 +1642,8 @@ def generate_predictions_from_macro(
     cold_start_no_category = []
     
     if skus_eligible_for_cold_start:
+        import math
+        
         category_store_rates = defaultdict(lambda: defaultdict(float))
         cat_agg_query = (
             db.session.query(
@@ -1671,6 +1673,33 @@ def generate_predictions_from_macro(
             for pid, sid, qty in stock_snap_q:
                 store_stock_map[(pid, sid)] = qty or 0
         
+        category_store_stock = defaultdict(lambda: defaultdict(float))
+        if latest_stock_date:
+            cat_stock_q = (
+                db.session.query(
+                    Product.category,
+                    StockSnapshot.store_id,
+                    func.sum(StockSnapshot.quantity)
+                )
+                .join(Product, StockSnapshot.product_id == Product.id)
+                .filter(StockSnapshot.as_of_date == latest_stock_date)
+                .filter(Product.category.isnot(None))
+                .group_by(Product.category, StockSnapshot.store_id)
+                .all()
+            )
+            for cat, store_id, total_cat_stock in cat_stock_q:
+                category_store_stock[cat][store_id] = total_cat_stock or 0
+        
+        cd_remaining_after_base = {}
+        base_assigned_by_product = defaultdict(int)
+        for it in final_preds:
+            base_assigned_by_product[it["product_id"]] += int(it["suggested"])
+        
+        for product_id in cd_stock:
+            original = cd_stock[product_id]
+            assigned = base_assigned_by_product.get(product_id, 0)
+            cd_remaining_after_base[product_id] = max(original - assigned, 0)
+        
         for sku in skus_eligible_for_cold_start:
             prod = product_map.get(sku)
             if not prod:
@@ -1694,75 +1723,104 @@ def generate_predictions_from_macro(
                 })
                 continue
             
-            eligible_stores = [(sid, rate) for sid, rate in cat_rates.items() if rate > 0]
-            top_stores = sorted(eligible_stores, key=lambda x: x[1], reverse=True)[:COLD_START_TOP_STORES]
+            cat_stock_by_store = category_store_stock.get(category, {})
             
-            for store_id, cat_sales_rate in top_stores:
-                store_name = store_map.get(store_id)
-                if not store_name:
+            eligible_stores = []
+            for store_id, cat_sales_rate in cat_rates.items():
+                if cat_sales_rate <= 0:
                     continue
-                
                 store_stock = store_stock_map.get((prod.id, store_id), 0)
-                
                 if store_stock > 0:
                     continue
-                
-                import math
-                suggested_raw = max(COLD_START_MIN_FILL, math.ceil(COLD_START_TARGET_WOC * cat_sales_rate))
-                max_alloc_woc = math.ceil(MAX_WOC_CAP * cat_sales_rate) if cat_sales_rate > 0 else COLD_START_MIN_FILL
-                suggested = min(suggested_raw, max_alloc_woc, MAX_UNITS_PER_STORE_EVENT)
-                
+                cat_stock = cat_stock_by_store.get(store_id, 0)
+                cat_woc = cat_stock / max(cat_sales_rate, 1)
+                if cat_woc > MAX_CAT_WOC:
+                    continue
+                eligible_stores.append((store_id, cat_sales_rate))
+            
+            top_stores = sorted(eligible_stores, key=lambda x: x[1], reverse=True)[:COLD_START_TOP_STORES]
+            
+            if not top_stores:
+                continue
+            
+            available_cd = cd_remaining_after_base.get(prod.id, cd_stock.get(prod.id))
+            if available_cd is None or available_cd <= 0:
+                continue
+            
+            budget = int(available_cd)
+            n_stores = len(top_stores)
+            
+            store_list = []
+            for store_id, cat_sales_rate in top_stores:
+                rate = cat_sales_rate
+                max_alloc_woc = math.ceil(MAX_WOC_CAP * rate) if rate > 0 else COLD_START_MIN_FILL
+                max_cap = min(max_alloc_woc, MAX_UNITS_PER_STORE_EVENT)
+                store_list.append({
+                    'store_id': store_id,
+                    'cat_sales_rate': cat_sales_rate,
+                    'max_cap': max_cap,
+                    'allocated': 0
+                })
+            
+            for s in store_list:
+                if budget <= 0:
+                    break
+                give = min(COLD_START_MIN_FILL, s['max_cap'], budget)
+                s['allocated'] = give
+                budget -= give
+            
+            if budget > 0:
+                for s in store_list:
+                    if budget <= 0:
+                        break
+                    room = s['max_cap'] - s['allocated']
+                    if room > 0:
+                        give = min(room, budget)
+                        s['allocated'] += give
+                        budget -= give
+            
+            for _ in range(n_stores):
+                changed = False
+                for i in range(n_stores - 1):
+                    hi = store_list[i]
+                    lo = store_list[i + 1]
+                    if hi['allocated'] < lo['allocated']:
+                        diff = lo['allocated'] - hi['allocated']
+                        room_hi = hi['max_cap'] - hi['allocated']
+                        if room_hi > 0:
+                            transfer = min(diff, room_hi, lo['allocated'] - COLD_START_MIN_FILL) if lo['allocated'] > COLD_START_MIN_FILL else 0
+                            if transfer > 0:
+                                hi['allocated'] += transfer
+                                lo['allocated'] -= transfer
+                                changed = True
+                        if hi['allocated'] < lo['allocated'] and hi['allocated'] >= hi['max_cap']:
+                            lo['allocated'] = hi['allocated']
+                            changed = True
+                if not changed:
+                    break
+            
+            total_allocated = sum(s['allocated'] for s in store_list)
+            for s in store_list:
+                store_name = store_map.get(s['store_id'])
+                if not store_name:
+                    continue
+                suggested = int(s['allocated'])
                 if suggested > 0:
                     cold_start_candidates.append({
                         "sku": sku,
                         "store": store_name,
                         "product_id": prod.id,
-                        "store_id": store_id,
+                        "store_id": s['store_id'],
                         "suggested": suggested,
                         "model_name": f"COLD_START_CATEGORY ({category})",
                         "category": category,
-                        "cat_sales_rate": cat_sales_rate
+                        "cat_sales_rate": s['cat_sales_rate']
                     })
+            
+            cd_remaining_after_base[prod.id] = max(int(available_cd) - total_allocated, 0)
         
-        cold_start_candidates.sort(key=lambda x: x.get('cat_sales_rate', 0), reverse=True)
-        
-        cd_remaining_after_base = {}
-        base_assigned_by_product = defaultdict(int)
-        for it in final_preds:
-            base_assigned_by_product[it["product_id"]] += int(it["suggested"])
-        
-        for product_id in cd_stock:
-            original = cd_stock[product_id]
-            assigned = base_assigned_by_product.get(product_id, 0)
-            cd_remaining_after_base[product_id] = max(original - assigned, 0)
-        
-        cold_start_per_product = defaultdict(list)
         for cand in cold_start_candidates:
-            cold_start_per_product[cand["product_id"]].append(cand)
-        
-        for product_id, cands in cold_start_per_product.items():
-            remaining_cd = cd_remaining_after_base.get(product_id, cd_stock.get(product_id))
-            
-            if remaining_cd is None:
-                for c in cands:
-                    final_preds.append(c)
-                continue
-            
-            if remaining_cd <= 0:
-                continue
-            
-            for c in cands:
-                want = c["suggested"]
-                give = min(want, remaining_cd)
-                if give > 0:
-                    c["suggested"] = give
-                    remaining_cd -= give
-                    final_preds.append(c)
-                
-                if remaining_cd <= 0:
-                    break
-            
-            cd_remaining_after_base[product_id] = remaining_cd
+            final_preds.append(cand)
     
     total_units = sum(int(it["suggested"]) for it in final_preds)
     cold_start_used = len([p for p in final_preds if 'COLD_START' in p.get('model_name', '')])
