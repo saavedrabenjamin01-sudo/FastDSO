@@ -1182,7 +1182,7 @@ def generate_predictions(
     
     COLD_START_MIN_FILL = 2
     COLD_START_TARGET_WOC = 1.0
-    COLD_START_TOP_STORES = 10
+    COLD_START_TOP_STORES = 20
     COLD_START_WINDOW_WEEKS = 12
     
     macro_data_available = db.session.query(func.count(SalesWeeklyAgg.id)).scalar() or 0
@@ -1604,7 +1604,7 @@ def generate_predictions_from_macro(
     
     COLD_START_MIN_FILL = 2
     COLD_START_TARGET_WOC = 1.0
-    COLD_START_TOP_STORES = 10
+    COLD_START_TOP_STORES = 20
     COLD_START_WINDOW_WEEKS = 12
     
     cold_start_window = date.today() - timedelta(weeks=COLD_START_WINDOW_WEEKS)
