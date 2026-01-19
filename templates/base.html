@@ -40,8 +40,8 @@
 
     <div class="sidebar-section-label">Panel</div>
 
-    <!-- ===== Ventas y Compras ===== -->
-    {% if current_user.is_authenticated and (current_user.has_permission('dashboard:view') or current_user.has_permission('sales:upload') or current_user.has_permission('forecast_v2:view')) %}
+    <!-- ===== 1) Ventas y Compras ===== -->
+    {% if current_user.is_authenticated and (current_user.has_permission('dashboard:view') or current_user.has_permission('forecast_v2:view')) %}
     <div class="nav-group">
       <button class="nav-group-toggle" aria-expanded="true">
         <span class="nav-icon"><i class="bi bi-graph-up-arrow"></i></span>
@@ -56,25 +56,10 @@
           <span class="nav-text">Dashboard</span>
         </a>
         <a class="nav-link" href="{{ url_for('dashboard_category') }}">
-          <span class="nav-icon"><i class="bi bi-grid-3x3-gap"></i></span>
+          <span class="nav-icon"><i class="bi bi-tags"></i></span>
           <span class="nav-text">Dashboard por categoría</span>
         </a>
         {% endif %}
-
-        {% if current_user.has_permission('sales:upload') %}
-        <a class="nav-link" href="{{ url_for('upload') }}">
-          <span class="nav-icon"><i class="bi bi-cloud-arrow-up"></i></span>
-          <span class="nav-text">Carga ventas</span>
-        </a>
-        {% endif %}
-
-        {% if current_user.has_permission('sales_macro:upload') %}
-        <a class="nav-link" href="{{ url_for('sales_macro_upload') }}">
-          <span class="nav-icon"><i class="bi bi-database-add"></i></span>
-          <span class="nav-text">Ventas Macro</span>
-        </a>
-        {% endif %}
-
         {% if current_user.has_permission('forecast_v2:view') %}
         <a class="nav-link" href="{{ url_for('purchase_forecast_v2') }}">
           <span class="nav-icon"><i class="bi bi-graph-up"></i></span>
@@ -85,56 +70,72 @@
     </div>
     {% endif %}
 
-    <!-- ===== Stock General ===== -->
-    {% if current_user.is_authenticated and (current_user.has_permission('stock_store:upload') or current_user.has_permission('stock_cd:upload') or current_user.has_permission('stock:query')) %}
+    <!-- ===== 2) Carga de archivos ===== -->
+    {% if current_user.is_authenticated and (current_user.has_permission('stock_cd:upload') or current_user.has_permission('stock_store:upload') or current_user.has_permission('sales:upload') or current_user.has_permission('sales_macro:upload')) %}
     <div class="nav-group">
       <button class="nav-group-toggle" aria-expanded="true">
-        <span class="nav-icon"><i class="bi bi-box-seam"></i></span>
-        <span class="nav-text">Stock General</span>
+        <span class="nav-icon"><i class="bi bi-cloud-arrow-up"></i></span>
+        <span class="nav-text">Carga de archivos</span>
         <span class="nav-caret">▶</span>
       </button>
 
       <div class="sidebar-nav" style="display:flex;">
-        {% if current_user.has_permission('stock_store:upload') %}
-        <a class="nav-link" href="{{ url_for('upload_stock') }}">
-          <span class="nav-icon"><i class="bi bi-shop"></i></span>
-          <span class="nav-text">Stock tiendas</span>
-        </a>
-        {% endif %}
-
         {% if current_user.has_permission('stock_cd:upload') %}
         <a class="nav-link" href="{{ url_for('upload_stock_cd') }}">
           <span class="nav-icon"><i class="bi bi-box-seam"></i></span>
           <span class="nav-text">Stock CD</span>
         </a>
         {% endif %}
-
-        {% if current_user.has_permission('stock:query') %}
-        <a class="nav-link" href="{{ url_for('stock_query') }}">
-          <span class="nav-icon"><i class="bi bi-search"></i></span>
-          <span class="nav-text">Consulta stock</span>
+        {% if current_user.has_permission('stock_store:upload') %}
+        <a class="nav-link" href="{{ url_for('upload_stock') }}">
+          <span class="nav-icon"><i class="bi bi-shop"></i></span>
+          <span class="nav-text">Stock tiendas</span>
         </a>
         {% endif %}
-
-        {% if current_user.has_permission('rebalancing:view') %}
-        <a class="nav-link" href="{{ url_for('rebalancing') }}">
-          <span class="nav-icon"><i class="bi bi-arrow-left-right"></i></span>
-          <span class="nav-text">Redistribución</span>
+        {% if current_user.has_permission('sales:upload') %}
+        <a class="nav-link" href="{{ url_for('upload') }}">
+          <span class="nav-icon"><i class="bi bi-file-earmark-arrow-up"></i></span>
+          <span class="nav-text">Carga ventas</span>
         </a>
         {% endif %}
-
-        {% if current_user.has_permission('slow_stock:view') %}
-        <a class="nav-link" href="{{ url_for('slow_stock') }}">
-          <span class="nav-icon"><i class="bi bi-hourglass-split"></i></span>
-          <span class="nav-text">Stock Lento</span>
+        {% if current_user.has_permission('sales_macro:upload') %}
+        <a class="nav-link" href="{{ url_for('sales_macro_upload') }}">
+          <span class="nav-icon"><i class="bi bi-database-up"></i></span>
+          <span class="nav-text">Ventas macro</span>
         </a>
         {% endif %}
       </div>
     </div>
     {% endif %}
 
-    <!-- ===== Operaciones ===== -->
-    {% if current_user.is_authenticated and current_user.has_permission('runs:view') %}
+    <!-- ===== 3) Stock ===== -->
+    {% if current_user.is_authenticated and (current_user.has_permission('stock:query') or current_user.has_permission('slow_stock:view')) %}
+    <div class="nav-group">
+      <button class="nav-group-toggle" aria-expanded="true">
+        <span class="nav-icon"><i class="bi bi-box-seam"></i></span>
+        <span class="nav-text">Stock</span>
+        <span class="nav-caret">▶</span>
+      </button>
+
+      <div class="sidebar-nav" style="display:flex;">
+        {% if current_user.has_permission('stock:query') %}
+        <a class="nav-link" href="{{ url_for('stock_query') }}">
+          <span class="nav-icon"><i class="bi bi-search"></i></span>
+          <span class="nav-text">Consulta de stock</span>
+        </a>
+        {% endif %}
+        {% if current_user.has_permission('slow_stock:view') %}
+        <a class="nav-link" href="{{ url_for('slow_stock') }}">
+          <span class="nav-icon"><i class="bi bi-hourglass-split"></i></span>
+          <span class="nav-text">Stock lento</span>
+        </a>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- ===== 4) Operaciones ===== -->
+    {% if current_user.is_authenticated and (current_user.has_permission('rebalancing:view') or current_user.has_permission('store_health:view') or current_user.has_permission('alerts:view') or current_user.has_permission('runs:view')) %}
     <div class="nav-group">
       <button class="nav-group-toggle" aria-expanded="true">
         <span class="nav-icon"><i class="bi bi-diagram-3"></i></span>
@@ -143,31 +144,39 @@
       </button>
 
       <div class="sidebar-nav" style="display:flex;">
-        <a class="nav-link" href="{{ url_for('runs') }}">
-          <span class="nav-icon"><i class="bi bi-clock-history"></i></span>
-          <span class="nav-text">Centro de Corridas</span>
+        {% if current_user.has_permission('rebalancing:view') %}
+        <a class="nav-link" href="{{ url_for('rebalancing') }}">
+          <span class="nav-icon"><i class="bi bi-arrow-left-right"></i></span>
+          <span class="nav-text">Redistribución</span>
         </a>
-        <a class="nav-link" href="{{ url_for('compare_runs') }}">
-          <span class="nav-icon"><i class="bi bi-intersect"></i></span>
-          <span class="nav-text">Comparar Corridas</span>
-        </a>
+        {% endif %}
         {% if current_user.has_permission('store_health:view') %}
         <a class="nav-link" href="{{ url_for('store_health') }}">
           <span class="nav-icon"><i class="bi bi-heart-pulse"></i></span>
-          <span class="nav-text">Salud Tiendas</span>
+          <span class="nav-text">Salud tiendas</span>
         </a>
         {% endif %}
         {% if current_user.has_permission('alerts:view') %}
         <a class="nav-link" href="{{ url_for('alerts_page') }}">
-          <span class="nav-icon"><i class="bi bi-bell"></i></span>
+          <span class="nav-icon"><i class="bi bi-exclamation-triangle"></i></span>
           <span class="nav-text">Alertas</span>
+        </a>
+        {% endif %}
+        {% if current_user.has_permission('runs:view') %}
+        <a class="nav-link" href="{{ url_for('runs') }}">
+          <span class="nav-icon"><i class="bi bi-clock-history"></i></span>
+          <span class="nav-text">Centro de corridas</span>
+        </a>
+        <a class="nav-link" href="{{ url_for('compare_runs') }}">
+          <span class="nav-icon"><i class="bi bi-intersect"></i></span>
+          <span class="nav-text">Comparar corridas</span>
         </a>
         {% endif %}
       </div>
     </div>
     {% endif %}
 
-    <!-- ===== Administración ===== -->
+    <!-- ===== 5) Administración ===== -->
     {% if current_user.is_authenticated and (current_user.has_permission('admin:users') or current_user.has_permission('audit:view')) %}
     <div class="nav-group">
       <button class="nav-group-toggle" aria-expanded="true">
@@ -180,13 +189,13 @@
         {% if current_user.has_permission('admin:users') %}
         <a class="nav-link" href="{{ url_for('admin_users') }}">
           <span class="nav-icon"><i class="bi bi-people"></i></span>
-          <span class="nav-text">Gestión usuarios</span>
+          <span class="nav-text">Gestión de usuarios</span>
         </a>
         {% endif %}
         {% if current_user.has_permission('audit:view') %}
         <a class="nav-link" href="{{ url_for('audit_view') }}">
           <span class="nav-icon"><i class="bi bi-journal-text"></i></span>
-          <span class="nav-text">Audit trail</span>
+          <span class="nav-text">Audit Trail</span>
         </a>
         {% endif %}
       </div>
@@ -210,7 +219,7 @@
         </div>
       </div>
 
-      <a class="nav-link nav-muted" href="{{ url_for('logout') }}">
+      <a class="nav-link logout-link" href="{{ url_for('logout') }}">
         <span class="nav-icon"><i class="bi bi-box-arrow-right"></i></span>
         <span class="nav-text">Cerrar sesión</span>
       </a>

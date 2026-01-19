@@ -1,0 +1,126 @@
+SIDEBAR FINAL REORDER (FastDSO V01) — Add “Carga de archivos” group + reorder all groups + fix Logout visibility
+
+Context:
+We must reorganize the sidebar modules in templates/base.html. Keep permissions, routes, and collapse behavior intact. Add a new group “Carga de archivos” that contains upload modules. Keep sidebar gradient/colors the same. Improve the visibility of the logout link (currently too faint due to gradient).
+
+STRICT RULES
+- Do NOT change backend routes or logic.
+- Do NOT change permission behavior; keep current_user.has_permission checks.
+- Only edit templates/base.html and static/css/style.css.
+- Keep menu order EXACTLY as specified below.
+- Use Bootstrap Icons (already included). No new icon libraries.
+
+TARGET GROUP ORDER (exact, top to bottom)
+
+1) “Ventas y Compras”
+   - Dashboard
+   - Dashboard por categoría
+   - Forecast compra
+
+2) “Carga de archivos”
+   - Stock CD
+   - Stock tiendas
+   - Carga ventas
+   - Ventas macro
+
+3) “Stock”
+   - Consulta de stock
+   - Stock lento
+
+4) “Operaciones”
+   - Redistribución
+   - Salud tiendas
+   - Alertas
+   - Centro de corridas
+   - Comparar corridas
+
+5) “Administración”
+   - Gestión de usuarios
+   - Audit Trail
+
+BOTTOM (unchanged location):
+- Active user chip
+- Logout link (must be more visible)
+
+ICON REQUIREMENTS (Bootstrap Icons)
+Group icons:
+- Ventas y Compras: bi-graph-up-arrow
+- Carga de archivos: bi-cloud-arrow-up
+- Stock: bi-box-seam
+- Operaciones: bi-diagram-3
+- Administración: bi-gear
+
+Item icons (suggested “pro” mapping):
+- Dashboard: bi-speedometer2
+- Dashboard por categoría: bi-tags
+- Forecast compra: bi-graph-up
+- Stock CD: bi-box-seam
+- Stock tiendas: bi-shop
+- Carga ventas: bi-file-earmark-arrow-up
+- Ventas macro: bi-database-up
+- Consulta de stock: bi-search
+- Stock lento: bi-hourglass-split
+- Redistribución: bi-arrow-left-right
+- Salud tiendas: bi-heart-pulse
+- Alertas: bi-exclamation-triangle
+- Centro de corridas: bi-clock-history
+- Comparar corridas: bi-intersect
+- Gestión usuarios: bi-people
+- Audit Trail: bi-journal-text
+
+IMPLEMENTATION STEPS
+
+A) Update templates/base.html
+1) Ensure collapsible nav groups remain (nav-group + nav-group-toggle).
+2) Create/modify the sidebar groups to match the exact order above.
+3) For each menu item, use the existing endpoint:
+   - Dashboard -> url_for('dashboard')
+   - Dashboard por categoría -> url_for('dashboard_category') (if name differs, search routes and use correct endpoint)
+   - Forecast compra -> url_for('purchase_forecast_v2') (or existing forecast endpoint)
+   - Stock CD -> url_for('upload_stock_cd')
+   - Stock tiendas -> url_for('upload_stock')
+   - Carga ventas -> url_for('upload')
+   - Ventas macro -> url_for('sales_macro_upload') (or the macro upload endpoint you created; search routes)
+   - Consulta de stock -> url_for('stock_query')
+   - Stock lento -> url_for('slow_stock') (search actual endpoint)
+   - Redistribución -> url_for('rebalancing')
+   - Salud tiendas -> url_for('store_health') (search actual endpoint)
+   - Alertas -> url_for('alerts') (or existing)
+   - Centro de corridas -> url_for('runs')
+   - Comparar corridas -> url_for('compare_runs')
+   - Gestión usuarios -> url_for('admin_users')
+   - Audit Trail -> url_for('audit_view')
+If any endpoint name differs, locate the correct route name and use it.
+
+4) Permissions:
+- Keep current_user.is_authenticated wrappers.
+- For each group, keep or add the correct permission checks:
+  - Ventas y Compras: dashboard:view, forecast_v2:view (use existing checks)
+  - Carga de archivos: sales:upload, stock_cd:upload, stock_store:upload, macro_sales:upload (use closest existing)
+  - Stock: stock:query, slow_stock:view
+  - Operaciones: rebalancing:view, store_health:view, alerts:view, runs:view
+  - Administración: admin:users, audit:view
+If permissions differ, follow the existing permission patterns already used in base.html.
+
+5) Remove unused “Nueva distribución” button if it still exists.
+
+B) Logout visibility fix (CSS + minimal HTML class)
+1) In base.html, add a specific class to logout link:
+   class="nav-link logout-link"
+(or keep existing nav-link classes and add logout-link additionally)
+
+2) Append CSS at end of static/css/style.css under:
+/* === Sidebar logout visibility === */
+Make logout readable without changing the gradient:
+- background: rgba(255,255,255,0.14)
+- border: 1px solid rgba(255,255,255,0.18)
+- color: rgba(255,255,255,0.95)
+- font-weight: 700
+- border-radius: 14px
+- hover: background rgba(255,255,255,0.20)
+
+DELIVERABLES
+- Updated templates/base.html with the exact group order and icons
+- Updated style.css snippet for logout visibility
+- Confirm menu order matches spec and links still work
+- Confirm logout is clearly visible

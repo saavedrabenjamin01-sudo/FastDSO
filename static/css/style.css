@@ -5911,3 +5911,26 @@ body{
 .alerts-bar-low {
   background: linear-gradient(90deg, #eab308, #ca8a04);
 }
+
+/* === Sidebar logout visibility === */
+.logout-link {
+  background: rgba(255,255,255,0.14) !important;
+  border: 1px solid rgba(255,255,255,0.18) !important;
+  color: rgba(255,255,255,0.95) !important;
+  font-weight: 700 !important;
+  border-radius: 14px !important;
+  margin-top: 8px;
+  transition: background 0.2s ease;
+}
+.logout-link:hover {
+  background: rgba(255,255,255,0.22) !important;
+  color: #fff !important;
+}
+.logout-link .nav-icon,
+.logout-link .nav-text {
+  color: rgba(255,255,255,0.95) !important;
+}
+.logout-link:hover .nav-icon,
+.logout-link:hover .nav-text {
+  color: #fff !important;
+}
