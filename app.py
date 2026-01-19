@@ -1602,6 +1602,137 @@ def generate_predictions_from_macro(
                     final_preds.append(it2)
                 break
     
+    skus_with_preds = {it['sku'] for it in final_preds if it.get('suggested', 0) > 0}
+    skus_without_preds = scope_skus_set - skus_with_preds
+    
+    COLD_START_MIN_FILL = 2
+    COLD_START_TARGET_WOC = 1.0
+    COLD_START_TOP_STORES = 10
+    COLD_START_WINDOW_WEEKS = 12
+    
+    cold_start_window = date.today() - timedelta(weeks=COLD_START_WINDOW_WEEKS)
+    
+    cold_start_candidates = []
+    cold_start_no_category = []
+    
+    if skus_without_preds:
+        category_store_rates = defaultdict(lambda: defaultdict(float))
+        cat_agg_query = (
+            db.session.query(
+                SalesWeeklyAgg.category,
+                SalesWeeklyAgg.store_id,
+                func.sum(SalesWeeklyAgg.units).label('total_units'),
+                func.count(func.distinct(SalesWeeklyAgg.week_start)).label('weeks')
+            )
+            .filter(SalesWeeklyAgg.week_start >= cold_start_window)
+            .filter(SalesWeeklyAgg.category.isnot(None))
+            .group_by(SalesWeeklyAgg.category, SalesWeeklyAgg.store_id)
+            .all()
+        )
+        
+        for cat, store_id, total_units, weeks in cat_agg_query:
+            if weeks > 0:
+                category_store_rates[cat][store_id] = (total_units or 0) / weeks
+        
+        latest_stock_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
+        store_stock_map = {}
+        if latest_stock_date:
+            stock_snap_q = (
+                db.session.query(StockSnapshot.product_id, StockSnapshot.store_id, StockSnapshot.quantity)
+                .filter(StockSnapshot.as_of_date == latest_stock_date)
+                .all()
+            )
+            for pid, sid, qty in stock_snap_q:
+                store_stock_map[(pid, sid)] = qty or 0
+        
+        for sku in skus_without_preds:
+            prod = product_map.get(sku)
+            if not prod:
+                continue
+            
+            category = prod.category
+            if not category or category.strip() == '':
+                cold_start_no_category.append({
+                    "sku": sku,
+                    "product_id": prod.id,
+                    "reason": "NO_CATEGORY"
+                })
+                continue
+            
+            cat_rates = category_store_rates.get(category, {})
+            if not cat_rates:
+                cold_start_no_category.append({
+                    "sku": sku,
+                    "product_id": prod.id,
+                    "reason": "NO_CATEGORY_SALES"
+                })
+                continue
+            
+            top_stores = sorted(cat_rates.items(), key=lambda x: x[1], reverse=True)[:COLD_START_TOP_STORES]
+            
+            for store_id, cat_sales_rate in top_stores:
+                store_name = store_map.get(store_id)
+                if not store_name:
+                    continue
+                
+                store_stock = store_stock_map.get((prod.id, store_id), 0)
+                
+                import math
+                suggested = max(COLD_START_MIN_FILL, math.ceil(COLD_START_TARGET_WOC * cat_sales_rate))
+                suggested = max(suggested - store_stock, 0)
+                
+                if suggested > 0:
+                    cold_start_candidates.append({
+                        "sku": sku,
+                        "store": store_name,
+                        "product_id": prod.id,
+                        "store_id": store_id,
+                        "suggested": suggested,
+                        "model_name": f"COLD_START_CATEGORY ({category})",
+                        "category": category,
+                        "cat_sales_rate": cat_sales_rate
+                    })
+        
+        cold_start_candidates.sort(key=lambda x: x.get('cat_sales_rate', 0), reverse=True)
+        
+        cd_remaining_after_base = {}
+        base_assigned_by_product = defaultdict(int)
+        for it in final_preds:
+            base_assigned_by_product[it["product_id"]] += int(it["suggested"])
+        
+        for product_id in cd_stock:
+            original = cd_stock[product_id]
+            assigned = base_assigned_by_product.get(product_id, 0)
+            cd_remaining_after_base[product_id] = max(original - assigned, 0)
+        
+        cold_start_per_product = defaultdict(list)
+        for cand in cold_start_candidates:
+            cold_start_per_product[cand["product_id"]].append(cand)
+        
+        for product_id, cands in cold_start_per_product.items():
+            remaining_cd = cd_remaining_after_base.get(product_id, cd_stock.get(product_id))
+            
+            if remaining_cd is None:
+                for c in cands:
+                    final_preds.append(c)
+                continue
+            
+            if remaining_cd <= 0:
+                continue
+            
+            for c in cands:
+                want = c["suggested"]
+                give = min(want, remaining_cd)
+                if give > 0:
+                    c["suggested"] = give
+                    remaining_cd -= give
+                    final_preds.append(c)
+                
+                if remaining_cd <= 0:
+                    break
+            
+            cd_remaining_after_base[product_id] = remaining_cd
+    
     target_week = next_monday()
     preds_bulk = []
     assigned_by_product = defaultdict(int)
