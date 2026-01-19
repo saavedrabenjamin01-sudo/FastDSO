@@ -1467,6 +1467,14 @@ def generate_predictions_from_macro(
     
     scope_skus_set = set(str(s).strip() for s in scope_skus)
     
+    if not scope_skus_set:
+        db.session.rollback()
+        raise ValueError("ABORT: Distribution request file contains no SKUs. Scope cannot be empty.")
+    
+    MAX_WOC_CAP = 2.0
+    MAX_UNITS_PER_STORE_EVENT = 10
+    TOTAL_UNITS_KILL_SWITCH = 50000
+    
     product_map = {}
     for sku in scope_skus_set:
         prod = Product.query.filter_by(sku=sku).first()
@@ -1521,7 +1529,7 @@ def generate_predictions_from_macro(
             if weekly.shape[0] < effective_min_weeks:
                 continue
             
-            base_mean = float(weekly.tail(win)['quantity'].mean())
+            weekly_rate = float(weekly.tail(win)['quantity'].mean())
             
             sku_key = str(sku).strip()
             store_key = str(store).strip()
@@ -1548,7 +1556,10 @@ def generate_predictions_from_macro(
             else:
                 stock_qty = 0
             
-            suggested = max(int(round(base_mean)) - stock_qty, 0)
+            import math
+            suggested_raw = max(int(round(weekly_rate)) - stock_qty, 0)
+            max_alloc_woc = math.ceil(MAX_WOC_CAP * weekly_rate)
+            suggested = min(suggested_raw, max_alloc_woc, MAX_UNITS_PER_STORE_EVENT)
             
             raw_preds.append({
                 "sku": sku_key,
@@ -1556,6 +1567,7 @@ def generate_predictions_from_macro(
                 "product_id": product.id,
                 "store_id": store_id,
                 "suggested": suggested,
+                "weekly_rate": weekly_rate,
                 "model_name": model_tag,
             })
             skus_with_sales_estimation.add(sku_key)
@@ -1598,9 +1610,26 @@ def generate_predictions_from_macro(
                 break
     
     skus_with_predictions = {it['sku'] for it in final_preds if it.get('suggested', 0) > 0}
-    skus_needing_cold_start = scope_skus_set - skus_with_sales_estimation - skus_with_predictions
-    skus_sparse_sales = skus_with_sales_estimation - skus_with_predictions
-    skus_needing_cold_start = skus_needing_cold_start.union(skus_sparse_sales)
+    skus_without_macro_sales = scope_skus_set - skus_with_sales_estimation
+    
+    latest_stock_date_for_sku_check = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
+    skus_with_any_store_stock = set()
+    if latest_stock_date_for_sku_check:
+        store_stock_by_sku = (
+            db.session.query(StockSnapshot.product_id, func.sum(StockSnapshot.quantity))
+            .filter(StockSnapshot.as_of_date == latest_stock_date_for_sku_check)
+            .filter(StockSnapshot.product_id.in_(product_ids))
+            .group_by(StockSnapshot.product_id)
+            .all()
+        )
+        pid_to_sku = {p.id: sku for sku, p in product_map.items()}
+        for pid, total_stock in store_stock_by_sku:
+            if total_stock and total_stock > 0:
+                sku_val = pid_to_sku.get(pid)
+                if sku_val:
+                    skus_with_any_store_stock.add(sku_val)
+    
+    skus_eligible_for_cold_start = skus_without_macro_sales - skus_with_any_store_stock
     
     COLD_START_MIN_FILL = 2
     COLD_START_TARGET_WOC = 1.0
@@ -1612,7 +1641,7 @@ def generate_predictions_from_macro(
     cold_start_candidates = []
     cold_start_no_category = []
     
-    if skus_needing_cold_start:
+    if skus_eligible_for_cold_start:
         category_store_rates = defaultdict(lambda: defaultdict(float))
         cat_agg_query = (
             db.session.query(
@@ -1642,7 +1671,7 @@ def generate_predictions_from_macro(
             for pid, sid, qty in stock_snap_q:
                 store_stock_map[(pid, sid)] = qty or 0
         
-        for sku in skus_needing_cold_start:
+        for sku in skus_eligible_for_cold_start:
             prod = product_map.get(sku)
             if not prod:
                 continue
@@ -1665,7 +1694,8 @@ def generate_predictions_from_macro(
                 })
                 continue
             
-            top_stores = sorted(cat_rates.items(), key=lambda x: x[1], reverse=True)[:COLD_START_TOP_STORES]
+            eligible_stores = [(sid, rate) for sid, rate in cat_rates.items() if rate > 0]
+            top_stores = sorted(eligible_stores, key=lambda x: x[1], reverse=True)[:COLD_START_TOP_STORES]
             
             for store_id, cat_sales_rate in top_stores:
                 store_name = store_map.get(store_id)
@@ -1674,9 +1704,13 @@ def generate_predictions_from_macro(
                 
                 store_stock = store_stock_map.get((prod.id, store_id), 0)
                 
+                if store_stock > 0:
+                    continue
+                
                 import math
-                suggested = max(COLD_START_MIN_FILL, math.ceil(COLD_START_TARGET_WOC * cat_sales_rate))
-                suggested = max(suggested - store_stock, 0)
+                suggested_raw = max(COLD_START_MIN_FILL, math.ceil(COLD_START_TARGET_WOC * cat_sales_rate))
+                max_alloc_woc = math.ceil(MAX_WOC_CAP * cat_sales_rate) if cat_sales_rate > 0 else COLD_START_MIN_FILL
+                suggested = min(suggested_raw, max_alloc_woc, MAX_UNITS_PER_STORE_EVENT)
                 
                 if suggested > 0:
                     cold_start_candidates.append({
@@ -1730,6 +1764,34 @@ def generate_predictions_from_macro(
             
             cd_remaining_after_base[product_id] = remaining_cd
     
+    total_units = sum(int(it["suggested"]) for it in final_preds)
+    cold_start_used = len([p for p in final_preds if 'COLD_START' in p.get('model_name', '')])
+    sales_based_used = len(final_preds) - cold_start_used
+    capped_rows = len([p for p in final_preds if p.get('suggested', 0) == MAX_UNITS_PER_STORE_EVENT])
+    max_single_row = max((p.get('suggested', 0) for p in final_preds), default=0)
+    
+    print(f"[DISTRIBUTION DEBUG] === RUN SAFETY CHECK ===")
+    print(f"[DISTRIBUTION DEBUG] Scope SKUs: {len(scope_skus_set)}")
+    print(f"[DISTRIBUTION DEBUG] SKUs with macro sales data: {len(skus_with_sales_estimation)}")
+    print(f"[DISTRIBUTION DEBUG] SKUs without macro sales: {len(skus_without_macro_sales)}")
+    print(f"[DISTRIBUTION DEBUG] SKUs with any store stock: {len(skus_with_any_store_stock)}")
+    print(f"[DISTRIBUTION DEBUG] SKUs eligible for cold start (no sales AND no stock): {len(skus_eligible_for_cold_start)}")
+    print(f"[DISTRIBUTION DEBUG] SKUs skipped (no category): {len(cold_start_no_category)}")
+    print(f"[DISTRIBUTION DEBUG] Final predictions: {len(final_preds)} ({sales_based_used} sales-based, {cold_start_used} cold start)")
+    print(f"[DISTRIBUTION DEBUG] Total units: {total_units}")
+    print(f"[DISTRIBUTION DEBUG] Capped rows (hit MAX_UNITS limit): {capped_rows}")
+    print(f"[DISTRIBUTION DEBUG] Max single row qty: {max_single_row}")
+    
+    if total_units > TOTAL_UNITS_KILL_SWITCH:
+        db.session.rollback()
+        print(f"[DISTRIBUTION KILL-SWITCH] ABORT: total_units ({total_units}) > {TOTAL_UNITS_KILL_SWITCH}")
+        raise ValueError(f"ABORT: Run exceeds safety limit. Total units ({total_units}) > {TOTAL_UNITS_KILL_SWITCH}. Distribution not saved.")
+    
+    if max_single_row > MAX_UNITS_PER_STORE_EVENT:
+        db.session.rollback()
+        print(f"[DISTRIBUTION KILL-SWITCH] ABORT: max_single_row ({max_single_row}) > {MAX_UNITS_PER_STORE_EVENT}")
+        raise ValueError(f"ABORT: Run exceeds per-store safety limit. Max row ({max_single_row}) > {MAX_UNITS_PER_STORE_EVENT}. Distribution not saved.")
+    
     target_week = next_monday()
     preds_bulk = []
     assigned_by_product = defaultdict(int)
@@ -1772,18 +1834,7 @@ def generate_predictions_from_macro(
     
     db.session.commit()
     
-    total_units = sum(int(it["suggested"]) for it in final_preds)
-    
-    cold_start_used = len([p for p in final_preds if 'COLD_START' in p.get('model_name', '')])
-    sales_based_used = len(final_preds) - cold_start_used
-    
-    print(f"[DISTRIBUTION DEBUG] Scope SKUs: {len(scope_skus_set)}")
-    print(f"[DISTRIBUTION DEBUG] SKUs with macro sales data: {len(skus_with_sales_estimation)}")
-    print(f"[DISTRIBUTION DEBUG] SKUs with positive predictions: {len(skus_with_predictions)}")
-    print(f"[DISTRIBUTION DEBUG] SKUs sparse/no sales (need cold start): {len(skus_needing_cold_start)}")
-    print(f"[DISTRIBUTION DEBUG] SKUs skipped (no category): {len(cold_start_no_category)}")
-    print(f"[DISTRIBUTION DEBUG] Final predictions: {len(final_preds)} ({sales_based_used} sales-based, {cold_start_used} cold start)")
-    print(f"[DISTRIBUTION DEBUG] Total units: {total_units}")
+    print(f"[DISTRIBUTION DEBUG] === RUN COMPLETED SUCCESSFULLY ===")
     
     return run_id, len(final_preds), total_units
 

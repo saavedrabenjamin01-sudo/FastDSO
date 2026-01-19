@@ -1,0 +1,57 @@
+CRITICAL: Prevent runaway distribution quantities permanently (hard safety + correct classification)
+
+We observed extreme allocations (e.g., a store with stock 3 and low historical sales receiving +21 units, and wrong use of cold_start_category). We need a TOTAL fix so this cannot happen again.
+
+Hard requirements (must implement all):
+
+1) SKU scope safety
+- Distribution Generator must ONLY process SKUs present in the Distribution Request file (scope_skus).
+- NEVER expand scope to all macro SKUs.
+- If scope_skus is empty -> abort with clear error.
+
+2) Correct cold-start classification (strict)
+A SKU is eligible for category cold start ONLY if:
+- SKU sales in macro window == 0
+- AND store stock for that SKU == 0 (for destination store)
+Optionally also require CD stock > 0 to allocate.
+If SKU has ANY store stock > 0 OR any macro sales > 0 => NOT cold start.
+
+3) Time normalization (no accumulated totals)
+All demand estimations must use weekly rates:
+weekly_rate = units_sum / weeks_in_window
+SMA 1/2/3 must be computed using ONLY the last 1/2/3 weeks in the macro window.
+
+4) Hard caps (two layers)
+Add global constants:
+- MAX_WOC_CAP = 2.0
+- MAX_UNITS_PER_STORE_EVENT = 10 (configurable)
+For every SKU-store suggestion:
+- max_alloc_woc = ceil(MAX_WOC_CAP * weekly_rate_store)
+- suggested_final = min(suggested_calc, max_alloc_woc, MAX_UNITS_PER_STORE_EVENT)
+
+5) Run safety kill-switch
+Before saving predictions:
+- If total_units_run > 50000 OR any row suggested_final > MAX_UNITS_PER_STORE_EVENT -> abort the run, show flash error, do not write predictions, do not discount CD stock.
+
+6) Logging for traceability
+For each run, log:
+- scope SKU count
+- SKUs sales-based count
+- SKUs cold-start count
+- SKUs skipped (missing category)
+- total_units_run
+- any capped rows count
+
+7) Apply consistently
+These rules must apply to:
+- SKU sales-based distribution
+- category cold-start distribution
+- and any hybrid logic
+Forecast purchase should also use normalized weekly rate (no accumulated totals), but caps are only for distribution.
+
+Deliverables:
+- Code changes implementing all 7 requirements
+- A regression test scenario:
+  - SKU with low sales and stock 3 must not receive huge qty
+  - cold_start must not apply if store has stock or SKU has macro sales
+  - run cannot exceed caps
