@@ -3776,8 +3776,24 @@ def upload():
         df_preview.columns = [str(c).strip().lower() for c in df_preview.columns]
         cols = set(df_preview.columns)
         
-        sales_required = {'store', 'date', 'quantity'}
-        request_mode = 'sku' in cols and not sales_required.issubset(cols)
+        sales_columns = {'store', 'date', 'quantity'}
+        has_sales_columns = sales_columns.issubset(cols)
+        
+        if has_sales_columns:
+            if is_ajax:
+                return jsonify({
+                    'ok': False, 
+                    'message': 'Este módulo no ingesta ventas. Para cargar historial de ventas, usa "Ventas macro" en el menú Carga de archivos.', 
+                    'category': 'warning'
+                }), 400
+            flash('Este módulo no ingesta ventas. Para cargar historial de ventas, usa "Ventas macro" en el menú Carga de archivos.', 'warning')
+            return redirect(url_for('upload'))
+        
+        if 'sku' not in cols:
+            if is_ajax:
+                return jsonify({'ok': False, 'message': 'Archivo debe contener columna "sku".', 'category': 'danger'}), 400
+            flash('Archivo debe contener columna "sku".', 'danger')
+            return redirect(url_for('upload'))
         
         upload_dir = os.path.join(BASE_DIR, 'instance', 'uploads')
         os.makedirs(upload_dir, exist_ok=True)
@@ -3795,143 +3811,119 @@ def upload():
         }
         user_id = current_user.id if current_user.is_authenticated else None
         
-        if request_mode:
-            try:
-                if filepath.endswith('.csv'):
-                    df_full = pd.read_csv(filepath, dtype=str)
+        # Request-file-only mode: always process as SKU list
+        try:
+            if filepath.endswith('.csv'):
+                df_full = pd.read_csv(filepath, dtype=str)
+            else:
+                df_full = pd.read_excel(filepath, dtype=str)
+            
+            df_full.columns = [str(c).strip().lower() for c in df_full.columns]
+            
+            df_full['sku'] = df_full['sku'].astype(str).str.strip()
+            df_full = df_full[df_full['sku'].notna() & (df_full['sku'] != '') & (df_full['sku'] != 'nan')]
+            
+            if len(df_full) == 0:
+                if is_ajax:
+                    return jsonify({'ok': False, 'message': 'Archivo no contiene SKUs válidos.', 'category': 'warning'}), 400
+                flash('Archivo no contiene SKUs válidos.', 'warning')
+                return redirect(url_for('upload'))
+            
+            has_name = 'product_name' in df_full.columns
+            has_category = 'category' in df_full.columns
+            
+            upserted_count = 0
+            for _, row in df_full.iterrows():
+                sku_val = row['sku']
+                product = Product.query.filter_by(sku=sku_val).first()
+                
+                if product:
+                    if has_name and pd.notna(row.get('product_name')) and str(row['product_name']).strip():
+                        if not product.name or product.name == sku_val:
+                            product.name = str(row['product_name']).strip()
+                    if has_category and pd.notna(row.get('category')) and str(row['category']).strip():
+                        cat_val = str(row['category']).strip()
+                        if cat_val not in ['', 'nan', 'None', 'NaN'] and not product.category:
+                            product.category = cat_val
                 else:
-                    df_full = pd.read_excel(filepath, dtype=str)
-                
-                df_full.columns = [str(c).strip().lower() for c in df_full.columns]
-                
-                if 'sku' not in df_full.columns:
-                    if is_ajax:
-                        return jsonify({'ok': False, 'message': 'Archivo debe contener columna "sku".', 'category': 'danger'}), 400
-                    flash('Archivo debe contener columna "sku".', 'danger')
-                    return redirect(url_for('upload'))
-                
-                df_full['sku'] = df_full['sku'].astype(str).str.strip()
-                df_full = df_full[df_full['sku'].notna() & (df_full['sku'] != '') & (df_full['sku'] != 'nan')]
-                
-                if len(df_full) == 0:
-                    if is_ajax:
-                        return jsonify({'ok': False, 'message': 'Archivo no contiene SKUs válidos.', 'category': 'warning'}), 400
-                    flash('Archivo no contiene SKUs válidos.', 'warning')
-                    return redirect(url_for('upload'))
-                
-                has_name = 'product_name' in df_full.columns
-                has_category = 'category' in df_full.columns
-                
-                upserted_count = 0
-                for _, row in df_full.iterrows():
-                    sku_val = row['sku']
-                    product = Product.query.filter_by(sku=sku_val).first()
-                    
-                    if product:
-                        if has_name and pd.notna(row.get('product_name')) and str(row['product_name']).strip():
-                            if not product.name or product.name == sku_val:
-                                product.name = str(row['product_name']).strip()
-                        if has_category and pd.notna(row.get('category')) and str(row['category']).strip():
-                            cat_val = str(row['category']).strip()
-                            if cat_val not in ['', 'nan', 'None', 'NaN'] and not product.category:
-                                product.category = cat_val
+                    new_prod = Product(sku=sku_val)
+                    if has_name and pd.notna(row.get('product_name')) and str(row['product_name']).strip():
+                        new_prod.name = str(row['product_name']).strip()
                     else:
-                        new_prod = Product(sku=sku_val)
-                        if has_name and pd.notna(row.get('product_name')) and str(row['product_name']).strip():
-                            new_prod.name = str(row['product_name']).strip()
-                        else:
-                            new_prod.name = sku_val
-                        if has_category and pd.notna(row.get('category')) and str(row['category']).strip():
-                            cat_val = str(row['category']).strip()
-                            if cat_val not in ['', 'nan', 'None', 'NaN']:
-                                new_prod.category = cat_val
-                        db.session.add(new_prod)
-                    upserted_count += 1
+                        new_prod.name = sku_val
+                    if has_category and pd.notna(row.get('category')) and str(row['category']).strip():
+                        cat_val = str(row['category']).strip()
+                        if cat_val not in ['', 'nan', 'None', 'NaN']:
+                            new_prod.category = cat_val
+                    db.session.add(new_prod)
+                upserted_count += 1
+            
+            db.session.commit()
+            
+            sku_list = df_full['sku'].unique().tolist()
+            
+            if not sku_list:
+                if is_ajax:
+                    return jsonify({'ok': False, 'message': 'No se encontraron SKUs válidos en el archivo.', 'category': 'warning'}), 400
+                flash('No se encontraron SKUs válidos en el archivo.', 'warning')
+                return redirect(url_for('upload'))
+            
+            macro_count = db.session.query(func.count(SalesWeeklyAgg.id)).scalar() or 0
+            if macro_count == 0:
+                session['distribution_request_skus'] = sku_list
+                session['distribution_request_mode'] = analysis_mode
+                session['distribution_request_meta'] = meta
                 
-                db.session.commit()
-                
-                sku_list = df_full['sku'].unique().tolist()
-                
-                if not sku_list:
-                    if is_ajax:
-                        return jsonify({'ok': False, 'message': 'No se encontraron SKUs válidos en el archivo.', 'category': 'warning'}), 400
-                    flash('No se encontraron SKUs válidos en el archivo.', 'warning')
-                    return redirect(url_for('upload'))
-                
-                macro_count = db.session.query(func.count(SalesWeeklyAgg.id)).scalar() or 0
-                if macro_count == 0:
-                    session['distribution_request_skus'] = sku_list
-                    session['distribution_request_mode'] = analysis_mode
-                    session['distribution_request_meta'] = meta
-                    
-                    msg = f'Archivo cargado: {len(sku_list)} SKUs. No hay ventas macro cargadas. Carga ventas macro primero.'
-                    
-                    if is_ajax:
-                        return jsonify({
-                            'ok': True,
-                            'message': msg,
-                            'category': 'warning',
-                            'redirect_url': url_for('upload')
-                        })
-                    flash(msg, 'warning')
-                    return redirect(url_for('upload'))
-                
-                run_id, n_preds, total_units = generate_predictions_from_macro(
-                    scope_skus=sku_list,
-                    mode=analysis_mode,
-                    meta=meta,
-                    user_id=user_id
-                )
-                
-                session.pop('distribution_request_skus', None)
-                session.pop('distribution_request_mode', None)
-                session.pop('distribution_request_meta', None)
-                
-                msg = f'Distribución generada: {n_preds} predicciones para {len(sku_list)} SKUs ({total_units:,} unidades)'
+                msg = f'Archivo cargado: {len(sku_list)} SKUs. No hay ventas macro cargadas. Carga ventas macro primero.'
                 
                 if is_ajax:
                     return jsonify({
                         'ok': True,
                         'message': msg,
-                        'category': 'success',
-                        'redirect_url': url_for('dashboard')
+                        'category': 'warning',
+                        'redirect_url': url_for('upload')
                     })
-                flash(msg, 'success')
-                return redirect(url_for('dashboard'))
-                
-            except Exception as e:
-                db.session.rollback()
-                if is_ajax:
-                    return jsonify({'ok': False, 'message': f'Error procesando archivo: {str(e)[:200]}', 'category': 'danger'}), 400
-                flash(f'Error procesando archivo: {str(e)[:200]}', 'danger')
+                flash(msg, 'warning')
                 return redirect(url_for('upload'))
-        
-        payload = {
-            'filepath': filepath,
-            'analysis_mode': analysis_mode,
-            'meta': meta,
-            'user_id': user_id,
-            'original_filename': file.filename
-        }
-        
-        job_id = create_and_run_job(
-            job_type='upload_sales',
-            task_func=process_sales_upload,
-            payload=payload,
-            user_id=user_id
-        )
-        
-        if is_ajax:
-            flash('Ventas procesadas exitosamente.', 'success')
-            return jsonify({
-                'ok': True,
-                'job_id': job_id,
-                'redirect_url': url_for('dashboard'),
-                'message': 'Archivo recibido. Procesando ventas y distribución...',
-                'category': 'success'
-            })
-        
-        return redirect(url_for('job_status_view', job_id=job_id))
+            
+            run_id, n_preds, total_units = generate_predictions_from_macro(
+                scope_skus=sku_list,
+                mode=analysis_mode,
+                meta=meta,
+                user_id=user_id
+            )
+            
+            session.pop('distribution_request_skus', None)
+            session.pop('distribution_request_mode', None)
+            session.pop('distribution_request_meta', None)
+            
+            try:
+                os.remove(filepath)
+            except:
+                pass
+            
+            msg = f'Distribución generada: {n_preds} predicciones para {len(sku_list)} SKUs ({total_units:,} unidades)'
+            
+            if is_ajax:
+                return jsonify({
+                    'ok': True,
+                    'message': msg,
+                    'category': 'success',
+                    'redirect_url': url_for('dashboard')
+                })
+            flash(msg, 'success')
+            return redirect(url_for('dashboard'))
+            
+        except Exception as e:
+            db.session.rollback()
+            try:
+                os.remove(filepath)
+            except:
+                pass
+            if is_ajax:
+                return jsonify({'ok': False, 'message': f'Error procesando archivo: {str(e)[:200]}', 'category': 'danger'}), 400
+            flash(f'Error procesando archivo: {str(e)[:200]}', 'danger')
+            return redirect(url_for('upload'))
 
     pending_skus = session.get('distribution_request_skus', [])
     return render_template('upload.html', require_stock_confirm=require_stock_confirm, pending_skus=pending_skus)

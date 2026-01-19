@@ -13,8 +13,8 @@
         <form method="post" enctype="multipart/form-data"
               data-loader="true"
               data-ajax="true"
-              data-loader-title="Procesando Ventas y Distribución"
-              data-loader-msg="Analizando ventas y preparando envíos sugeridos a tiendas..."
+              data-loader-title="Generando Distribución"
+              data-loader-msg="Procesando solicitud y calculando distribución sugerida..."
               data-loader-icon="truck">
 
           {% if require_stock_confirm %}
@@ -96,16 +96,14 @@
             <ul class="upload-req-list">
               <li><code>sku</code> — Código del producto <strong>(requerido)</strong></li>
               <li><code>product_name</code> — Nombre del producto (opcional)</li>
-              <li><code>category</code> — Categoría del producto (opcional, se asigna si el producto no tiene)</li>
-            </ul>
-            <p class="mb-2 text-muted">El sistema generará distribución sugerida usando datos de ventas macro.</p>
-            <hr class="my-2">
-            <p class="mb-2"><strong>Formato legacy (ventas históricas):</strong></p>
-            <ul class="upload-req-list">
-              <li><code>sku</code>, <code>product_name</code>, <code>store</code>, <code>quantity</code>, <code>date</code></li>
+              <li><code>category</code> — Categoría del producto (opcional, habilita cold start para SKUs nuevos)</li>
             </ul>
             <p class="mb-1"><strong>Formatos aceptados:</strong> <code>.csv</code>, <code>.xlsx</code></p>
             <p class="text-muted mb-0">El SKU debe ser texto para preservar ceros a la izquierda.</p>
+            <div class="alert alert-info mt-3 mb-0 py-2">
+              <i class="bi bi-info-circle me-1"></i>
+              <strong>Nota:</strong> Este módulo no ingesta ventas. Para cargar historial de ventas, usa "Ventas macro".
+            </div>
           </div>
         </div>
       </div>
