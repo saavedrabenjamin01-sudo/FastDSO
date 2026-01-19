@@ -1390,6 +1390,265 @@ def generate_predictions(
 
     return run_id, len(final_preds), None, None, None
 
+
+def generate_predictions_from_macro(
+    scope_skus: list,
+    mode: str = "sma3_min3",
+    meta: dict | None = None,
+    user_id: int | None = None
+):
+    """
+    Generate distribution predictions from SalesWeeklyAgg (macro layer)
+    constrained to the specified scope_skus only.
+    
+    CRITICAL: This function NEVER uses macro sales as the SKU universe.
+    It ONLY generates predictions for SKUs in scope_skus.
+    """
+    from uuid import uuid4
+    
+    if not scope_skus:
+        raise ValueError("scope_skus cannot be empty - no distribution will be generated")
+    
+    run_id = str(uuid4())
+    meta = meta or {}
+    
+    prediction_run = Run(
+        run_id=run_id,
+        run_type='distribution',
+        user_id=user_id,
+        folio=meta.get("folio"),
+        responsable=meta.get("responsable"),
+        categoria=meta.get("categoria"),
+        notes=meta.get("fecha_doc"),
+        mode=mode,
+        status='completed'
+    )
+    db.session.add(prediction_run)
+    db.session.flush()
+    
+    if mode == "sma3_min3":
+        win = 3
+        min_weeks = 3
+        use_stock = True
+        model_tag = "Promedio móvil 3 semanas (macro)"
+    elif mode == "sma2_min2":
+        win = 2
+        min_weeks = 2
+        use_stock = True
+        model_tag = "Promedio móvil 2 semanas (macro)"
+    elif mode == "sma1_no_min":
+        win = 1
+        min_weeks = 1
+        use_stock = True
+        model_tag = "Última semana (macro)"
+    elif mode == "sma3_ignore_stock":
+        win = 3
+        min_weeks = 3
+        use_stock = False
+        model_tag = "Promedio móvil 3 semanas sin ajuste (macro)"
+    else:
+        win = 3
+        min_weeks = 3
+        use_stock = True
+        model_tag = "Promedio móvil 3 semanas (macro)"
+    
+    if meta:
+        extra_bits = []
+        if meta.get("folio"):
+            extra_bits.append(f"Folio: {meta['folio']}")
+        if meta.get("responsable"):
+            extra_bits.append(f"Resp: {meta['responsable']}")
+        if meta.get("categoria"):
+            extra_bits.append(f"Cat: {meta['categoria']}")
+        if meta.get("fecha_doc"):
+            extra_bits.append(f"Fecha doc: {meta['fecha_doc']}")
+        if extra_bits:
+            model_tag = f"{model_tag} — " + " | ".join(extra_bits)
+    
+    scope_skus_set = set(str(s).strip() for s in scope_skus)
+    
+    product_map = {}
+    for sku in scope_skus_set:
+        prod = Product.query.filter_by(sku=sku).first()
+        if prod:
+            product_map[sku] = prod
+    
+    if not product_map:
+        db.session.commit()
+        return run_id, 0, 0
+    
+    product_ids = [p.id for p in product_map.values()]
+    store_map = {s.id: s.name for s in Store.query.all()}
+    store_id_map = {s.name: s.id for s in Store.query.all()}
+    
+    agg_rows = (
+        SalesWeeklyAgg.query
+        .filter(SalesWeeklyAgg.product_id.in_(product_ids))
+        .all()
+    )
+    
+    if not agg_rows:
+        db.session.commit()
+        return run_id, 0, 0
+    
+    sku_by_pid = {p.id: p.sku for p in product_map.values()}
+    
+    data = []
+    for r in agg_rows:
+        sku_val = sku_by_pid.get(r.product_id)
+        store_name = store_map.get(r.store_id)
+        if sku_val and store_name:
+            data.append({
+                'sku': sku_val,
+                'store': store_name,
+                'product_id': r.product_id,
+                'store_id': r.store_id,
+                'quantity': r.units,
+                'week_start': r.week_start
+            })
+    
+    if not data:
+        db.session.commit()
+        return run_id, 0, 0
+    
+    df = pd.DataFrame(data)
+    df['week_start'] = pd.to_datetime(df['week_start'])
+    
+    raw_preds = []
+    
+    for (sku, store), gdf in df.groupby(['sku', 'store']):
+        weekly = (
+            gdf.groupby('week_start', as_index=False)['quantity']
+            .sum()
+            .sort_values('week_start')
+        )
+        
+        effective_min_weeks = max(min_weeks, 1)
+        if weekly.shape[0] < effective_min_weeks:
+            continue
+        
+        base_mean = float(weekly.tail(win)['quantity'].mean())
+        
+        sku_key = str(sku).strip()
+        store_key = str(store).strip()
+        
+        product = product_map.get(sku_key)
+        if not product:
+            continue
+        
+        store_id = store_id_map.get(store_key)
+        if not store_id:
+            continue
+        
+        if use_stock:
+            latest_stock = (
+                db.session.query(StockSnapshot)
+                .filter(
+                    StockSnapshot.product_id == product.id,
+                    StockSnapshot.store_id == store_id
+                )
+                .order_by(StockSnapshot.as_of_date.desc())
+                .first()
+            )
+            stock_qty = latest_stock.quantity if latest_stock else 0
+        else:
+            stock_qty = 0
+        
+        suggested = max(int(round(base_mean)) - stock_qty, 0)
+        
+        raw_preds.append({
+            "sku": sku_key,
+            "store": store_key,
+            "product_id": product.id,
+            "store_id": store_id,
+            "suggested": suggested,
+            "model_name": model_tag,
+        })
+    
+    snapshot_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar()
+    
+    if snapshot_date:
+        cd_stock_rows = StockCD.query.filter_by(as_of_date=snapshot_date).filter(
+            StockCD.product_id.in_(product_ids)
+        ).all()
+        cd_stock = {row.product_id: row.quantity for row in cd_stock_rows}
+    else:
+        cd_stock = {}
+    
+    per_product = defaultdict(list)
+    for r in raw_preds:
+        per_product[r["product_id"]].append(r)
+    
+    final_preds = []
+    
+    for product_id, items in per_product.items():
+        items.sort(key=lambda x: x["suggested"], reverse=True)
+        
+        available = cd_stock.get(product_id, None)
+        if available is None:
+            final_preds.extend(items)
+            continue
+        
+        for idx, it in enumerate(items):
+            want = it["suggested"]
+            give = min(want, available)
+            it["suggested"] = give
+            available -= give
+            final_preds.append(it)
+            
+            if available <= 0:
+                for it2 in items[idx+1:]:
+                    it2["suggested"] = 0
+                    final_preds.append(it2)
+                break
+    
+    target_week = next_monday()
+    preds_bulk = []
+    assigned_by_product = defaultdict(int)
+    
+    for it in final_preds:
+        assigned_qty = int(it["suggested"])
+        assigned_by_product[it["product_id"]] += assigned_qty
+    
+    for it in final_preds:
+        assigned_qty = int(it["suggested"])
+        
+        existing = Prediction.query.filter_by(
+            product_id=it["product_id"],
+            store_id=it["store_id"],
+            target_period_start=target_week,
+            run_id=run_id
+        ).first()
+        
+        if existing:
+            existing.quantity = assigned_qty
+            existing.model_name = it["model_name"]
+        else:
+            preds_bulk.append(Prediction(
+                product_id=it["product_id"],
+                store_id=it["store_id"],
+                target_period_start=target_week,
+                quantity=assigned_qty,
+                model_name=it["model_name"],
+                run_id=run_id
+            ))
+    
+    if preds_bulk:
+        db.session.add_all(preds_bulk)
+    
+    if snapshot_date:
+        for product_id, assigned_total in assigned_by_product.items():
+            cd_row = StockCD.query.filter_by(as_of_date=snapshot_date, product_id=product_id).first()
+            if cd_row:
+                cd_row.quantity = max(cd_row.quantity - assigned_total, 0)
+    
+    db.session.commit()
+    
+    total_units = sum(int(it["suggested"]) for it in final_preds)
+    
+    return run_id, len(final_preds), total_units
+
+
 from flask import g
 from datetime import date
 
@@ -3461,21 +3720,53 @@ def upload():
                 db.session.commit()
                 
                 sku_list = df_full['sku'].unique().tolist()
-                session['distribution_request_skus'] = sku_list
-                session['distribution_request_mode'] = analysis_mode
-                session['distribution_request_meta'] = meta
                 
-                msg = f'Archivo de solicitud cargado: {len(sku_list)} SKUs. El siguiente paso generará distribución desde ventas macro.'
+                if not sku_list:
+                    if is_ajax:
+                        return jsonify({'ok': False, 'message': 'No se encontraron SKUs válidos en el archivo.', 'category': 'warning'}), 400
+                    flash('No se encontraron SKUs válidos en el archivo.', 'warning')
+                    return redirect(url_for('upload'))
+                
+                macro_count = db.session.query(func.count(SalesWeeklyAgg.id)).scalar() or 0
+                if macro_count == 0:
+                    session['distribution_request_skus'] = sku_list
+                    session['distribution_request_mode'] = analysis_mode
+                    session['distribution_request_meta'] = meta
+                    
+                    msg = f'Archivo cargado: {len(sku_list)} SKUs. No hay ventas macro cargadas. Carga ventas macro primero.'
+                    
+                    if is_ajax:
+                        return jsonify({
+                            'ok': True,
+                            'message': msg,
+                            'category': 'warning',
+                            'redirect_url': url_for('upload')
+                        })
+                    flash(msg, 'warning')
+                    return redirect(url_for('upload'))
+                
+                run_id, n_preds, total_units = generate_predictions_from_macro(
+                    scope_skus=sku_list,
+                    mode=analysis_mode,
+                    meta=meta,
+                    user_id=user_id
+                )
+                
+                session.pop('distribution_request_skus', None)
+                session.pop('distribution_request_mode', None)
+                session.pop('distribution_request_meta', None)
+                
+                msg = f'Distribución generada: {n_preds} predicciones para {len(sku_list)} SKUs ({total_units:,} unidades)'
                 
                 if is_ajax:
                     return jsonify({
                         'ok': True,
                         'message': msg,
-                        'category': 'info',
-                        'redirect_url': url_for('upload')
+                        'category': 'success',
+                        'redirect_url': url_for('dashboard')
                     })
-                flash(msg, 'info')
-                return redirect(url_for('upload'))
+                flash(msg, 'success')
+                return redirect(url_for('dashboard'))
                 
             except Exception as e:
                 db.session.rollback()
