@@ -95,7 +95,7 @@
         {% if current_user.has_permission('sales:upload') %}
         <a class="nav-link" href="{{ url_for('upload') }}">
           <span class="nav-icon"><i class="bi bi-file-earmark-arrow-up"></i></span>
-          <span class="nav-text">Carga ventas</span>
+          <span class="nav-text">Generador de distribución</span>
         </a>
         {% endif %}
         {% if current_user.has_permission('sales_macro:upload') %}
