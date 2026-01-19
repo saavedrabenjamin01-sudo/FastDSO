@@ -5444,7 +5444,10 @@ def compute_rebalancing_suggestions(
     Optimized: Uses indexed lookups instead of O(n*m) scans.
     """
     today = date.today()
-    cutoff = today - timedelta(days=weeks_window * 7)
+    window_start_week = today - timedelta(days=weeks_window * 7)
+    window_start_week = window_start_week - timedelta(days=window_start_week.weekday())
+    
+    app.logger.info(f"Redistribution using SalesWeeklyAgg from {window_start_week} to {today}")
     
     latest_stock_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
     if not latest_stock_date:
@@ -5465,30 +5468,24 @@ def compute_rebalancing_suggestions(
         stock_map[(pid, sid)] = qty
         stores_per_product_stock[pid].add(sid)
     
-    week_expr = db.func.strftime('%Y-%W', DistributionRecord.event_date)
     sales_q = (
         db.session.query(
-            DistributionRecord.product_id,
-            DistributionRecord.store_id,
-            week_expr.label('week'),
-            db.func.sum(DistributionRecord.quantity).label('weekly_qty')
+            SalesWeeklyAgg.product_id,
+            SalesWeeklyAgg.store_id,
+            db.func.sum(SalesWeeklyAgg.units).label('total_units'),
+            db.func.count(db.func.distinct(SalesWeeklyAgg.week_start)).label('weeks_count')
         )
-        .filter(DistributionRecord.event_date >= cutoff)
-        .group_by(DistributionRecord.product_id, DistributionRecord.store_id, week_expr)
+        .filter(SalesWeeklyAgg.week_start >= window_start_week)
+        .group_by(SalesWeeklyAgg.product_id, SalesWeeklyAgg.store_id)
         .all()
     )
     
-    weekly_sales = defaultdict(lambda: defaultdict(list))
-    stores_per_product_sales = defaultdict(set)
-    for pid, sid, week, qty in sales_q:
-        weekly_sales[pid][(pid, sid)].append(qty)
-        stores_per_product_sales[pid].add(sid)
-    
     sales_rate_map = {}
-    for pid in weekly_sales:
-        for key, weeks_list in weekly_sales[pid].items():
-            avg_rate = sum(weeks_list) / max(len(weeks_list), 1)
-            sales_rate_map[key] = avg_rate
+    stores_per_product_sales = defaultdict(set)
+    for pid, sid, total_units, weeks_count in sales_q:
+        rate = total_units / max(weeks_count, 1)
+        sales_rate_map[(pid, sid)] = rate
+        stores_per_product_sales[pid].add(sid)
     
     product_info = {p.id: (p.sku, p.name) for p in Product.query.all()}
     store_info = {s.id: s.name for s in Store.query.all()}

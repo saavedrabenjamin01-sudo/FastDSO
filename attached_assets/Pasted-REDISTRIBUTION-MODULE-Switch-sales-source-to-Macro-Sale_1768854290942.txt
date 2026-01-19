@@ -1,0 +1,57 @@
+REDISTRIBUTION MODULE — Switch sales source to Macro Sales (SalesWeeklyAgg) only
+
+Problem:
+Store-to-store redistribution is currently reading sales from the wrong place (DistributionRecord or subset sales). It must use Macro Sales aggregation (SalesWeeklyAgg) to be consistent with the new architecture and avoid performance issues.
+
+Goal:
+Refactor redistribution to compute sales rates exclusively from SalesWeeklyAgg, respecting the configured history window, without changing the redistribution rules (WOC min/target/max, retain_woc, donor_floor, min_transfer_qty).
+
+STRICT RULES
+- Do NOT change UI fields or parameter semantics.
+- Do NOT change the redistribution algorithm decision rules, only the sales data source.
+- Do NOT add new tables.
+- Do NOT reference DistributionRecord anywhere in redistribution after this change.
+
+Implementation requirements:
+
+1) Determine window:
+- history_weeks comes from user input
+- window_start_week = Monday(today - history_weeks*7 days)
+
+2) Pull sales from SalesWeeklyAgg:
+- Query SalesWeeklyAgg for all rows where week_start >= window_start_week
+- Aggregate per (product_id, store_id):
+  units_sum = SUM(units)
+  weeks_count = COUNT(DISTINCT week_start) in window (global or per store)
+  sales_rate = units_sum / max(weeks_count, 1)
+
+3) Use that sales_rate for:
+- receiver need calculation
+- donor retain calculation
+- WOC computation
+(keep your existing formulas)
+
+4) Performance:
+- Avoid per-row DB queries.
+- Batch fetch:
+  - product_ids involved
+  - store_ids involved
+  - latest StockSnapshot for those pairs
+  - sales aggregates from SalesWeeklyAgg
+- Build dicts in memory:
+  sales_rate[(product_id, store_id)] = rate
+  stock[(product_id, store_id)] = qty
+
+5) Output unchanged:
+- Suggestions list/table stays the same structure
+- Pagination remains
+- Export remains
+
+6) Validation:
+- Add a temporary debug log line:
+  “Redistribution using SalesWeeklyAgg from {window_start_week} to {today}”
+- Confirm no code path queries DistributionRecord.
+
+Deliverable:
+- Show the modified redistribution function and any helper introduced.
+- Confirm the module now respects macro sales and matches forecast/distribution behavior.
