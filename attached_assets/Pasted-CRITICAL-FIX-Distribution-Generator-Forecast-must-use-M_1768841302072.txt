@@ -1,0 +1,120 @@
+CRITICAL FIX — Distribution Generator + Forecast must use Macro Sales as the single source of truth, and must support category fallback for SKUs with no sales.
+
+Current bugs:
+1) Forecast says “no sales history found” even for SKUs that clearly sold, because it is not reading Macro Sales (SalesWeeklyAgg).
+2) New SKUs (no sales) do not generate distribution, because category fallback is not actually executed.
+3) We must NEVER generate distribution for all macro SKUs by accident. The SKU universe must always be constrained by the uploaded Distribution Request file.
+
+GOAL
+A) Make SalesWeeklyAgg the primary/only historical sales source for:
+   - Distribution Generator (SKU request file)
+   - Forecast purchase (V2)
+B) Add category-based cold start for SKUs that have zero sales in the macro layer:
+   - min_fill = 2
+   - target_WOC = 1.0
+   - eligible stores = Top 10 stores by category sales in the window
+C) Enforce safety rails:
+   - distribution scope = ONLY SKUs from request file (always)
+   - if request sku list is empty => abort
+   - never expand scope to “all macro skus”
+
+STRICT RULES
+- Do NOT change unrelated modules.
+- Do NOT reintroduce subset “sales upload” for distribution. Distribution Generator consumes SKU list only.
+- Preserve leading zeros for SKU everywhere.
+- Keep Stock CD and Store Stock logic unchanged.
+- Keep run_id logic intact.
+
+PART 1 — VERIFY AND FIX MACRO SALES LOOKUP
+1) Identify the aggregated sales table being used (SalesWeeklyAgg).
+2) Ensure there is a clear function to fetch sales time series for a set of SKUs:
+   - input: scope_skus, window_weeks (or start_date), optional store filter
+   - output: weekly units per sku-store-week
+3) Fix any current code that still queries DistributionRecord for forecast/distribution history.
+   - Replace with SalesWeeklyAgg queries.
+
+PART 2 — DISTRIBUTION GENERATOR (SKU REQUEST FILE)
+In the Distribution Generator route:
+- Parse request file: required column `sku`, optional product_name, category.
+- Build scope_skus = set of uploaded skus (strip, preserve as text).
+- Upsert Product:
+   - sku
+   - name if provided
+   - category if provided and Product.category is empty
+- If scope_skus empty => flash error and stop.
+
+Then generate distribution:
+A) For each sku in scope_skus:
+   1) Attempt “normal sales-based” estimation:
+      - Pull sales history from SalesWeeklyAgg for that sku across stores in the lookback window.
+      - Compute sales_rate per store using selected model:
+        win = 1/2/3 weeks (last weeks SMA), based on user-selected model.
+      - If sku has sufficient sales weeks in window, proceed with sales-based suggested qty.
+   2) If sku has no sales (no rows in SalesWeeklyAgg in window):
+      - Apply CATEGORY FALLBACK (cold start), only if category exists.
+
+B) Category fallback (Cold start):
+- min_fill = 2
+- target_WOC = 1.0
+- eligible stores = Top 10 stores by category weekly rate in the window
+Steps:
+1) Determine category:
+   - Product.category preferred; fallback to request file category column.
+   - If category missing => do not distribute this sku; record reason.
+2) Compute category sales rate by store:
+   - Use SalesWeeklyAgg joined with Product.category = category
+   - Aggregate last window weeks per store and compute avg weekly units.
+3) Select top 10 stores by avg weekly units (eligible stores).
+4) For each eligible store:
+   - cat_rate = avg weekly units for category in that store
+   - need_units = ceil(target_WOC * cat_rate)
+   - suggested = max(min_fill, need_units)
+   - adjust by destination store stock for this sku (StockSnapshot latest)
+   - suggested = max(suggested - stock_dest, 0)
+5) CD limiting:
+   - Allocate CD stock for this sku across eligible stores (highest cat_rate first).
+6) Mark each resulting prediction row:
+   - model_name includes “COLD_START_CATEGORY”
+   - reason field if available, or store in model_name text
+
+C) Safety rails:
+- Ensure ONLY sku in scope_skus get processed.
+- Never query macro data to build sku list.
+- Do not create predictions for skus not in scope_skus.
+
+PART 3 — FORECAST PURCHASE V2 MUST USE MACRO SALES
+In purchase forecast V2:
+- Replace any DistributionRecord history usage with SalesWeeklyAgg.
+- For a given SKU:
+  - Pull last N weeks from SalesWeeklyAgg across selected stores (or global)
+  - Compute avg weekly demand from that.
+- If no macro sales data for SKU:
+  - If category exists, compute category proxy demand (optional V01) OR show “No macro history”
+- This must fix the current “no sales history found” bug for SKUs with macro sales.
+
+PART 4 — DEBUG LOGGING (temporary)
+Add temporary logging for validation:
+- number of scope SKUs
+- number of SKUs with sales-based estimation
+- number of SKUs using category fallback
+- number of SKUs skipped due to missing category
+- total predicted units
+
+PART 5 — TEST CASES (must verify)
+1) SKU with macro sales:
+- Request file contains SKU A
+- Should generate distribution using SKU A sales
+2) SKU with NO sales but category present:
+- Request file contains SKU NEW, category=Consolas
+- Should generate distribution (min_fill=2) to top 10 category stores
+3) SKU with NO sales and NO category:
+- Should produce 0 distribution and a clear warning, not crash
+4) Forecast V2:
+- A SKU with macro sales should NOT show “no history found”.
+
+DELIVERABLE
+- Provide the modified code sections for:
+  - distribution generator route
+  - distribution generation function (macro + fallback)
+  - forecast v2 data source change
+- Confirm the runaway 440k issue cannot happen again.

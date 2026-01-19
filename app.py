@@ -1487,10 +1487,6 @@ def generate_predictions_from_macro(
         .all()
     )
     
-    if not agg_rows:
-        db.session.commit()
-        return run_id, 0, 0
-    
     sku_by_pid = {p.id: p.sku for p in product_map.values()}
     
     data = []
@@ -1507,63 +1503,62 @@ def generate_predictions_from_macro(
                 'week_start': r.week_start
             })
     
-    if not data:
-        db.session.commit()
-        return run_id, 0, 0
-    
-    df = pd.DataFrame(data)
-    df['week_start'] = pd.to_datetime(df['week_start'])
-    
     raw_preds = []
+    skus_with_sales_estimation = set()
     
-    for (sku, store), gdf in df.groupby(['sku', 'store']):
-        weekly = (
-            gdf.groupby('week_start', as_index=False)['quantity']
-            .sum()
-            .sort_values('week_start')
-        )
+    if data:
+        df = pd.DataFrame(data)
+        df['week_start'] = pd.to_datetime(df['week_start'])
         
-        effective_min_weeks = max(min_weeks, 1)
-        if weekly.shape[0] < effective_min_weeks:
-            continue
-        
-        base_mean = float(weekly.tail(win)['quantity'].mean())
-        
-        sku_key = str(sku).strip()
-        store_key = str(store).strip()
-        
-        product = product_map.get(sku_key)
-        if not product:
-            continue
-        
-        store_id = store_id_map.get(store_key)
-        if not store_id:
-            continue
-        
-        if use_stock:
-            latest_stock = (
-                db.session.query(StockSnapshot)
-                .filter(
-                    StockSnapshot.product_id == product.id,
-                    StockSnapshot.store_id == store_id
-                )
-                .order_by(StockSnapshot.as_of_date.desc())
-                .first()
+        for (sku, store), gdf in df.groupby(['sku', 'store']):
+            weekly = (
+                gdf.groupby('week_start', as_index=False)['quantity']
+                .sum()
+                .sort_values('week_start')
             )
-            stock_qty = latest_stock.quantity if latest_stock else 0
-        else:
-            stock_qty = 0
-        
-        suggested = max(int(round(base_mean)) - stock_qty, 0)
-        
-        raw_preds.append({
-            "sku": sku_key,
-            "store": store_key,
-            "product_id": product.id,
-            "store_id": store_id,
-            "suggested": suggested,
-            "model_name": model_tag,
-        })
+            
+            effective_min_weeks = max(min_weeks, 1)
+            if weekly.shape[0] < effective_min_weeks:
+                continue
+            
+            base_mean = float(weekly.tail(win)['quantity'].mean())
+            
+            sku_key = str(sku).strip()
+            store_key = str(store).strip()
+            
+            product = product_map.get(sku_key)
+            if not product:
+                continue
+            
+            store_id = store_id_map.get(store_key)
+            if not store_id:
+                continue
+            
+            if use_stock:
+                latest_stock = (
+                    db.session.query(StockSnapshot)
+                    .filter(
+                        StockSnapshot.product_id == product.id,
+                        StockSnapshot.store_id == store_id
+                    )
+                    .order_by(StockSnapshot.as_of_date.desc())
+                    .first()
+                )
+                stock_qty = latest_stock.quantity if latest_stock else 0
+            else:
+                stock_qty = 0
+            
+            suggested = max(int(round(base_mean)) - stock_qty, 0)
+            
+            raw_preds.append({
+                "sku": sku_key,
+                "store": store_key,
+                "product_id": product.id,
+                "store_id": store_id,
+                "suggested": suggested,
+                "model_name": model_tag,
+            })
+            skus_with_sales_estimation.add(sku_key)
     
     snapshot_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar()
     
@@ -1602,8 +1597,10 @@ def generate_predictions_from_macro(
                     final_preds.append(it2)
                 break
     
-    skus_with_preds = {it['sku'] for it in final_preds if it.get('suggested', 0) > 0}
-    skus_without_preds = scope_skus_set - skus_with_preds
+    skus_with_predictions = {it['sku'] for it in final_preds if it.get('suggested', 0) > 0}
+    skus_needing_cold_start = scope_skus_set - skus_with_sales_estimation - skus_with_predictions
+    skus_sparse_sales = skus_with_sales_estimation - skus_with_predictions
+    skus_needing_cold_start = skus_needing_cold_start.union(skus_sparse_sales)
     
     COLD_START_MIN_FILL = 2
     COLD_START_TARGET_WOC = 1.0
@@ -1615,7 +1612,7 @@ def generate_predictions_from_macro(
     cold_start_candidates = []
     cold_start_no_category = []
     
-    if skus_without_preds:
+    if skus_needing_cold_start:
         category_store_rates = defaultdict(lambda: defaultdict(float))
         cat_agg_query = (
             db.session.query(
@@ -1645,7 +1642,7 @@ def generate_predictions_from_macro(
             for pid, sid, qty in stock_snap_q:
                 store_stock_map[(pid, sid)] = qty or 0
         
-        for sku in skus_without_preds:
+        for sku in skus_needing_cold_start:
             prod = product_map.get(sku)
             if not prod:
                 continue
@@ -1776,6 +1773,17 @@ def generate_predictions_from_macro(
     db.session.commit()
     
     total_units = sum(int(it["suggested"]) for it in final_preds)
+    
+    cold_start_used = len([p for p in final_preds if 'COLD_START' in p.get('model_name', '')])
+    sales_based_used = len(final_preds) - cold_start_used
+    
+    print(f"[DISTRIBUTION DEBUG] Scope SKUs: {len(scope_skus_set)}")
+    print(f"[DISTRIBUTION DEBUG] SKUs with macro sales data: {len(skus_with_sales_estimation)}")
+    print(f"[DISTRIBUTION DEBUG] SKUs with positive predictions: {len(skus_with_predictions)}")
+    print(f"[DISTRIBUTION DEBUG] SKUs sparse/no sales (need cold start): {len(skus_needing_cold_start)}")
+    print(f"[DISTRIBUTION DEBUG] SKUs skipped (no category): {len(cold_start_no_category)}")
+    print(f"[DISTRIBUTION DEBUG] Final predictions: {len(final_preds)} ({sales_based_used} sales-based, {cold_start_used} cold start)")
+    print(f"[DISTRIBUTION DEBUG] Total units: {total_units}")
     
     return run_id, len(final_preds), total_units
 
@@ -2632,27 +2640,27 @@ def purchase_forecast_v2_legacy():
     lead_time_weeks = lead_time_days / 7.0
     total_weeks_needed = coverage_weeks + safety_weeks + lead_time_weeks
 
-    week_expr = db.func.strftime('%Y-%W', DistributionRecord.event_date)
     sales_q = (
         db.session.query(
             Product.id.label('product_id'),
             Product.sku.label('sku'),
             Product.name.label('name'),
-            db.func.sum(DistributionRecord.quantity).label('qty_period'),
-            db.func.count(db.func.distinct(week_expr)).label('weeks_with_sales')
+            db.func.sum(SalesWeeklyAgg.units).label('qty_period'),
+            db.func.count(db.func.distinct(SalesWeeklyAgg.week_start)).label('weeks_with_sales')
         )
-        .join(Product, DistributionRecord.product_id == Product.id)
-        .join(Store, DistributionRecord.store_id == Store.id)
-        .filter(DistributionRecord.event_date >= cutoff)
+        .join(Product, SalesWeeklyAgg.product_id == Product.id)
+        .filter(SalesWeeklyAgg.week_start >= cutoff)
     )
 
     if store_filter:
-        sales_q = sales_q.filter(Store.name == store_filter)
+        store_obj = Store.query.filter_by(name=store_filter).first()
+        if store_obj:
+            sales_q = sales_q.filter(SalesWeeklyAgg.store_id == store_obj.id)
 
     sales_rows = (
         sales_q
         .group_by(Product.id, Product.sku, Product.name)
-        .having(db.func.count(db.func.distinct(week_expr)) >= min_weeks_history)
+        .having(db.func.count(db.func.distinct(SalesWeeklyAgg.week_start)) >= min_weeks_history)
         .all()
     )
 
@@ -2792,26 +2800,26 @@ def export_purchase_forecast_v2():
     lead_time_weeks = lead_time_days / 7.0
     total_weeks_needed = coverage_weeks + safety_weeks + lead_time_weeks
 
-    week_expr = db.func.strftime('%Y-%W', DistributionRecord.event_date)
     sales_q = (
         db.session.query(
             Product.id.label('product_id'),
             Product.sku.label('sku'),
             Product.name.label('name'),
-            db.func.sum(DistributionRecord.quantity).label('qty_period'),
+            db.func.sum(SalesWeeklyAgg.units).label('qty_period'),
         )
-        .join(Product, DistributionRecord.product_id == Product.id)
-        .join(Store, DistributionRecord.store_id == Store.id)
-        .filter(DistributionRecord.event_date >= cutoff)
+        .join(Product, SalesWeeklyAgg.product_id == Product.id)
+        .filter(SalesWeeklyAgg.week_start >= cutoff)
     )
 
     if store_filter:
-        sales_q = sales_q.filter(Store.name == store_filter)
+        store_obj = Store.query.filter_by(name=store_filter).first()
+        if store_obj:
+            sales_q = sales_q.filter(SalesWeeklyAgg.store_id == store_obj.id)
 
     sales_rows = (
         sales_q
         .group_by(Product.id, Product.sku, Product.name)
-        .having(db.func.count(db.func.distinct(week_expr)) >= min_weeks_history)
+        .having(db.func.count(db.func.distinct(SalesWeeklyAgg.week_start)) >= min_weeks_history)
         .all()
     )
 
@@ -3134,25 +3142,24 @@ def api_forecast_v2():
 
     history_cutoff = today - timedelta(days=history_weeks * 7)
 
-    monday_expr = db.func.date(DistributionRecord.event_date, 'weekday 0', '-6 days')
     history_q = (
         db.session.query(
-            monday_expr.label('week_start'),
-            db.func.sum(DistributionRecord.quantity).label('units')
+            SalesWeeklyAgg.week_start,
+            db.func.sum(SalesWeeklyAgg.units).label('units')
         )
-        .join(Product, DistributionRecord.product_id == Product.id)
-        .join(Store, DistributionRecord.store_id == Store.id)
-        .filter(DistributionRecord.product_id == product.id)
-        .filter(DistributionRecord.event_date >= history_cutoff)
+        .filter(SalesWeeklyAgg.product_id == product.id)
+        .filter(SalesWeeklyAgg.week_start >= history_cutoff)
     )
 
     if store_param:
-        history_q = history_q.filter(Store.name == store_param)
+        store_obj = Store.query.filter_by(name=store_param).first()
+        if store_obj:
+            history_q = history_q.filter(SalesWeeklyAgg.store_id == store_obj.id)
 
     history_rows = (
         history_q
-        .group_by(monday_expr)
-        .order_by(db.text('week_start'))
+        .group_by(SalesWeeklyAgg.week_start)
+        .order_by(SalesWeeklyAgg.week_start)
         .all()
     )
 
