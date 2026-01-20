@@ -331,6 +331,7 @@ class RebalanceRun(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     params_json = db.Column(db.Text, nullable=True)
+    is_simulation = db.Column(db.Boolean, default=False, nullable=False)
 
     user = db.relationship('User', backref='rebalance_runs')
 
@@ -5747,47 +5748,41 @@ def rebalancing():
         kpis['num_skus'] = len(set(s['product_id'] for s in suggestions))
         kpis['num_receivers'] = len(set(s['to_store_id'] for s in suggestions))
         
+        rebalance_run = RebalanceRun(
+            run_id=run_id,
+            created_by_user_id=current_user.id if current_user.is_authenticated else None,
+            params_json=json.dumps(params),
+            is_simulation=simulate
+        )
+        db.session.add(rebalance_run)
+        db.session.flush()
+        
+        if suggestions:
+            suggestion_records = [
+                {
+                    'run_id': run_id,
+                    'product_id': s['product_id'],
+                    'from_store_id': s['from_store_id'],
+                    'to_store_id': s['to_store_id'],
+                    'qty': s['qty'],
+                    'sales_rate_to': s['sales_rate_to'],
+                    'woc_from': s['woc_from'],
+                    'woc_to': s['woc_to'],
+                    'score': s['score'],
+                    'reason': s['reason']
+                }
+                for s in suggestions
+            ]
+            batch_size = 1000
+            for i in range(0, len(suggestion_records), batch_size):
+                batch = suggestion_records[i:i + batch_size]
+                db.session.execute(RebalanceSuggestion.__table__.insert(), batch)
+        
+        db.session.commit()
+        
         if simulate:
-            store_simulation_results('rebalancing', suggestions, kpis, meta=params)
-            run_info = {
-                'run_id': 'SIMULATION',
-                'created_at': datetime.utcnow(),
-                'params': params,
-                'is_simulation': True
-            }
-            flash(f'SIMULACIÓN: {len(suggestions)} sugerencias calculadas (no guardadas).', 'info')
+            flash(f'SIMULACIÓN: {len(suggestions)} sugerencias calculadas.', 'info')
         else:
-            rebalance_run = RebalanceRun(
-                run_id=run_id,
-                created_by_user_id=current_user.id if current_user.is_authenticated else None,
-                params_json=json.dumps(params)
-            )
-            db.session.add(rebalance_run)
-            db.session.flush()
-            
-            if suggestions:
-                suggestion_records = [
-                    {
-                        'run_id': run_id,
-                        'product_id': s['product_id'],
-                        'from_store_id': s['from_store_id'],
-                        'to_store_id': s['to_store_id'],
-                        'qty': s['qty'],
-                        'sales_rate_to': s['sales_rate_to'],
-                        'woc_from': s['woc_from'],
-                        'woc_to': s['woc_to'],
-                        'score': s['score'],
-                        'reason': s['reason']
-                    }
-                    for s in suggestions
-                ]
-                batch_size = 1000
-                for i in range(0, len(suggestion_records), batch_size):
-                    batch = suggestion_records[i:i + batch_size]
-                    db.session.execute(RebalanceSuggestion.__table__.insert(), batch)
-            
-            db.session.commit()
-            
             log_audit(
                 action='rebalancing.run',
                 status='success',
@@ -5799,22 +5794,23 @@ def rebalancing():
                     'num_suggestions': len(suggestions)
                 }
             )
-            
-            run_info = {
-                'run_id': run_id,
-                'created_at': datetime.utcnow(),
-                'params': params
-            }
-            
             flash(f'Se generaron {len(suggestions)} sugerencias de redistribución.', 'success')
+        
+        return redirect(url_for('rebalancing', run_id=run_id))
     
     else:
-        latest_run = RebalanceRun.query.order_by(RebalanceRun.created_at.desc()).first()
-        if latest_run:
+        requested_run_id = request.args.get('run_id', '').strip()
+        if requested_run_id:
+            target_run = RebalanceRun.query.filter_by(run_id=requested_run_id).first()
+        else:
+            target_run = RebalanceRun.query.order_by(RebalanceRun.created_at.desc()).first()
+        
+        if target_run:
             run_info = {
-                'run_id': latest_run.run_id,
-                'created_at': latest_run.created_at,
-                'params': latest_run.get_params()
+                'run_id': target_run.run_id,
+                'created_at': target_run.created_at,
+                'params': target_run.get_params(),
+                'is_simulation': target_run.is_simulation
             }
             params = run_info['params']
             weeks_window = params.get('weeks_window', 4)
@@ -5826,7 +5822,7 @@ def rebalancing():
             min_transfer_qty = params.get('min_transfer_qty', 2)
             store_filter = params.get('store_filter', '') or ''
             
-            db_suggestions = RebalanceSuggestion.query.filter_by(run_id=latest_run.run_id).all()
+            db_suggestions = RebalanceSuggestion.query.filter_by(run_id=target_run.run_id).all()
             for s in db_suggestions:
                 suggestions.append({
                     'product_id': s.product_id,
