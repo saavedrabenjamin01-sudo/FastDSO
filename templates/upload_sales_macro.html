@@ -61,9 +61,12 @@
             <ul class="upload-req-list">
               <li><code>product_name</code> — Nombre del producto</li>
               <li><code>category</code> — Categoría del producto (usado para cold-start)</li>
+              <li><code>DUV</code> — Días desde última venta (entero, global por SKU)</li>
+              <li><code>DUC</code> — Días desde última compra (entero, global por SKU)</li>
             </ul>
             <p class="mb-1"><strong>Formatos aceptados:</strong> <code>.csv</code>, <code>.xlsx</code></p>
             <p class="text-muted mb-0">El SKU debe ser texto para preservar ceros a la izquierda.</p>
+            <p class="text-muted mb-0">DUV/DUC son conteos de días (enteros), no fechas. Si se omiten, FastDSO calcula la última venta a partir de las fechas de ventas macro.</p>
           </div>
         </div>
       </div>
@@ -129,6 +132,8 @@
                 <th>date</th>
                 <th>quantity</th>
                 <th>category</th>
+                <th>DUV</th>
+                <th>DUC</th>
               </tr>
             </thead>
             <tbody>
@@ -138,6 +143,8 @@
                 <td>2025-01-01</td>
                 <td>5</td>
                 <td>Electrónica</td>
+                <td>15</td>
+                <td>45</td>
               </tr>
               <tr>
                 <td>000456</td>
@@ -145,10 +152,13 @@
                 <td>2025-01-02</td>
                 <td>3</td>
                 <td>Hogar</td>
+                <td></td>
+                <td></td>
               </tr>
             </tbody>
           </table>
         </div>
+        <p class="text-muted mt-1 mb-0" style="font-size: 0.75rem;">DUV/DUC son opcionales — dejar en blanco si no están disponibles</p>
       </div>
 
       <div class="upload-sidecard">
@@ -157,6 +167,7 @@
           <li><strong>Visibilidad completa:</strong> Store Health y Alertas reflejan todo el catálogo</li>
           <li><strong>Cold-Start:</strong> Nuevos SKUs reciben sugerencias basadas en su categoría</li>
           <li><strong>Rendimiento:</strong> Datos agregados por semana = consultas rápidas</li>
+          <li><strong>DUV/DUC:</strong> Mejoran precisión de Slow Stock y Alertas (opcional)</li>
         </ul>
       </div>
 
