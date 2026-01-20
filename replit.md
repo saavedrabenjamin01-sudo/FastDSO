@@ -112,10 +112,13 @@ Do not make changes to the folder `Excel tipo/`.
         - Forecast V2 (demand estimation)
         - Store-to-Store Redistribution (sales rates for WOC calculations)
         - Slow Stock analysis (sales rates, last sale fallback)
-- **SKU Lifecycle Layer**: Tracks last sale dates for faster alert computation:
-    - `SkuLifecycle` model: Global last sale date per SKU (last_sale_date_global)
+- **SKU Lifecycle Layer**: Tracks last sale dates and optional day counts for faster alert computation:
+    - `SkuLifecycle` model: Global last sale date per SKU (last_sale_date_global), plus optional:
+        - days_since_last_sale_global (Integer, from DUV column in upload)
+        - days_since_last_purchase_global (Integer, from DUC column in upload)
     - `SkuStoreLifecycle` model: Store-level last sale date per SKU-Store pair (last_sale_date_store)
     - Automatically populated during Macro Sales upload
+    - Optional DUV/DUC columns in upload: case-insensitive, non-numeric or negative values treated as NULL
     - Enables BROKEN_STOCK alert detection without querying raw sales tables
 - **Category-Based Cold Start**: Distribution suggestions for new SKUs without sales history:
     - Parameters: min_fill=2, target_WOC_new=1.0, eligible_store_top_n=10, category_window_days=90
