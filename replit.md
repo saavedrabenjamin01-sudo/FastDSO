@@ -111,6 +111,7 @@ Do not make changes to the folder `Excel tipo/`.
         - Store Health Index (sales velocity metrics)
         - Forecast V2 (demand estimation)
         - Store-to-Store Redistribution (sales rates for WOC calculations)
+        - Slow Stock analysis (sales rates, last sale fallback)
 - **SKU Lifecycle Layer**: Tracks last sale dates for faster alert computation:
     - `SkuLifecycle` model: Global last sale date per SKU (last_sale_date_global)
     - `SkuStoreLifecycle` model: Store-level last sale date per SKU-Store pair (last_sale_date_store)
