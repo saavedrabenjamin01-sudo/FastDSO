@@ -1,0 +1,72 @@
+Add optional DUV/DUC (days since last sale/purchase) to Macro Sales Upload without breaking anything.
+
+Context:
+FastDSO Macro Sales Upload ingests rows with:
+sku, store, date, quantity (+ optional product_name, category)
+We now want to support two OPTIONAL columns:
+- DUV = days since last sale (integer, global per SKU)
+- DUC = days since last purchase (integer, global per SKU)
+These come as day counts (not dates). The upload must still work if DUV/DUC are missing.
+
+STRICT RULES
+- Do NOT break existing macro upload behavior.
+- Do NOT make DUV/DUC required.
+- Do NOT change distribution logic in this task.
+- Do NOT slow down the upload significantly.
+- Preserve leading zeros for SKU.
+
+DATA MODEL (minimal)
+If you already have SkuLifecycle table, extend it:
+- days_since_last_sale_global (Integer, nullable)
+- days_since_last_purchase_global (Integer, nullable)
+Optionally also store estimated dates:
+- last_sale_date_global_est (Date, nullable)
+- last_purchase_date_est (Date, nullable)
+If you don’t want new date fields, keep only integer fields.
+
+If SkuLifecycle doesn’t exist, create it as lightweight:
+- product_id (FK, unique)
+- last_sale_date_global (Date nullable) (already computed from macro)
+- days_since_last_sale_global (Integer nullable)
+- days_since_last_purchase_global (Integer nullable)
+- updated_at
+
+UPLOAD LOGIC CHANGES
+1) Parsing:
+- Accept DUV and DUC columns if present (case-insensitive match after df.columns lower()).
+- Convert to numeric int safely:
+  - non-numeric -> treat as NULL
+  - negative -> treat as NULL
+2) Storage:
+- For each SKU found in the upload:
+  - Upsert Product as usual.
+  - Upsert SkuLifecycle record:
+    - Set days_since_last_sale_global = DUV if provided
+    - Set days_since_last_purchase_global = DUC if provided
+    - Always update updated_at
+3) Estimation (optional):
+- If you store estimated dates:
+  - last_sale_date_global_est = today - timedelta(days=DUV)
+  - last_purchase_date_est = today - timedelta(days=DUC)
+Only set these if DUV/DUC present and valid.
+4) Fallback:
+- If DUV/DUC not present:
+  - Do nothing (keep null), system still can compute last_sale_date_global from macro sales dates.
+
+INTEGRATION (no breaking)
+- Ensure existing lifecycle update from macro sales (MAX(date)) remains.
+- If both computed last_sale_date_global and DUV exist:
+  - Keep computed date as “actual”
+  - Use DUV as an additional metric (do not overwrite actual date).
+(If you only store integer fields, skip this.)
+
+USAGE (optional but recommended)
+Update Alerts / Slow Stock module to use days_since_last_sale_global when available:
+- Prefer lifecycle.days_since_last_sale_global for “No movement” / dead stock thresholds.
+- Fallback to computed last_sale_date_global from macro if days metric missing.
+
+DELIVERABLES
+- Show updated Macro Sales Upload parsing block that reads optional DUV/DUC.
+- Show updated SkuLifecycle model fields if changed.
+- Confirm upload works with and without DUV/DUC columns.
+- Confirm no regressions in other modules.

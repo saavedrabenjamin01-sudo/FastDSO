@@ -442,12 +442,14 @@ class Job(db.Model):
 # ------------------ Slow Stock & Smart Reallocation Models ------------------
 
 class SkuLifecycle(db.Model):
-    """Global SKU lifecycle data: last purchase date, last sale date."""
+    """Global SKU lifecycle data: last purchase date, last sale date, and optional day counts from upload."""
     __tablename__ = 'sku_lifecycle'
     id = db.Column(db.Integer, primary_key=True)
     product_id = db.Column(db.Integer, db.ForeignKey('product.id'), unique=True, nullable=False)
     last_purchase_date = db.Column(db.Date, nullable=True)
     last_sale_date_global = db.Column(db.Date, nullable=True)
+    days_since_last_sale_global = db.Column(db.Integer, nullable=True)
+    days_since_last_purchase_global = db.Column(db.Integer, nullable=True)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     product = db.relationship('Product', backref='lifecycle')
@@ -3504,12 +3506,35 @@ def process_macro_sales_upload(job_id, payload):
         
         has_product_name = 'product_name' in df.columns
         has_category = 'category' in df.columns
+        has_duv = 'duv' in df.columns
+        has_duc = 'duc' in df.columns
         
         if has_product_name:
             df['product_name'] = df['product_name'].astype(str).str.strip()
         if has_category:
             df['category'] = df['category'].astype(str).str.strip()
             df['category'] = df['category'].replace(['', 'nan', 'None'], None)
+        
+        duv_map = {}
+        duc_map = {}
+        if has_duv or has_duc:
+            if has_duv:
+                df['duv_parsed'] = pd.to_numeric(df['duv'], errors='coerce')
+                df.loc[df['duv_parsed'] < 0, 'duv_parsed'] = None
+            if has_duc:
+                df['duc_parsed'] = pd.to_numeric(df['duc'], errors='coerce')
+                df.loc[df['duc_parsed'] < 0, 'duc_parsed'] = None
+            
+            for sku in df['sku'].unique():
+                sku_rows = df[df['sku'] == sku]
+                if has_duv:
+                    duv_vals = sku_rows['duv_parsed'].dropna()
+                    if len(duv_vals) > 0:
+                        duv_map[sku] = int(duv_vals.iloc[0])
+                if has_duc:
+                    duc_vals = sku_rows['duc_parsed'].dropna()
+                    if len(duc_vals) > 0:
+                        duc_map[sku] = int(duc_vals.iloc[0])
         
         df = df.dropna(subset=['date'])
         df['week_start'] = df['date'].apply(lambda d: d - timedelta(days=d.weekday()))
@@ -3655,13 +3680,22 @@ def process_macro_sales_upload(job_id, payload):
         
         session.commit()
         
+        sku_to_pid = {sku: prod.id for sku, prod in existing_products.items()}
+        pid_to_sku = {prod.id: sku for sku, prod in existing_products.items()}
+        
         for _, row in lifecycle_global_df.iterrows():
             pid = int(row['product_id'])
             raw_date = row['last_sale_date_global']
-            if pd.isna(raw_date):
-                continue
-            last_date = raw_date.date() if hasattr(raw_date, 'date') else raw_date
-            if not last_date:
+            sku = pid_to_sku.get(pid)
+            
+            last_date = None
+            if not pd.isna(raw_date):
+                last_date = raw_date.date() if hasattr(raw_date, 'date') else raw_date
+            
+            duv_val = duv_map.get(sku) if sku else None
+            duc_val = duc_map.get(sku) if sku else None
+            
+            if not last_date and duv_val is None and duc_val is None:
                 continue
             
             existing = session.query(SkuLifecycle).filter(
@@ -3669,13 +3703,57 @@ def process_macro_sales_upload(job_id, payload):
             ).first()
             
             if existing:
-                if existing.last_sale_date_global is None or last_date > existing.last_sale_date_global:
+                if last_date and (existing.last_sale_date_global is None or last_date > existing.last_sale_date_global):
                     existing.last_sale_date_global = last_date
-                    existing.updated_at = datetime.utcnow()
+                if duv_val is not None:
+                    existing.days_since_last_sale_global = duv_val
+                if duc_val is not None:
+                    existing.days_since_last_purchase_global = duc_val
+                existing.updated_at = datetime.utcnow()
             else:
                 session.add(SkuLifecycle(
                     product_id=pid,
                     last_sale_date_global=last_date,
+                    days_since_last_sale_global=duv_val,
+                    days_since_last_purchase_global=duc_val,
+                    updated_at=datetime.utcnow()
+                ))
+        
+        session.commit()
+        
+        processed_pids = set(lifecycle_global_df['product_id'].unique())
+        for sku, duv_val in duv_map.items():
+            pid = sku_to_pid.get(sku)
+            if not pid or pid in processed_pids:
+                continue
+            duc_val = duc_map.get(sku)
+            existing = session.query(SkuLifecycle).filter(SkuLifecycle.product_id == pid).first()
+            if existing:
+                existing.days_since_last_sale_global = duv_val
+                if duc_val is not None:
+                    existing.days_since_last_purchase_global = duc_val
+                existing.updated_at = datetime.utcnow()
+            else:
+                session.add(SkuLifecycle(
+                    product_id=pid,
+                    days_since_last_sale_global=duv_val,
+                    days_since_last_purchase_global=duc_val,
+                    updated_at=datetime.utcnow()
+                ))
+            processed_pids.add(pid)
+        
+        for sku, duc_val in duc_map.items():
+            pid = sku_to_pid.get(sku)
+            if not pid or pid in processed_pids:
+                continue
+            existing = session.query(SkuLifecycle).filter(SkuLifecycle.product_id == pid).first()
+            if existing:
+                existing.days_since_last_purchase_global = duc_val
+                existing.updated_at = datetime.utcnow()
+            else:
+                session.add(SkuLifecycle(
+                    product_id=pid,
+                    days_since_last_purchase_global=duc_val,
                     updated_at=datetime.utcnow()
                 ))
         
@@ -3688,7 +3766,12 @@ def process_macro_sales_upload(job_id, payload):
         
         session.close()
         
-        msg = f'Ventas macro cargadas: {len(agg_df)} registros semanales de {total_rows} filas originales (lifecycle actualizado)'
+        duv_count = len(duv_map)
+        duc_count = len(duc_map)
+        msg = f'Ventas macro cargadas: {len(agg_df)} registros semanales de {total_rows} filas originales (lifecycle actualizado'
+        if duv_count or duc_count:
+            msg += f', DUV: {duv_count}, DUC: {duc_count}'
+        msg += ')'
         update_job_status(
             job_id,
             status='done',
