@@ -6782,43 +6782,51 @@ def compute_slow_stock_analysis(params=None):
     for lcs in SkuStoreLifecycle.query.all():
         lifecycle_store[(lcs.product_id, lcs.store_id)] = lcs
     
-    # Compute sales rates from DistributionRecord
+    # Compute sales rates from SalesWeeklyAgg (Macro Sales)
     recent_window = params['RECENT_WINDOW_WEEKS']
-    cutoff_date = today - timedelta(weeks=recent_window)
+    window_start_week = today - timedelta(weeks=recent_window)
+    window_start_week = window_start_week - timedelta(days=window_start_week.weekday())
     
-    # Sales rate per SKU-store (recent)
+    app.logger.info(f"Slow Stock using SalesWeeklyAgg from {window_start_week} to {today}")
+    
+    # Sales rate per SKU-store from SalesWeeklyAgg
     sales_query = db.session.query(
-        DistributionRecord.product_id,
-        DistributionRecord.store_id,
-        db.func.sum(DistributionRecord.quantity).label('total_qty')
+        SalesWeeklyAgg.product_id,
+        SalesWeeklyAgg.store_id,
+        db.func.sum(SalesWeeklyAgg.units).label('total_units'),
+        db.func.count(db.func.distinct(SalesWeeklyAgg.week_start)).label('weeks_count')
     ).filter(
-        DistributionRecord.event_date >= cutoff_date
+        SalesWeeklyAgg.week_start >= window_start_week
     ).group_by(
-        DistributionRecord.product_id,
-        DistributionRecord.store_id
+        SalesWeeklyAgg.product_id,
+        SalesWeeklyAgg.store_id
     ).all()
     
     sales_rate = {}
     for row in sales_query:
-        weekly_rate = row.total_qty / recent_window if recent_window > 0 else 0
+        weekly_rate = row.total_units / max(row.weeks_count, 1)
         sales_rate[(row.product_id, row.store_id)] = weekly_rate
     
-    # Compute last sale date from DistributionRecord if not in lifecycle
-    last_sale_computed = db.session.query(
-        DistributionRecord.product_id,
-        DistributionRecord.store_id,
-        db.func.max(DistributionRecord.event_date).label('last_date')
+    # Compute last sale from SalesWeeklyAgg max week with units>0 if not in lifecycle
+    last_sale_agg = db.session.query(
+        SalesWeeklyAgg.product_id,
+        SalesWeeklyAgg.store_id,
+        db.func.max(SalesWeeklyAgg.week_start).label('last_week')
+    ).filter(
+        SalesWeeklyAgg.units > 0
     ).group_by(
-        DistributionRecord.product_id,
-        DistributionRecord.store_id
+        SalesWeeklyAgg.product_id,
+        SalesWeeklyAgg.store_id
     ).all()
     
     last_sale_store_fallback = {}
     last_sale_global_fallback = {}
-    for row in last_sale_computed:
-        last_sale_store_fallback[(row.product_id, row.store_id)] = row.last_date
-        if row.product_id not in last_sale_global_fallback or row.last_date > last_sale_global_fallback[row.product_id]:
-            last_sale_global_fallback[row.product_id] = row.last_date
+    for row in last_sale_agg:
+        last_week = row.last_week
+        if last_week:
+            last_sale_store_fallback[(row.product_id, row.store_id)] = last_week
+            if row.product_id not in last_sale_global_fallback or last_week > last_sale_global_fallback[row.product_id]:
+                last_sale_global_fallback[row.product_id] = last_week
     
     # Classify store-level status
     store_analysis = []
