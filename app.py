@@ -934,7 +934,29 @@ def generate_predictions(
         if extra_bits:
             model_tag = f"{model_tag} — " + " | ".join(extra_bits)
 
-    # 3) Generar sugerencias base por SKU–Tienda
+    # 3) Define active snapshot dates ONCE (deterministic and consistent)
+    active_store_stock_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
+    active_cd_stock_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar()
+    
+    # Pre-load all store stock for the active date into a lookup dict
+    store_stock_lookup = {}
+    if active_store_stock_date:
+        stock_rows = (
+            db.session.query(StockSnapshot.product_id, StockSnapshot.store_id, StockSnapshot.quantity)
+            .filter(StockSnapshot.as_of_date == active_store_stock_date)
+            .all()
+        )
+        for pid, sid, qty in stock_rows:
+            store_stock_lookup[(pid, sid)] = qty or 0
+    
+    # Pre-load CD stock for the active date
+    cd_stock_lookup = {}
+    if active_cd_stock_date:
+        cd_rows = StockCD.query.filter_by(as_of_date=active_cd_stock_date).all()
+        for row in cd_rows:
+            cd_stock_lookup[row.product_id] = row.quantity or 0
+    
+    # 3b) Generar sugerencias base por SKU–Tienda
     raw_preds = []
 
     for (sku, store), gdf in df.groupby(['sku', 'store']):
@@ -949,7 +971,14 @@ def generate_predictions(
         if weekly.shape[0] < effective_min_weeks:
             continue
 
-        base_mean = float(weekly.tail(win)['quantity'].mean())
+        # Get last N weeks for SMA calculation
+        last_weeks = weekly.tail(win)
+        base_mean = float(last_weeks['quantity'].mean())
+        
+        # Debug: capture individual week values (w0 = most recent, w1 = previous)
+        week_values = last_weeks['quantity'].tolist()
+        w0_units = week_values[-1] if len(week_values) >= 1 else 0
+        w1_units = week_values[-2] if len(week_values) >= 2 else 0
 
         # Normalizar claves para buscar en BD
         sku_key = str(sku).strip()
@@ -964,43 +993,47 @@ def generate_predictions(
         if not store_ent:
             continue
 
-        # Ajuste por stock tienda
+        # Ajuste por stock tienda using pre-loaded lookup (consistent date)
         if use_stock:
-            latest_stock = (
-                db.session.query(StockSnapshot)
-                .filter(
-                    StockSnapshot.product_id == product.id,
-                    StockSnapshot.store_id == store_ent.id
-                )
-                .order_by(StockSnapshot.as_of_date.desc())
-                .first()
-            )
-            stock_qty = latest_stock.quantity if latest_stock else 0
+            stock_qty = store_stock_lookup.get((product.id, store_ent.id), 0)
         else:
             stock_qty = 0
+        
+        # Get CD stock for this product
+        cd_qty = cd_stock_lookup.get(product.id, 0)
 
-        suggested = max(int(round(base_mean)) - stock_qty, 0)
+        suggested_before_caps = max(int(round(base_mean)) - stock_qty, 0)
+        
+        # Determine reason code
+        if cd_qty == 0:
+            reason_code = "CD_ZERO"
+        elif stock_qty >= base_mean and suggested_before_caps == 0:
+            reason_code = "STOCK_COVERS"
+        elif suggested_before_caps == 0:
+            reason_code = "NO_DEMAND"
+        else:
+            reason_code = "OK"
 
         raw_preds.append({
             "sku": sku_key,
             "store": store_key,
             "product_id": product.id,
             "store_id": store_ent.id,
-            "suggested": suggested,
+            "suggested": suggested_before_caps,
             "model_name": model_tag,
+            "w0_units": int(w0_units),
+            "w1_units": int(w1_units),
+            "sma_mean": round(base_mean, 2),
+            "stock_store_used": int(stock_qty),
+            "cd_stock_used": int(cd_qty),
+            "suggested_before_caps": suggested_before_caps,
+            "reason_code": reason_code,
         })
 
     # 4) Aplicar límite por stock CD (priorizar tiendas con más demanda)
-
-    # Usamos SIEMPRE la última fecha de snapshot disponible
-    snapshot_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar()
-
-    if snapshot_date:
-        cd_stock_rows = StockCD.query.filter_by(as_of_date=snapshot_date).all()
-        cd_stock = {row.product_id: row.quantity for row in cd_stock_rows}
-    else:
-        cd_stock_rows = []
-        cd_stock = {}
+    # Reuse cd_stock_lookup and active_cd_stock_date from step 3
+    cd_stock = cd_stock_lookup
+    snapshot_date = active_cd_stock_date
 
     per_product = defaultdict(list)
     for r in raw_preds:
@@ -1014,21 +1047,41 @@ def generate_predictions(
 
         available = cd_stock.get(product_id, None)
         if available is None:
-            # Sin stock CD cargado → dejar lo sugerido tal cual
+            # Sin stock CD cargado → dejar lo sugerido tal cual (unknown CD)
+            for it in items:
+                if it["reason_code"] == "OK" and it["suggested"] > 0:
+                    it["reason_code"] = "CD_UNKNOWN"
+                it["suggested_final"] = it["suggested"]
             final_preds.extend(items)
             continue
+        
+        # Track original CD for this product
+        original_cd = available
 
         for idx, it in enumerate(items):
             want = it["suggested"]
-            give = min(want, available)
+            give = min(want, max(available, 0))
+            it["suggested_final"] = give
             it["suggested"] = give
             available -= give
+            
+            # Update reason_code based on CD allocation
+            if want > 0 and give == 0 and original_cd == 0:
+                it["reason_code"] = "CD_ZERO"
+            elif want > 0 and give == 0:
+                it["reason_code"] = "CD_EXHAUSTED"
+            elif want > 0 and give < want:
+                it["reason_code"] = "CD_PARTIAL"
+            
             final_preds.append(it)
 
             if available <= 0:
                 # Lo que queda en la lista se queda en 0
                 for it2 in items[idx+1:]:
+                    it2["suggested_final"] = 0
                     it2["suggested"] = 0
+                    if it2.get("suggested_before_caps", 0) > 0:
+                        it2["reason_code"] = "CD_EXHAUSTED"
                     final_preds.append(it2)
                 break
 
@@ -1053,19 +1106,14 @@ def generate_predictions(
     recent_cutoff = today - timedelta(days=STOCKOUT_RECENT_WEEKS * 7)
     hist_cutoff = today - timedelta(days=STOCKOUT_HIST_WEEKS * 7)
     
-    latest_stock_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
+    # Reuse active_store_stock_date from step 3
+    latest_stock_date = active_store_stock_date
     
     stockout_candidates = []
     
     if latest_stock_date and snapshot_date:
-        store_stock_map = {}
-        stock_snap_q = (
-            db.session.query(StockSnapshot.product_id, StockSnapshot.store_id, StockSnapshot.quantity)
-            .filter(StockSnapshot.as_of_date == latest_stock_date)
-            .all()
-        )
-        for pid, sid, qty in stock_snap_q:
-            store_stock_map[(pid, sid)] = qty
+        # Reuse store_stock_lookup from step 3
+        store_stock_map = store_stock_lookup
         
         recent_sales_map = defaultdict(int)
         recent_q = (
@@ -1224,15 +1272,8 @@ def generate_predictions(
         store_lookup = {s.id: s.name for s in Store.query.all()}
         store_id_by_name = {s.name: s.id for s in Store.query.all()}
         
-        store_stock_map = {}
-        if latest_stock_date:
-            stock_snap_q = (
-                db.session.query(StockSnapshot.product_id, StockSnapshot.store_id, StockSnapshot.quantity)
-                .filter(StockSnapshot.as_of_date == latest_stock_date)
-                .all()
-            )
-            for pid, sid, qty in stock_snap_q:
-                store_stock_map[(pid, sid)] = qty or 0
+        # Reuse store_stock_lookup from step 3 for cold start
+        cold_start_stock_map = store_stock_lookup
         
         cold_start_candidates = []
         
@@ -1258,7 +1299,7 @@ def generate_predictions(
                 if cat_sales_rate <= 0:
                     continue
                 
-                current_stock = store_stock_map.get((prod.id, store_id), 0)
+                current_stock = cold_start_stock_map.get((prod.id, store_id), 0)
                 
                 need_units = max(int(math.ceil(COLD_START_TARGET_WOC * cat_sales_rate)), COLD_START_MIN_FILL)
                 suggested = max(need_units - current_stock, 0)
