@@ -281,9 +281,18 @@ class Prediction(db.Model):
     model_name = db.Column(db.String(255), default='SMA_3w')
     run_id = db.Column(db.String(36), nullable=False, index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    debug_json = db.Column(db.Text, nullable=True)
 
     product = db.relationship('Product')
     store = db.relationship('Store')
+    
+    def get_debug(self):
+        if self.debug_json:
+            try:
+                return json.loads(self.debug_json)
+            except:
+                return {}
+        return {}
 
 
 class ForecastResult(db.Model):
@@ -1394,6 +1403,18 @@ def generate_predictions(
 
     for it in final_preds:
         assigned_qty = int(it["suggested"])
+        
+        debug_data = {
+            'w0_units': it.get('w0_units'),
+            'w1_units': it.get('w1_units'),
+            'sma_mean': it.get('sma_mean'),
+            'stock_store_used': it.get('stock_store_used'),
+            'cd_stock_used': it.get('cd_stock_used'),
+            'suggested_before_caps': it.get('suggested_before_caps'),
+            'suggested_final': it.get('suggested_final', assigned_qty),
+            'reason_code': it.get('reason_code', 'OK'),
+        }
+        debug_json_str = json.dumps(debug_data)
 
         existing = Prediction.query.filter_by(
             product_id=it["product_id"],
@@ -1405,6 +1426,7 @@ def generate_predictions(
         if existing:
             existing.quantity = assigned_qty
             existing.model_name = it["model_name"]
+            existing.debug_json = debug_json_str
         else:
             preds_bulk.append(Prediction(
                 product_id=it["product_id"],
@@ -1412,7 +1434,8 @@ def generate_predictions(
                 target_period_start=target_week,
                 quantity=assigned_qty,
                 model_name=it["model_name"],
-                run_id=run_id
+                run_id=run_id,
+                debug_json=debug_json_str
             ))
 
     if preds_bulk:
@@ -5042,6 +5065,11 @@ def export_predictions():
     import pandas as pd
 
     run_id = request.args.get("run_id", "").strip()
+    debug_mode = request.args.get("debug", "0") == "1"
+    
+    is_admin = current_user.role in ('Admin', 'Management')
+    include_debug = debug_mode and is_admin
+    
     if not run_id:
         latest_run = (
             PredictionRun.query
@@ -5090,7 +5118,7 @@ def export_predictions():
                 elif low.startswith("fecha doc:"):
                     fecha_doc = item.split(":", 1)[1].strip()
 
-        rows.append({
+        row = {
             "SKU": str(prod.sku),
             "Producto": prod.name,
             "Tienda": st.name,
@@ -5101,7 +5129,20 @@ def export_predictions():
             "Categoría": categoria,
             "Fecha documento": fecha_doc,
             "Corrida": run_id[:8],
-        })
+        }
+        
+        if include_debug:
+            debug_data = p.get_debug()
+            row["w0_units"] = debug_data.get('w0_units', '')
+            row["w1_units"] = debug_data.get('w1_units', '')
+            row["sma_mean"] = debug_data.get('sma_mean', '')
+            row["stock_store_used"] = debug_data.get('stock_store_used', '')
+            row["cd_stock_used"] = debug_data.get('cd_stock_used', '')
+            row["suggested_before_caps"] = debug_data.get('suggested_before_caps', '')
+            row["suggested_final"] = debug_data.get('suggested_final', '')
+            row["reason_code"] = debug_data.get('reason_code', '')
+        
+        rows.append(row)
 
     if not rows:
         flash('No hay filas para exportar.', 'warning')
@@ -5119,7 +5160,8 @@ def export_predictions():
 
     output.seek(0)
     today = date.today()
-    fname = f"FastDSO_Distribution_{run_id[:8]}_{today.strftime('%Y%m%d')}.xlsx"
+    suffix = "_DEBUG" if include_debug else ""
+    fname = f"FastDSO_Distribution_{run_id[:8]}_{today.strftime('%Y%m%d')}{suffix}.xlsx"
     return send_file(
         output,
         as_attachment=True,
