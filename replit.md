@@ -1,7 +1,7 @@
 # PredDist - Distribution Prediction Portal
 
 ## Overview
-PredDist is a Flask-based web application designed to optimize product distribution. It enables users to analyze sales data, manage inventory across stores and distribution centers, and generate precise purchase and distribution forecasts. The system aims to provide actionable insights for inventory optimization, sales trend analysis, and efficient supply chain management.
+PredDist is a Flask-based web application designed to optimize product distribution and supply chain management. It provides tools for analyzing sales data, managing inventory across stores and distribution centers, and generating precise purchase and distribution forecasts. The system aims to deliver actionable insights for inventory optimization, sales trend analysis, and efficient supply chain operations.
 
 ## User Preferences
 I want the agent to use clear and concise language.
@@ -21,151 +21,45 @@ Do not make changes to the folder `Excel tipo/`.
 - **Data Processing**: Pandas, OpenPyXL
 
 ### Core Architectural Patterns
-- **Modular Monolith**: Application is structured into logical modules (e.g., Sales, Stock, Predictions, Forecast) within a single Flask application.
-- **Background Job Processing**: Utilizes `ThreadPoolExecutor` for asynchronous processing of large file uploads and other compute-intensive tasks, preventing timeouts and enhancing user experience.
-- **Role-Based Access Control (RBAC)**: Fine-grained permission system managing user access to features and data based on assigned roles (Admin, Management, CategoryManager, WarehouseOps, Viewer).
-- **Simulation Mode**: Allows users to perform "what-if" analysis and test parameters without persisting results to the database, utilizing Flask session for temporary data storage.
-- **Audit Trail**: Comprehensive logging of user actions and system events for accountability and debugging.
+- **Modular Monolith**: Application structured into logical modules within a single Flask application.
+- **Background Job Processing**: Uses `ThreadPoolExecutor` for asynchronous handling of intensive tasks like file uploads.
+- **Role-Based Access Control (RBAC)**: Manages user permissions based on assigned roles (Admin, Management, CategoryManager, WarehouseOps, Viewer).
+- **Simulation Mode**: Allows "what-if" analysis without database persistence, using Flask session for temporary data.
+- **Audit Trail**: Logs user actions and system events.
 
 ### UI/UX Decisions
-- **Dashboard**: Modern card-based layout with KPIs, side-by-side tables, and a topbar with global search.
-- **Responsive Design**: Templates are designed for a professional and intuitive user experience with paginated tables, search, filter chips, and improved exports.
-- **Unified Processing Modal**: Animated SVG icons and real-time progress bars for background operations.
-- **Branding**: Login page features corporate branding elements.
-- **Interactive Visualizations**: Plotly charts for advanced forecasting modules.
+- **Dashboard**: Card-based layout with KPIs, tables, and global search.
+- **Responsive Design**: Professional and intuitive templates with pagination, search, filters, and improved exports.
+- **Unified Processing Modal**: Features animated SVG icons and real-time progress bars for background operations.
+- **Branding**: Login page incorporates corporate branding.
+- **Interactive Visualizations**: Plotly charts are used for advanced forecasting.
 
-### Key Features
-- **Data Management**: Upload and manage sales data, store stock, and distribution center stock with background processing.
-- **Distribution Predictions**: Generate product distribution suggestions based on moving averages and historical data.
-- **Advanced Forecasting (Forecast Compra V2)**: Comprehensive purchase forecasting incorporating lead time, safety stock, coverage, and various demand methods.
+### System Design and Features
+- **Data Management**: Tools for uploading and managing sales, store stock, and distribution center stock data.
+- **Distribution Predictions**: Generates product distribution suggestions based on moving averages and historical data.
+- **Advanced Forecasting (Forecast Compra V2)**: Provides comprehensive purchase forecasting, integrating lead time, safety stock, coverage, and various demand calculation methods.
 - **Inventory Optimization**:
-    - **Store-to-Store Rebalancing**: Consolidated single-page module with two modes:
-        - **Auto Suggestions**: System analyzes all stores and generates optimal transfers based on WOC and sales velocity
-        - **Assisted Manual Plan**: User provides SKU list only (no quantities), system calculates optimal transfer amounts
-        - Shared parameters: weeks_window, WOC min/target/max, retain_woc, stock_floor, min_transfer_qty
-        - Tabbed UI with [Sugerencias Automáticas] [Plan Manual Asistido] toggle
-    - **Assisted Manual Plan Features**:
-        - Destination store required, donor store optional (system finds best donor)
-        - SKU input via CSV/Excel file or paste list (one SKU per line)
-        - Calculation logic: need_units = max(ceil(WOC_target * sales_rate_dest) - stock_dest, 0)
-        - Status indicators: OK, NO-NEED (sufficient WOC), NO-DONOR, NO-SALES
-        - Save plan to database or export to Excel
-        - Routes: /rebalancing/manual/calculate, /save, /export-calculated
-    - **Stock-out Replenishment (BREAK_REPLENISH)**: Automatically identifies and suggests replenishment for out-of-stock SKU-Store pairs with historical demand.
-    - **Slow Stock & Smart Reallocation**: Extended dead/slow-moving inventory manager with configurable thresholds. Features include:
-        - Configurable parameters: HISTORY_WINDOW_WEEKS (12), RECENT_WINDOW_WEEKS (4), DEAD_DAYS_STORE (60), DEAD_DAYS_GLOBAL (90), DEAD_PURCHASE_DAYS (120), SLOW_RATE_THRESHOLD (0.3), MIN_WOC (1.5), MAX_WOC (6.0)
-        - Store-level classification: DEAD_STORE, SLOW_STORE, LOW_STOCK, HEALTHY_STORE
-        - CD-level classification: DEAD_CD (incl. stale purchases), SLOW_CD (uses CD-only WOC)
-        - KPI cards: Dead Store, Slow Store, Dead CD, Healthy Store, Transfers
-        - Coverage weeks (WOC) calculation: store-level and CD-only for accurate immobilization detection
-        - Filter controls (SKU search, store dropdown, classification filter, flagged filter)
-        - Smart transfer suggestions from DEAD/SLOW donors to active receivers
-        - 4-tab layout: Tiendas, Global, Transferencias, CD
-        - **Product Flagging Workflow**: Mark products for slow stock management:
-            - Product model extensions: eligible_for_distribution, risk_score, risk_reason
-            - Risk score (0-100): score_sale (max 100, days_since_last_sale/120), score_stock (max 40, log10 scale), score_purchase (max 30, days_since_last_purchase/180)
-            - Risk bands: HIGH (≥70), MEDIUM (40-69), LOW (<40)
-            - Routes: /slow_stock/flag, /slow_stock/unflag, /slow_stock/flag_bulk
-            - Category dashboard integration: Per-row and bulk flag actions in "Sin movimiento" drilldown
-            - Store Health exclusion: Flagged products excluded from scope calculation
-            - Audit logging: All flag/unflag operations logged with risk score and state change
-- **Run Management**: Centralized "Runs Center" for managing, activating, comparing, and tracking the status of various data processing runs.
-- **User & Access Management**: Admin users can manage other users and their roles, with permissions governing feature access.
-- **Reporting & Exports**: Export predictions, forecasts, and analysis results to Excel.
-- **Store Health Index**: Diagnostic scoring module (0-100) per store with:
-    - Weighted health formula: Fill Rate (30%), Stockout Rate (30%), Overstock Rate (20%), Sales Velocity (20%)
-    - Status badges: Green (≥80 Saludable), Yellow (50-79 Atención), Red (<50 Crítico)
-    - Edge case handling: Redistributes velocity weight when no sales data chain-wide
-    - KPI summary cards, paginated table with sorting, weights configuration form, Excel export
-    - Access via "Salud Tiendas" link under Operaciones (requires store_health:view permission)
-- **In-app Alerts Module**: Proactive alerts based on Macro Sales (SalesWeeklyAgg) and lifecycle tables (read-only, computed dynamically):
-    - Alert types: 
-        - PROJECTED_STOCKOUT (WOC < MIN_WOC): Store has stock but low coverage
-        - OVERSTOCK (WOC > MAX_WOC): Stock exceeds WOC threshold
-        - SILENT_SKU (no sales for DEAD_DAYS): No movement using SkuLifecycle.last_sale_date_global
-        - BROKEN_STOCK (NEW): Store has zero stock but recent demand within 45 days using SkuStoreLifecycle
-    - Data sources: SalesWeeklyAgg for sales rates, SkuLifecycle/SkuStoreLifecycle for last sale dates
-    - Severity levels: HIGH (critical threshold breached), MEDIUM (warning level), LOW (minor concern)
-    - Dashboard integration: Top 10 alerts panel with highest severity first
-    - Dedicated /alerts page with filters: type, severity, store, SKU search
-    - KPI cards: High/Medium/Low counts, Quiebres, Sobrestock, Sin movimiento, Quiebre reciente
-    - Suggested actions: Reponer, Redistribuir, Revisar, Liquidar
-    - Access via "Alertas" link under Operaciones (requires alerts:view permission)
-- **Explainability Layer**: Transparent explanation system for distribution and forecast suggestions:
-    - Distribution explanations: Shows SMA3 calculation, store stock adjustment, and suggested quantity derivation
-    - Forecast explanations: Details avg_last4, demand projection, lead time, safety stock, and purchase calculation
-    - API endpoints: `/api/explain/distribution`, `/api/explain/forecast`
-    - Dashboard integration: "Why?" button (?) on each prediction row with modal showing bullet-point explanation
-    - Forecast V2 integration: "Why?" button on purchase suggested KPI with detailed calculation breakdown
-    - **Per-Row Debug Fields**: Each prediction stores debug data in `Prediction.debug_json`:
-        - `w0_units`, `w1_units`: Sales in the last 2 calendar weeks (for SMA2/SMA3)
-        - `sma_mean`: Calculated moving average value
-        - `stock_store_used`: Store stock at snapshot date
-        - `cd_stock_used`: CD stock at snapshot date for the SKU
-        - `suggested_before_caps`: Suggestion before CD/cap constraints
-        - `suggested_final`: Final assigned quantity
-        - `reason_code`: Deterministic code explaining zero/capped results
-    - **Reason Codes**: NO_SALES_IN_WINDOW, STOCK_COVERS, CD_ZERO, CD_EXHAUSTED, CD_PARTIAL, CD_UNKNOWN, CAPPED_EVENT, CAPPED_WOC
-    - **Admin Debug Export**: `/export_predictions?debug=1` includes debug columns (Admin/Management only)
-    - Helper functions: `explain_distribution_suggestion()`, `explain_forecast_purchase()` for generating explanations
-- **Macro Sales Layer**: Full catalog visibility for accurate health metrics and cold-start distribution:
-    - `SalesWeeklyAgg` model: Aggregated weekly sales (product_id, store_id, week_start, units, category)
-    - Indexes: (product_id, store_id, week_start), (store_id, week_start), (category, store_id, week_start)
-    - Route: `/sales_macro_upload` for uploading full catalog sales
-    - Background processing with bulk inserts and weekly aggregation
-    - Load modes: `replace_range` (default, replaces weeks), `append_range` (adds to existing)
-    - Automatic Product.category population from uploads
-    - Distribution generation uses macro layer when available for demand estimation
-    - **Single Source of Truth**: SalesWeeklyAgg is the primary data source for:
-        - Alerts module (sales rates, WOC calculations)
-        - Store Health Index (sales velocity metrics)
-        - Forecast V2 (demand estimation)
-        - Store-to-Store Redistribution (sales rates for WOC calculations)
-        - Slow Stock analysis (sales rates, last sale fallback)
-- **SKU Lifecycle Layer**: Tracks last sale dates and optional day counts for faster alert computation:
-    - `SkuLifecycle` model: Global last sale date per SKU (last_sale_date_global), plus optional:
-        - days_since_last_sale_global (Integer, from DUV column in upload)
-        - days_since_last_purchase_global (Integer, from DUC column in upload)
-    - `SkuStoreLifecycle` model: Store-level last sale date per SKU-Store pair (last_sale_date_store)
-    - Automatically populated during Macro Sales upload
-    - Optional DUV/DUC columns in upload: case-insensitive, non-numeric or negative values treated as NULL
-    - Enables BROKEN_STOCK alert detection without querying raw sales tables
-- **Category-Based Cold Start**: Distribution suggestions for new SKUs without sales history:
-    - Parameters: min_fill=2, target_WOC_new=1.0, eligible_store_top_n=10, category_window_days=90
-    - Eligibility: SKU must have category set in Product.category
-    - Store ranking: Top 10 stores by category weekly sales rate from SalesWeeklyAgg
-    - Suggested qty: max(min_fill, ceil(target_WOC × cat_sales_rate)) - store_stock
-    - CD allocation: Prioritizes higher category sales rate stores
-    - Model tag: "COLD_START_CATEGORY ({category})"
-- **Store Health SKU Scope**: Configurable scope for relevant SKU set in health calculations:
-    - Modes: `core` (sales in 90 days OR in runs OR has store stock), `runs` (last 5 distribution runs), `full` (all SKUs)
-    - Transparency: Shows SKUs in scope, excluded count, exclusion reasons
-    - Uses SalesWeeklyAgg when available for scope calculations
-- **Dashboard por Categoría**: Category-level executive dashboard with:
-    - Route: `/dashboard_category` for category-filtered analytics
-    - Filters: Category selector, time window (7-180 days), optional store filter
-    - Optimized queries: Uses SalesWeeklyAgg.category index directly (no product_ids materialization)
-    - Stock queries: Join Product table for category filter on StockCD/StockSnapshot
-    - 4 KPI cards: Unidades vendidas, Demanda semanal promedio, Stock CD, Stock tiendas
-    - Health summary: Bar showing healthy vs dead/slow products proportion with tooltip explaining "Sin movimiento"
-    - Charts: Top 10 tiendas por ventas (bar), Distribución de stock CD vs tiendas (pie)
-    - Top 10 SKUs accordion with expandable details
-    - Access via "Dashboard por categoría" link under Ventas y Compras
-    - **Sin movimiento drilldown**: Explainable and actionable SKU list
-        - Definition: SKUs with stock (CD or stores) but no sales in selected window
-        - Tooltip on health bar explaining the concept
-        - "Ver SKUs sin movimiento" button links to paginated drilldown list
-        - Route: `/dashboard_category/no_movement` with pagination (10 per page)
-        - Table columns: SKU, Producto, Categoría, Stock CD, Stock Tiendas, Stock Total, Última venta
-        - Export endpoint: `/dashboard_category/no_movement/export` generates Excel file
-        - Optimized queries: Uses SalesWeeklyAgg.category index, no product_ids materialization
+    - **Store-to-Store Rebalancing**: A consolidated module offering auto-suggestions based on WOC and sales velocity, and an assisted manual plan where the system calculates optimal transfer amounts for user-provided SKUs.
+    - **Stock-out Replenishment (BREAK_REPLENISH)**: Identifies and suggests replenishment for out-of-stock SKU-Store pairs with historical demand.
+    - **Slow Stock & Smart Reallocation**: Manages dead and slow-moving inventory with configurable thresholds, offering store-level and CD-level classification, KPI cards, and smart transfer suggestions. Includes a product flagging workflow to manage risk.
+- **Run Management**: A "Runs Center" for managing, activating, comparing, and tracking data processing runs.
+- **User & Access Management**: Administrators can manage users and their roles, controlling feature access.
+- **Reporting & Exports**: Enables exporting predictions, forecasts, and analysis results to Excel.
+- **Store Health Index**: A diagnostic scoring module (0-100) per store, based on weighted metrics like Fill Rate, Stockout Rate, Overstock Rate, and Sales Velocity, with status badges and configuration options.
+- **In-app Alerts Module**: Proactive alerts for conditions such as projected stockouts, overstock, silent SKUs (no sales), and broken stock, based on aggregated sales and lifecycle data.
+- **Explainability Layer**: Provides transparent explanations for distribution and forecast suggestions, detailing calculations and decision logic, accessible via "Why?" buttons and debug fields.
+- **Macro Sales Layer**: Offers full catalog visibility through the `SalesWeeklyAgg` model for aggregated weekly sales, serving as a single source of truth for various modules including alerts, store health, and forecasting.
+- **SKU Lifecycle Layer**: Tracks global and store-level last sale dates (`SkuLifecycle`, `SkuStoreLifecycle`) for faster alert computation and demand analysis.
+- **Category-Based Cold Start**: Provides distribution suggestions for new SKUs without sales history, using category sales data to rank eligible stores and determine quantities.
+- **Store Health SKU Scope**: Configurable scope for relevant SKU sets in health calculations (e.g., `core`, `runs`, `full`).
+- **Dashboard por Categoría**: An executive dashboard providing category-level analytics with filters, KPI cards, charts, and a "Sin movimiento" drilldown for SKUs with stock but no recent sales.
 
 ## External Dependencies
 - **Database**: SQLite (for `app.db`)
 - **Python Libraries**:
-    - Flask (web framework)
-    - Flask-SQLAlchemy (ORM)
-    - Flask-Login (user authentication)
-    - Pandas (data manipulation and analysis)
-    - OpenPyXL (read/write Excel files)
-    - Plotly (interactive charts)
+    - Flask
+    - Flask-SQLAlchemy
+    - Flask-Login
+    - Pandas
+    - OpenPyXL
+    - Plotly

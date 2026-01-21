@@ -1543,6 +1543,8 @@ def generate_predictions_from_macro(
     MAX_WOC_CAP = 2.0
     MAX_UNITS_PER_STORE_EVENT = 10
     TOTAL_UNITS_KILL_SWITCH = 50000
+    MIN_TOP10_ALLOC = 1
+    TOP10_RANK_CUTOFF = 10
     
     product_map = {}
     for sku in scope_skus_set:
@@ -1648,6 +1650,9 @@ def generate_predictions_from_macro(
             w0_units = int(week_values[-1]) if len(week_values) >= 1 else 0
             w1_units = int(week_values[-2]) if len(week_values) >= 2 else 0
             
+            # Compute total sales in window for ranking
+            total_sales_in_window = float(weekly.tail(win)['quantity'].sum())
+            
             raw_preds.append({
                 "sku": sku_key,
                 "store": store_key,
@@ -1662,8 +1667,33 @@ def generate_predictions_from_macro(
                 "sma_mean": round(weekly_rate, 2),
                 "stock_store_used": int(stock_qty),
                 "reason_code": reason_code,
+                "total_sales_in_window": total_sales_in_window,
             })
             skus_with_sales_estimation.add(sku_key)
+    
+    # --- Top-10 Minimum Guaranteed Allocation ---
+    # Compute rank per SKU across stores by total sales in window
+    from collections import defaultdict
+    preds_by_product = defaultdict(list)
+    for pred in raw_preds:
+        preds_by_product[pred["product_id"]].append(pred)
+    
+    for product_id, preds_list in preds_by_product.items():
+        # Sort by total_sales_in_window descending to compute rank
+        sorted_by_sales = sorted(preds_list, key=lambda x: x.get("total_sales_in_window", 0), reverse=True)
+        for rank, pred in enumerate(sorted_by_sales, start=1):
+            pred["store_rank"] = rank
+            
+            # Apply top-10 minimum guarantee rule
+            if (rank <= TOP10_RANK_CUTOFF and
+                pred.get("suggested", 0) == 0 and
+                pred.get("reason_code") == "STOCK_COVERS" and
+                pred.get("w0_units", 0) + pred.get("w1_units", 0) > 0 and  # recent sales
+                pred.get("stock_store_used", 0) < pred.get("sma_mean", 0)):  # low stock
+                
+                # Apply minimum allocation (will be validated against CD later)
+                pred["suggested"] = MIN_TOP10_ALLOC
+                pred["reason_code"] = "TOP10_MIN_GUARANTEE"
     
     snapshot_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar()
     
@@ -1983,6 +2013,8 @@ def generate_predictions_from_macro(
             'suggested_before_caps': it.get('suggested_before_caps'),
             'suggested_final': it.get('suggested_final', assigned_qty),
             'reason_code': it.get('reason_code', 'OK'),
+            'store_rank': it.get('store_rank'),
+            'total_sales_in_window': it.get('total_sales_in_window'),
         }
         debug_json_str = json.dumps(debug_data)
         
@@ -5201,6 +5233,8 @@ def export_predictions():
             row["suggested_before_caps"] = debug_data.get('suggested_before_caps', '')
             row["suggested_final"] = debug_data.get('suggested_final', '')
             row["reason_code"] = debug_data.get('reason_code', '')
+            row["store_rank"] = debug_data.get('store_rank', '')
+            row["total_sales_in_window"] = debug_data.get('total_sales_in_window', '')
         
         rows.append(row)
 
