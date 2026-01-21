@@ -97,6 +97,16 @@ Do not make changes to the folder `Excel tipo/`.
     - API endpoints: `/api/explain/distribution`, `/api/explain/forecast`
     - Dashboard integration: "Why?" button (?) on each prediction row with modal showing bullet-point explanation
     - Forecast V2 integration: "Why?" button on purchase suggested KPI with detailed calculation breakdown
+    - **Per-Row Debug Fields**: Each prediction stores debug data in `Prediction.debug_json`:
+        - `w0_units`, `w1_units`: Sales in the last 2 calendar weeks (for SMA2/SMA3)
+        - `sma_mean`: Calculated moving average value
+        - `stock_store_used`: Store stock at snapshot date
+        - `cd_stock_used`: CD stock at snapshot date for the SKU
+        - `suggested_before_caps`: Suggestion before CD/cap constraints
+        - `suggested_final`: Final assigned quantity
+        - `reason_code`: Deterministic code explaining zero/capped results
+    - **Reason Codes**: NO_SALES_IN_WINDOW, STOCK_COVERS, CD_ZERO, CD_EXHAUSTED, CD_PARTIAL, CD_UNKNOWN, CAPPED_EVENT, CAPPED_WOC
+    - **Admin Debug Export**: `/export_predictions?debug=1` includes debug columns (Admin/Management only)
     - Helper functions: `explain_distribution_suggestion()`, `explain_forecast_purchase()` for generating explanations
 - **Macro Sales Layer**: Full catalog visibility for accurate health metrics and cold-start distribution:
     - `SalesWeeklyAgg` model: Aggregated weekly sales (product_id, store_id, week_start, units, category)

@@ -1018,8 +1018,10 @@ def generate_predictions(
             reason_code = "CD_ZERO"
         elif stock_qty >= base_mean and suggested_before_caps == 0:
             reason_code = "STOCK_COVERS"
+        elif base_mean == 0:
+            reason_code = "NO_SALES_IN_WINDOW"
         elif suggested_before_caps == 0:
-            reason_code = "NO_DEMAND"
+            reason_code = "STOCK_COVERS"
         else:
             reason_code = "OK"
 
@@ -1628,14 +1630,38 @@ def generate_predictions_from_macro(
             max_alloc_woc = math.ceil(MAX_WOC_CAP * weekly_rate)
             suggested = min(suggested_raw, max_alloc_woc, MAX_UNITS_PER_STORE_EVENT)
             
+            # Determine reason code for caps and zero cases
+            reason_code = "OK"
+            if suggested_raw == 0 and weekly_rate > 0:
+                reason_code = "STOCK_COVERS"
+            elif weekly_rate == 0:
+                reason_code = "NO_SALES_IN_WINDOW"
+            elif suggested < suggested_raw:
+                if suggested == MAX_UNITS_PER_STORE_EVENT and suggested_raw > MAX_UNITS_PER_STORE_EVENT:
+                    reason_code = "CAPPED_EVENT"
+                elif suggested == max_alloc_woc and suggested_raw > max_alloc_woc:
+                    reason_code = "CAPPED_WOC"
+            
+            # Get week values for debug (last N weeks)
+            last_weeks = weekly.tail(win)
+            week_values = last_weeks['quantity'].tolist()
+            w0_units = int(week_values[-1]) if len(week_values) >= 1 else 0
+            w1_units = int(week_values[-2]) if len(week_values) >= 2 else 0
+            
             raw_preds.append({
                 "sku": sku_key,
                 "store": store_key,
                 "product_id": product.id,
                 "store_id": store_id,
                 "suggested": suggested,
+                "suggested_before_caps": suggested_raw,
                 "weekly_rate": weekly_rate,
                 "model_name": model_tag,
+                "w0_units": w0_units,
+                "w1_units": w1_units,
+                "sma_mean": round(weekly_rate, 2),
+                "stock_store_used": int(stock_qty),
+                "reason_code": reason_code,
             })
             skus_with_sales_estimation.add(sku_key)
     
@@ -1651,6 +1677,7 @@ def generate_predictions_from_macro(
     
     per_product = defaultdict(list)
     for r in raw_preds:
+        r["cd_stock_used"] = cd_stock.get(r["product_id"], 0)
         per_product[r["product_id"]].append(r)
     
     final_preds = []
@@ -1659,20 +1686,39 @@ def generate_predictions_from_macro(
         items.sort(key=lambda x: x["suggested"], reverse=True)
         
         available = cd_stock.get(product_id, None)
+        original_cd = available if available is not None else 0
+        
         if available is None:
+            for it in items:
+                it["suggested_final"] = it["suggested"]
+                if it["reason_code"] == "OK" and it["suggested"] > 0:
+                    it["reason_code"] = "CD_UNKNOWN"
             final_preds.extend(items)
             continue
         
         for idx, it in enumerate(items):
             want = it["suggested"]
-            give = min(want, available)
+            give = min(want, max(available, 0))
+            it["suggested_final"] = give
             it["suggested"] = give
             available -= give
+            
+            # Update reason_code based on CD allocation
+            if want > 0 and give == 0 and original_cd == 0:
+                it["reason_code"] = "CD_ZERO"
+            elif want > 0 and give == 0:
+                it["reason_code"] = "CD_EXHAUSTED"
+            elif want > 0 and give < want:
+                it["reason_code"] = "CD_PARTIAL"
+            
             final_preds.append(it)
             
             if available <= 0:
                 for it2 in items[idx+1:]:
+                    it2["suggested_final"] = 0
                     it2["suggested"] = 0
+                    if it2.get("suggested_before_caps", 0) > 0:
+                        it2["reason_code"] = "CD_EXHAUSTED"
                     final_preds.append(it2)
                 break
     
@@ -1928,6 +1974,18 @@ def generate_predictions_from_macro(
     for it in final_preds:
         assigned_qty = int(it["suggested"])
         
+        debug_data = {
+            'w0_units': it.get('w0_units'),
+            'w1_units': it.get('w1_units'),
+            'sma_mean': it.get('sma_mean'),
+            'stock_store_used': it.get('stock_store_used'),
+            'cd_stock_used': it.get('cd_stock_used'),
+            'suggested_before_caps': it.get('suggested_before_caps'),
+            'suggested_final': it.get('suggested_final', assigned_qty),
+            'reason_code': it.get('reason_code', 'OK'),
+        }
+        debug_json_str = json.dumps(debug_data)
+        
         existing = Prediction.query.filter_by(
             product_id=it["product_id"],
             store_id=it["store_id"],
@@ -1938,6 +1996,7 @@ def generate_predictions_from_macro(
         if existing:
             existing.quantity = assigned_qty
             existing.model_name = it["model_name"]
+            existing.debug_json = debug_json_str
         else:
             preds_bulk.append(Prediction(
                 product_id=it["product_id"],
@@ -1945,7 +2004,8 @@ def generate_predictions_from_macro(
                 target_period_start=target_week,
                 quantity=assigned_qty,
                 model_name=it["model_name"],
-                run_id=run_id
+                run_id=run_id,
+                debug_json=debug_json_str
             ))
     
     if preds_bulk:
