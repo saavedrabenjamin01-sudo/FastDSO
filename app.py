@@ -1546,6 +1546,13 @@ def generate_predictions_from_macro(
     MIN_TOP10_ALLOC = 1
     TOP10_RANK_CUTOFF = 10
     
+    # Targeted debug logging - only for specific SKU-store if env vars set
+    DEBUG_SKU = os.environ.get('DEBUG_SKU', '').strip()
+    DEBUG_STORE = os.environ.get('DEBUG_STORE', '').strip()
+    debug_target_active = bool(DEBUG_SKU and DEBUG_STORE)
+    if debug_target_active:
+        print(f"[DISTRIBUTION DEBUG] Targeted debug active for SKU={DEBUG_SKU}, Store={DEBUG_STORE}")
+    
     product_map = {}
     for sku in scope_skus_set:
         prod = Product.query.filter_by(sku=sku).first()
@@ -1751,6 +1758,21 @@ def generate_predictions_from_macro(
                         it2["reason_code"] = "CD_EXHAUSTED"
                     final_preds.append(it2)
                 break
+    
+    # --- Targeted per-row debug logging ---
+    if debug_target_active:
+        for it in final_preds:
+            if it.get("sku") == DEBUG_SKU and it.get("store") == DEBUG_STORE:
+                print(f"[DISTRIBUTION ROW DEBUG] sku={it.get('sku')} store={it.get('store')} "
+                      f"store_id={it.get('store_id')} product_id={it.get('product_id')} "
+                      f"w0_units={it.get('w0_units')} w1_units={it.get('w1_units')} "
+                      f"sma_mean={it.get('sma_mean')} stock_store_used={it.get('stock_store_used')} "
+                      f"cd_stock_used={it.get('cd_stock_used')} suggested_before_caps={it.get('suggested_before_caps')} "
+                      f"suggested_final={it.get('suggested_final')} store_rank={it.get('store_rank')} "
+                      f"reason={it.get('reason_code')}")
+                break
+        else:
+            print(f"[DISTRIBUTION ROW DEBUG] No matching row found for sku={DEBUG_SKU} store={DEBUG_STORE}")
     
     skus_with_predictions = {it['sku'] for it in final_preds if it.get('suggested', 0) > 0}
     skus_without_macro_sales = scope_skus_set - skus_with_sales_estimation
