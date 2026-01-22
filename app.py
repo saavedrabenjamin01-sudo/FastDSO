@@ -9079,23 +9079,41 @@ def compute_alerts(params=None):
 @login_required
 @require_permission('alerts:view')
 def alerts_page():
-    """Alerts module - dynamic alerts based on stock and sales velocity."""
-    type_filter = request.args.get('type', '').strip()
-    severity_filter = request.args.get('severity', '').strip()
+    """Alerts module - dynamic alerts based on stock and sales velocity.
+    Supports multi-value filters via comma-separated query params:
+      severity=HIGH,MEDIUM
+      type=PROJECTED_STOCKOUT,OVERSTOCK
+    """
+    severity_param = request.args.get('severity', '').strip()
+    type_param = request.args.get('type', '').strip()
     store_filter = request.args.get('store', '').strip()
     sku_filter = request.args.get('sku', '').strip().lower()
     
+    selected_severities = [s.strip().upper() for s in severity_param.split(',') if s.strip()]
+    selected_types = [t.strip().upper() for t in type_param.split(',') if t.strip()]
+    
     page = request.args.get('page', 1, type=int)
-    per_page = 20
+    per_page = 10
     
     stores = Store.query.order_by(Store.name).all()
     
-    all_alerts = compute_alerts()
+    all_alerts_unfiltered = compute_alerts()
     
-    if type_filter:
-        all_alerts = [a for a in all_alerts if a['type'] == type_filter]
-    if severity_filter:
-        all_alerts = [a for a in all_alerts if a['severity'] == severity_filter]
+    count_by_severity = {'HIGH': 0, 'MEDIUM': 0, 'LOW': 0}
+    count_by_type = {'PROJECTED_STOCKOUT': 0, 'OVERSTOCK': 0, 'SILENT_SKU': 0, 'BROKEN_STOCK': 0}
+    for a in all_alerts_unfiltered:
+        sev = a.get('severity', '')
+        typ = a.get('type', '')
+        if sev in count_by_severity:
+            count_by_severity[sev] += 1
+        if typ in count_by_type:
+            count_by_type[typ] += 1
+    
+    all_alerts = all_alerts_unfiltered
+    if selected_severities:
+        all_alerts = [a for a in all_alerts if a['severity'] in selected_severities]
+    if selected_types:
+        all_alerts = [a for a in all_alerts if a['type'] in selected_types]
     if store_filter:
         all_alerts = [a for a in all_alerts if a['location'] == store_filter]
     if sku_filter:
@@ -9120,8 +9138,8 @@ def alerts_page():
         'alerts.html',
         alerts=alerts,
         stores=stores,
-        type_filter=type_filter,
-        severity_filter=severity_filter,
+        selected_severities=selected_severities,
+        selected_types=selected_types,
         store_filter=store_filter,
         sku_filter=sku_filter,
         page=page,
@@ -9133,7 +9151,9 @@ def alerts_page():
         kpi_stockout=kpi_stockout,
         kpi_overstock=kpi_overstock,
         kpi_silent=kpi_silent,
-        kpi_broken=kpi_broken
+        kpi_broken=kpi_broken,
+        count_by_severity=count_by_severity,
+        count_by_type=count_by_type
     )
 
 

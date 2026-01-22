@@ -1,0 +1,96 @@
+ALERTS MODULE UI UPGRADE — Group chips by Severity and by Type, make chips selectable, remove classic filters
+
+Context:
+We have an Alerts page showing:
+- Severity chips (High/Medium/Low)
+- Type chips (Projected stockout, Overstock, No movement, Active stockout with demand)
+- A list/table of alert rows + classic filter controls (dropdowns/inputs)
+
+Goal:
+1) Visually group chips into two groups:
+   A) Severity group
+   B) Alert Type group
+2) Chips must be clickable and multi-selectable.
+3) Selecting chips filters the table results below.
+4) Remove/replace classic filter UI (dropdowns/inputs) with chip selection (chips become the filters).
+5) Allow selecting multiple severities and multiple types simultaneously (combined filtering).
+6) Provide "Clear selection" button.
+7) Maintain performance: server-side filtering + pagination (10 per page default).
+
+Strict rules:
+- Do NOT change alert generation/business logic.
+- Do NOT store large selections in cookies/sessions.
+- Use query parameters to represent chip selection:
+   severity=high,medium
+   type=overstock,projected_stockout
+- Keep pagination working with selected filters.
+- Keep consistent FastDSO styling (cards, chips, soft shadows).
+
+Implementation details:
+
+A) UI Layout (templates/alerts.html)
+1) Create two chip groups inside a top card:
+   - Header: “Filtrar por Severidad”
+     chips: High, Medium, Low
+   - Header: “Filtrar por Tipo”
+     chips: Projected Stockout, Overstock, No Movement, Active Stockout w/ Demand (or Spanish labels)
+2) Chips are toggle buttons:
+   - Clicking toggles selected state.
+   - Selected chips visually highlighted (stronger background/border).
+   - Non-selected remain subtle.
+3) Add a small summary line:
+   “Selected: High + Overstock + No Movement”
+4) Add a "Clear" button:
+   - Clears severity and type selections (removes params from URL)
+5) Remove existing dropdown/text filter controls from the page (or hide them).
+
+B) Chip behavior (no heavy JS frameworks)
+Option 1 (recommended): Use lightweight JS to update URL query params:
+- Maintain two arrays:
+  selectedSeverities, selectedTypes
+- On click:
+  toggle value in array
+  update URL params:
+    severity=comma-separated
+    type=comma-separated
+  reset page param to 1
+  reload page (server-side filtering)
+This keeps server-side pagination consistent and avoids huge client-side lists.
+
+C) Backend filtering (alerts route)
+- Parse request args:
+  severities = request.args.get("severity","").split(",") (ignore empty)
+  types = request.args.get("type","").split(",")
+- Filter the alerts dataset at the source (SQL query or computed list):
+  - If severities list non-empty => include only those severities
+  - If types list non-empty => include only those types
+- Keep existing sorting by severity first, then impact.
+- Paginate filtered alerts (10 per page default).
+- Pass to template:
+  selected_severities, selected_types, alert_rows, pagination
+
+D) Click behavior “show products for that chip”
+This is automatically achieved by chip selection filter:
+- Clicking a chip triggers filtered results below.
+- Multi-select shows combined results.
+
+E) Nice-to-have UI
+- Add “Select all” small link for severity and type groups (optional).
+- Add badge counts on chips:
+  e.g., High (12), Overstock (34)
+  Use aggregated counts computed once (fast) and shown next to each chip.
+  (Do not recompute heavy lists multiple times.)
+
+F) Acceptance criteria
+- Chips are grouped: severity group + type group.
+- User can select multiple chips in each group.
+- Table reflects combined selection.
+- “Clear selection” resets.
+- Pagination preserves filters.
+- No classic dropdown filters remain.
+
+Deliverables:
+- Updated alerts template with grouped selectable chips
+- Updated alerts route to accept severity/type params and paginate
+- Minimal JS helper for toggling chips and updating URL params
+- Keep performance stable
