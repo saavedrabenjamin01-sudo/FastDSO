@@ -1495,29 +1495,36 @@ def generate_predictions_from_macro(
     db.session.add(prediction_run)
     db.session.flush()
     
+    # weeks_target: horizon for target units calculation
+    # SMA1 -> 1 week, SMA2 -> 2 weeks, SMA3 -> 2 weeks (conservative default)
     if mode == "sma3_min3":
         win = 3
         min_weeks = 3
+        weeks_target = 2
         use_stock = True
         model_tag = "Promedio móvil 3 semanas (macro)"
     elif mode == "sma2_min2":
         win = 2
         min_weeks = 2
+        weeks_target = 2
         use_stock = True
         model_tag = "Promedio móvil 2 semanas (macro)"
     elif mode == "sma1_no_min":
         win = 1
         min_weeks = 1
+        weeks_target = 1
         use_stock = True
         model_tag = "Última semana (macro)"
     elif mode == "sma3_ignore_stock":
         win = 3
         min_weeks = 3
+        weeks_target = 2
         use_stock = False
         model_tag = "Promedio móvil 3 semanas sin ajuste (macro)"
     else:
         win = 3
         min_weeks = 3
+        weeks_target = 2
         use_stock = True
         model_tag = "Promedio móvil 3 semanas (macro)"
     
@@ -1635,13 +1642,16 @@ def generate_predictions_from_macro(
                 stock_qty = 0
             
             import math
-            suggested_raw = max(int(round(weekly_rate)) - stock_qty, 0)
+            # Horizon-based target: target_units = ceil(weekly_rate * weeks_target)
+            target_units = math.ceil(weekly_rate * weeks_target) if weekly_rate > 0 else 0
+            suggested_raw = max(target_units - stock_qty, 0)
             max_alloc_woc = math.ceil(MAX_WOC_CAP * weekly_rate)
             suggested = min(suggested_raw, max_alloc_woc, MAX_UNITS_PER_STORE_EVENT)
             
             # Determine reason code for caps and zero cases
             reason_code = "OK"
             if suggested_raw == 0 and weekly_rate > 0:
+                # STOCK_COVERS: stock already covers the horizon target
                 reason_code = "STOCK_COVERS"
             elif weekly_rate == 0:
                 reason_code = "NO_SALES_IN_WINDOW"
@@ -1668,6 +1678,8 @@ def generate_predictions_from_macro(
                 "suggested": suggested,
                 "suggested_before_caps": suggested_raw,
                 "weekly_rate": weekly_rate,
+                "target_units": target_units,
+                "weeks_target": weeks_target,
                 "model_name": model_tag,
                 "w0_units": w0_units,
                 "w1_units": w1_units,
@@ -1766,10 +1778,10 @@ def generate_predictions_from_macro(
                 print(f"[DISTRIBUTION ROW DEBUG] sku={it.get('sku')} store={it.get('store')} "
                       f"store_id={it.get('store_id')} product_id={it.get('product_id')} "
                       f"w0_units={it.get('w0_units')} w1_units={it.get('w1_units')} "
-                      f"sma_mean={it.get('sma_mean')} stock_store_used={it.get('stock_store_used')} "
-                      f"cd_stock_used={it.get('cd_stock_used')} suggested_before_caps={it.get('suggested_before_caps')} "
-                      f"suggested_final={it.get('suggested_final')} store_rank={it.get('store_rank')} "
-                      f"reason={it.get('reason_code')}")
+                      f"sma_mean={it.get('sma_mean')} weeks_target={it.get('weeks_target')} target_units={it.get('target_units')} "
+                      f"stock_store_used={it.get('stock_store_used')} cd_stock_used={it.get('cd_stock_used')} "
+                      f"suggested_before_caps={it.get('suggested_before_caps')} suggested_final={it.get('suggested_final')} "
+                      f"store_rank={it.get('store_rank')} reason={it.get('reason_code')}")
                 break
         else:
             print(f"[DISTRIBUTION ROW DEBUG] No matching row found for sku={DEBUG_SKU} store={DEBUG_STORE}")
@@ -2030,6 +2042,8 @@ def generate_predictions_from_macro(
             'w0_units': it.get('w0_units'),
             'w1_units': it.get('w1_units'),
             'sma_mean': it.get('sma_mean'),
+            'weeks_target': it.get('weeks_target'),
+            'target_units': it.get('target_units'),
             'stock_store_used': it.get('stock_store_used'),
             'cd_stock_used': it.get('cd_stock_used'),
             'suggested_before_caps': it.get('suggested_before_caps'),
@@ -5250,6 +5264,8 @@ def export_predictions():
             row["w0_units"] = debug_data.get('w0_units', '')
             row["w1_units"] = debug_data.get('w1_units', '')
             row["sma_mean"] = debug_data.get('sma_mean', '')
+            row["weeks_target"] = debug_data.get('weeks_target', '')
+            row["target_units"] = debug_data.get('target_units', '')
             row["stock_store_used"] = debug_data.get('stock_store_used', '')
             row["cd_stock_used"] = debug_data.get('cd_stock_used', '')
             row["suggested_before_caps"] = debug_data.get('suggested_before_caps', '')
