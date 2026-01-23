@@ -1,0 +1,163 @@
+You are working on FastDSO, an inventory, distribution and purchasing decision system.
+Your task is to refactor and standardize the Purchase Forecast module logic so that it is fully consistent with Alerts, Slow Stock, and Category Dashboard modules.
+
+DO NOT modify UI in this task. This prompt is LOGIC ONLY.
+
+=====================================================
+1. DATA SOURCES (SINGLE SOURCE OF TRUTH)
+=====================================================
+
+The Purchase Forecast MUST use ONLY the following tables:
+
+- macro_sales            (weekly aggregated sales by sku, store, category)
+- stock_cd_snapshot
+- stock_store_snapshot
+- product
+- alerts
+- stock_lento
+
+DO NOT use:
+- distribution input files
+- ad-hoc sales calculations
+- per-run sales uploads
+
+macro_sales is the ONLY valid historical sales source.
+
+=====================================================
+2. SKU LIFECYCLE CLASSIFICATION (MANDATORY)
+=====================================================
+
+Before forecasting, classify each SKU as:
+
+IF sales_last_30_days > 0:
+    lifecycle_status = "ACTIVE"
+ELIF sales_31_90_days > 0:
+    lifecycle_status = "SLOW"
+ELIF sales_any_time > 0:
+    lifecycle_status = "DEAD"
+ELSE:
+    lifecycle_status = "NEW"
+
+Persist this value in:
+product.lifecycle_status
+
+IMPORTANT:
+If a SKU has ANY historical sales, it MUST NOT be treated as NEW.
+
+=====================================================
+3. FORECAST MODEL SELECTION
+=====================================================
+
+Model selection depends on lifecycle_status:
+
+ACTIVE:
+    - Use SMA from macro_sales (2 or 4 weeks)
+
+SLOW:
+    - Use long SMA (8–12 weeks)
+    - Apply demand penalty
+
+DEAD:
+    - Forecast = 0
+    - Do not recommend purchase
+
+NEW:
+    - Use category-level cold start model
+    - Based on macro_sales by category
+
+=====================================================
+4. DEMAND CALCULATION
+=====================================================
+
+weekly_demand = macro_sales_weekly_avg
+forecast_demand = weekly_demand * horizon_weeks
+
+=====================================================
+5. STOCK CALCULATION
+=====================================================
+
+total_stock = stock_cd + SUM(stock_store)
+
+=====================================================
+6. PURCHASE SUGGESTION
+=====================================================
+
+purchase_qty = max(0, forecast_demand - total_stock)
+
+Apply safeguards:
+- min_fill = 2
+- MAX_UNITS_PER_SKU safety cap
+- If lifecycle_status == "DEAD": purchase_qty = 0
+
+=====================================================
+7. ALERTS INTEGRATION (MANDATORY)
+=====================================================
+
+Forecast MUST read alerts table:
+
+Rules:
+- If QUIEBRE_PROYECTADO → force buy_now = true
+- If QUIEBRE_RECIENTE → increase priority
+- If SOBRESTOCK → block purchase
+- If SIN_MOVIMIENTO → warning only
+
+=====================================================
+8. SLOW STOCK INTEGRATION
+=====================================================
+
+If SKU exists in stock_lento:
+- Reduce purchase_qty
+- Increase risk_level
+- Update reason_code
+
+=====================================================
+9. CATEGORY DASHBOARD INTEGRATION
+=====================================================
+
+For NEW SKUs:
+- Use category-level macro sales
+- Allocate demand proportionally to category performance
+- Respect store hierarchy (sales + coverage)
+
+=====================================================
+10. EXPLAINABILITY (REQUIRED)
+=====================================================
+
+Each forecast result MUST return:
+
+- buy_now (boolean)
+- risk_level ("HIGH", "MEDIUM", "LOW")
+- reason_code
+- model_used
+- lifecycle_status
+
+Example reason_code values:
+- PROJECTED_STOCKOUT_14D
+- RECENT_SALES_HIGH
+- CATEGORY_COLD_START
+- OVERSTOCK_BLOCK
+- NO_RECENT_SALES
+
+=====================================================
+11. PERFORMANCE CONSTRAINTS
+=====================================================
+
+- Use macro aggregations, not per-SKU recalculation
+- Add or ensure indexes:
+    macro_sales(sku, week_start)
+    product(category)
+    alerts(sku, active)
+- Avoid N+1 queries
+
+=====================================================
+12. EXPECTED RESULT
+=====================================================
+
+The Purchase Forecast must:
+- Be consistent with Alerts
+- Be consistent with Slow Stock
+- Be consistent with Category Dashboard
+- Be explainable for management review
+- Support automated decision-making
+
+END OF TASK.

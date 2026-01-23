@@ -175,6 +175,7 @@ class Product(db.Model):
     eligible_for_distribution = db.Column(db.Boolean, default=True, nullable=False)
     risk_score = db.Column(db.Integer, nullable=True)
     risk_reason = db.Column(db.Text, nullable=True)
+    lifecycle_status = db.Column(db.String(20), nullable=True, index=True)
 
 
 class Store(db.Model):
@@ -307,6 +308,12 @@ class ForecastResult(db.Model):
     required_units = db.Column(db.Float, nullable=False)
     suggested = db.Column(db.Integer, nullable=False)
     campaign_tag = db.Column(db.String(100), nullable=True)
+    buy_now = db.Column(db.Boolean, default=False, nullable=True)
+    risk_level = db.Column(db.String(20), nullable=True)
+    reason_code = db.Column(db.String(100), nullable=True)
+    model_used = db.Column(db.String(50), nullable=True)
+    lifecycle_status = db.Column(db.String(20), nullable=True)
+    stock_store_total = db.Column(db.Integer, nullable=True)
 
     product = db.relationship('Product')
 
