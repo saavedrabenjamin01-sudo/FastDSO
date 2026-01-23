@@ -16,173 +16,302 @@
     </div>
   </div>
 
-  <div class="fcv2-params-card">
-    <div class="fcv2-params-header">
-      <i class="bi bi-sliders2 me-2"></i>Parámetros del Forecast
-    </div>
-    <div class="fcv2-params-body">
-      <div class="fcv2-params-grid">
-        <div class="fcv2-field fcv2-field-lg">
-          <label class="fcv2-label">SKU</label>
-          <input type="text" id="skuInput" class="form-control fcv2-input" list="skuList" placeholder="Buscar SKU...">
-          <datalist id="skuList">
-            {% for p in products %}
-            <option value="{{ p.sku }}">{{ p.name }}</option>
-            {% endfor %}
-          </datalist>
-        </div>
-
-        <div class="fcv2-field">
-          <label class="fcv2-label">Tienda</label>
-          <select id="storeSelect" class="form-select fcv2-input">
-            <option value="">Todas las tiendas</option>
-            {% for s in stores %}
-            <option value="{{ s.name }}">{{ s.name }}</option>
-            {% endfor %}
-          </select>
-        </div>
-
-        <div class="fcv2-field">
-          <label class="fcv2-label">Horizonte (semanas)</label>
-          <select id="horizonSelect" class="form-select fcv2-input">
-            <option value="4">4 semanas</option>
-            <option value="8" selected>8 semanas</option>
-            <option value="12">12 semanas</option>
-          </select>
-        </div>
-
-        <div class="fcv2-field">
-          <label class="fcv2-label">Lead time (semanas)</label>
-          <select id="leadTimeSelect" class="form-select fcv2-input">
-            <option value="2">2 semanas</option>
-            <option value="4" selected>4 semanas</option>
-            <option value="6">6 semanas</option>
-            <option value="8">8 semanas</option>
-          </select>
-        </div>
-
-        <div class="fcv2-field">
-          <label class="fcv2-label">Stock de seguridad: <span id="safetyLabel" class="fcv2-safety-val">10%</span></label>
-          <input type="range" id="safetySlider" class="form-range fcv2-slider" min="0" max="30" value="10" step="1">
-        </div>
-
-        <div class="fcv2-field fcv2-field-btn">
-          <button type="button" id="btnRunForecast" class="btn fcv2-btn-run">
-            <i class="bi bi-play-fill me-1"></i>Ejecutar Forecast
-          </button>
-        </div>
-      </div>
-      <div class="fcv2-helper-strip" id="helperStrip">
-        <i class="bi bi-database me-1"></i>Fuente: <strong>Ventas Macro (SalesWeeklyAgg)</strong> <span id="helperDate">—</span>
-      </div>
-    </div>
-  </div>
-
-  <div class="fcv2-warning-banner d-none" id="warningBanner">
-    <i class="bi bi-exclamation-triangle-fill me-2"></i>
-    <span id="warningText">SKU con riesgo alto: revisar compra / liquidación</span>
-  </div>
-
-  <div class="fcv2-kpi-row" id="kpiCards">
-    <div class="fcv2-kpi fcv2-kpi-blue">
-      <div class="fcv2-kpi-icon"><i class="bi bi-graph-up-arrow"></i></div>
-      <div class="fcv2-kpi-body">
-        <div class="fcv2-kpi-value" id="kpiAvgLast4">—</div>
-        <div class="fcv2-kpi-label">Demanda semanal</div>
-        <div class="fcv2-kpi-hint">Promedio últimas 4 sem</div>
-      </div>
-    </div>
-
-    <div class="fcv2-kpi fcv2-kpi-cyan">
-      <div class="fcv2-kpi-icon"><i class="bi bi-calendar-week"></i></div>
-      <div class="fcv2-kpi-body">
-        <div class="fcv2-kpi-value" id="kpiForecastTotal">—</div>
-        <div class="fcv2-kpi-label">Demanda horizonte</div>
-        <div class="fcv2-kpi-hint">Unidades proyectadas</div>
-      </div>
-    </div>
-
-    <div class="fcv2-kpi fcv2-kpi-green">
-      <div class="fcv2-kpi-icon"><i class="bi bi-box-seam-fill"></i></div>
-      <div class="fcv2-kpi-body">
-        <div class="fcv2-kpi-value" id="kpiStockCD">—</div>
-        <div class="fcv2-kpi-label">Stock total</div>
-        <div class="fcv2-kpi-hint">CD + Tiendas</div>
-      </div>
-    </div>
-
-    <div class="fcv2-kpi fcv2-kpi-amber">
-      <div class="fcv2-kpi-icon"><i class="bi bi-cart-plus-fill"></i></div>
-      <div class="fcv2-kpi-body">
-        <div class="fcv2-kpi-value" id="kpiSuggested">—</div>
-        <div class="fcv2-kpi-label">Compra sugerida</div>
-        <div class="fcv2-kpi-hint" id="purchaseHint">—</div>
-      </div>
-    </div>
-  </div>
-
-  <div class="fcv2-charts-row">
-    <div class="fcv2-chart-card fcv2-chart-main">
-      <div class="fcv2-chart-header">
-        <i class="bi bi-activity me-2"></i>Historial + Forecast
-      </div>
-      <div class="fcv2-chart-body">
-        <div id="salesChart" class="fcv2-chart-canvas"></div>
-      </div>
-    </div>
-
-    <div class="fcv2-chart-card fcv2-chart-side">
-      <div class="fcv2-chart-header">
-        <i class="bi bi-bar-chart-fill me-2"></i>Demanda vs Stock vs Compra
-      </div>
-      <div class="fcv2-chart-body">
-        <div id="purchaseChart" class="fcv2-chart-canvas"></div>
-      </div>
-    </div>
-  </div>
-
-  <div class="fcv2-explain-card" id="explainCard">
-    <div class="fcv2-explain-header">
-      <i class="bi bi-lightbulb-fill me-2"></i>¿Por qué esta recomendación?
-    </div>
-    <div class="fcv2-explain-body" id="explainBody">
-      <ul class="fcv2-explain-list" id="explainList">
-        <li class="fcv2-explain-empty">
-          <i class="bi bi-info-circle me-2"></i>Ejecuta el forecast para ver el análisis detallado
-        </li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="fcv2-actions-bar">
-    <a href="/export/purchase_forecast_v2" class="btn fcv2-btn-outline" id="btnExport">
-      <i class="bi bi-file-earmark-excel me-1"></i>Exportar Forecast
-    </a>
-    <a href="/alerts" class="btn fcv2-btn-outline">
-      <i class="bi bi-bell me-1"></i>Ver en Alertas
-    </a>
-    <a href="/slow_stock" class="btn fcv2-btn-outline">
-      <i class="bi bi-clock-history me-1"></i>Ver Stock Lento
-    </a>
-    <button type="button" class="btn fcv2-btn-primary" id="btnAddToOrder" disabled>
-      <i class="bi bi-plus-circle me-1"></i>Agregar a orden de compra
+  <div class="fcv2-tabs">
+    <button class="fcv2-tab active" data-tab="single" id="tabSingle">
+      <i class="bi bi-box me-1"></i>Forecast (SKU)
+    </button>
+    <button class="fcv2-tab" data-tab="batch" id="tabBatch">
+      <i class="bi bi-boxes me-1"></i>Forecast Masivo
     </button>
   </div>
 
-  <div id="emptyState" class="fcv2-empty-state">
-    <div class="fcv2-empty-icon">
-      <i class="bi bi-search"></i>
+  <div id="singleMode">
+    <div class="fcv2-params-card">
+      <div class="fcv2-params-header">
+        <i class="bi bi-sliders2 me-2"></i>Parámetros del Forecast
+      </div>
+      <div class="fcv2-params-body">
+        <div class="fcv2-params-grid">
+          <div class="fcv2-field fcv2-field-lg">
+            <label class="fcv2-label">SKU</label>
+            <input type="text" id="skuInput" class="form-control fcv2-input" list="skuList" placeholder="Buscar SKU...">
+            <datalist id="skuList">
+              {% for p in products %}
+              <option value="{{ p.sku }}">{{ p.name }}</option>
+              {% endfor %}
+            </datalist>
+          </div>
+          <div class="fcv2-field">
+            <label class="fcv2-label">Tienda</label>
+            <select id="storeSelect" class="form-select fcv2-input">
+              <option value="">Todas las tiendas</option>
+              {% for s in stores %}
+              <option value="{{ s.name }}">{{ s.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="fcv2-field">
+            <label class="fcv2-label">Horizonte (semanas)</label>
+            <select id="horizonSelect" class="form-select fcv2-input">
+              <option value="4">4 semanas</option>
+              <option value="8" selected>8 semanas</option>
+              <option value="12">12 semanas</option>
+            </select>
+          </div>
+          <div class="fcv2-field">
+            <label class="fcv2-label">Lead time (semanas)</label>
+            <select id="leadTimeSelect" class="form-select fcv2-input">
+              <option value="2">2 semanas</option>
+              <option value="4" selected>4 semanas</option>
+              <option value="6">6 semanas</option>
+              <option value="8">8 semanas</option>
+            </select>
+          </div>
+          <div class="fcv2-field">
+            <label class="fcv2-label">Stock de seguridad: <span id="safetyLabel" class="fcv2-safety-val">10%</span></label>
+            <input type="range" id="safetySlider" class="form-range fcv2-slider" min="0" max="30" value="10" step="1">
+          </div>
+          <div class="fcv2-field fcv2-field-btn">
+            <button type="button" id="btnRunForecast" class="btn fcv2-btn-run">
+              <i class="bi bi-play-fill me-1"></i>Ejecutar Forecast
+            </button>
+          </div>
+        </div>
+        <div class="fcv2-helper-strip" id="helperStrip">
+          <i class="bi bi-database me-1"></i>Fuente: <strong>Ventas Macro (SalesWeeklyAgg)</strong>
+        </div>
+      </div>
     </div>
-    <div class="fcv2-empty-title">Selecciona un SKU para calcular forecast</div>
-    <div class="fcv2-empty-hint">Ingresa un SKU y haz clic en "Ejecutar" para ver proyecciones</div>
+
+    <div class="fcv2-warning-banner d-none" id="warningBanner">
+      <i class="bi bi-exclamation-triangle-fill me-2"></i>
+      <span id="warningText">SKU con riesgo alto: revisar compra / liquidación</span>
+    </div>
+
+    <div class="fcv2-kpi-row fcv2-hidden" id="kpiCards">
+      <div class="fcv2-kpi fcv2-kpi-blue">
+        <div class="fcv2-kpi-icon"><i class="bi bi-graph-up-arrow"></i></div>
+        <div class="fcv2-kpi-body">
+          <div class="fcv2-kpi-value" id="kpiAvgLast4">—</div>
+          <div class="fcv2-kpi-label">Demanda semanal</div>
+          <div class="fcv2-kpi-hint">Promedio últimas 4 sem</div>
+        </div>
+      </div>
+      <div class="fcv2-kpi fcv2-kpi-cyan">
+        <div class="fcv2-kpi-icon"><i class="bi bi-calendar-week"></i></div>
+        <div class="fcv2-kpi-body">
+          <div class="fcv2-kpi-value" id="kpiForecastTotal">—</div>
+          <div class="fcv2-kpi-label">Demanda horizonte</div>
+          <div class="fcv2-kpi-hint">Unidades proyectadas</div>
+        </div>
+      </div>
+      <div class="fcv2-kpi fcv2-kpi-green">
+        <div class="fcv2-kpi-icon"><i class="bi bi-box-seam-fill"></i></div>
+        <div class="fcv2-kpi-body">
+          <div class="fcv2-kpi-value" id="kpiStockCD">—</div>
+          <div class="fcv2-kpi-label">Stock total</div>
+          <div class="fcv2-kpi-hint">CD + Tiendas</div>
+        </div>
+      </div>
+      <div class="fcv2-kpi fcv2-kpi-amber">
+        <div class="fcv2-kpi-icon"><i class="bi bi-cart-plus-fill"></i></div>
+        <div class="fcv2-kpi-body">
+          <div class="fcv2-kpi-value" id="kpiSuggested">—</div>
+          <div class="fcv2-kpi-label">Compra sugerida</div>
+          <div class="fcv2-kpi-hint" id="purchaseHint">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="fcv2-charts-row fcv2-hidden" id="chartsRow">
+      <div class="fcv2-chart-card fcv2-chart-main">
+        <div class="fcv2-chart-header">
+          <i class="bi bi-activity me-2"></i>Historial + Forecast
+        </div>
+        <div class="fcv2-chart-body">
+          <div id="salesChart" class="fcv2-chart-canvas"></div>
+        </div>
+      </div>
+      <div class="fcv2-chart-card fcv2-chart-side">
+        <div class="fcv2-chart-header">
+          <i class="bi bi-bar-chart-fill me-2"></i>Demanda vs Stock vs Compra
+        </div>
+        <div class="fcv2-chart-body">
+          <div id="purchaseChart" class="fcv2-chart-canvas"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="fcv2-explain-card fcv2-hidden" id="explainCard">
+      <div class="fcv2-explain-header">
+        <i class="bi bi-lightbulb-fill me-2"></i>¿Por qué esta recomendación?
+      </div>
+      <div class="fcv2-explain-body" id="explainBody">
+        <ul class="fcv2-explain-list" id="explainList"></ul>
+      </div>
+    </div>
+
+    <div class="fcv2-actions-bar fcv2-hidden" id="actionsBar">
+      <a href="#" class="btn fcv2-btn-outline" id="btnExport">
+        <i class="bi bi-file-earmark-excel me-1"></i>Exportar Forecast
+      </a>
+      <a href="/alerts" class="btn fcv2-btn-outline" id="btnAlerts">
+        <i class="bi bi-bell me-1"></i>Ver en Alertas
+      </a>
+      <a href="/slow_stock" class="btn fcv2-btn-outline" id="btnSlowStock">
+        <i class="bi bi-clock-history me-1"></i>Ver Stock Lento
+      </a>
+    </div>
+
+    <div id="emptyState" class="fcv2-empty-state">
+      <div class="fcv2-empty-icon">
+        <i class="bi bi-search"></i>
+      </div>
+      <div class="fcv2-empty-title">Selecciona un SKU para calcular forecast</div>
+      <div class="fcv2-empty-hint">Ingresa un SKU y haz clic en "Ejecutar" para ver proyecciones</div>
+    </div>
+
+    <div id="noDataState" class="fcv2-empty-state fcv2-empty-warning d-none">
+      <div class="fcv2-empty-icon">
+        <i class="bi bi-exclamation-triangle"></i>
+      </div>
+      <div class="fcv2-empty-title">Sin historial de ventas</div>
+      <div class="fcv2-empty-hint">No se encontró historial de ventas para este SKU / filtro</div>
+    </div>
   </div>
 
-  <div id="noDataState" class="fcv2-empty-state fcv2-empty-warning d-none">
-    <div class="fcv2-empty-icon">
-      <i class="bi bi-exclamation-triangle"></i>
+  <div id="batchMode" class="d-none">
+    <div class="fcv2-params-card">
+      <div class="fcv2-params-header">
+        <i class="bi bi-boxes me-2"></i>Forecast Masivo
+      </div>
+      <div class="fcv2-params-body">
+        <div class="fcv2-batch-intro">
+          <p>Carga un archivo CSV/XLSX con una columna <strong>SKU</strong> o pega SKUs directamente.</p>
+        </div>
+        <div class="fcv2-batch-grid">
+          <div class="fcv2-field">
+            <label class="fcv2-label">Archivo (CSV/XLSX)</label>
+            <input type="file" id="batchFile" class="form-control fcv2-input" accept=".csv,.xlsx,.xls">
+          </div>
+          <div class="fcv2-field fcv2-field-lg">
+            <label class="fcv2-label">O pegar SKUs (uno por línea)</label>
+            <textarea id="batchSkuText" class="form-control fcv2-input" rows="3" placeholder="SKU001&#10;SKU002&#10;SKU003"></textarea>
+          </div>
+        </div>
+        <div class="fcv2-params-grid mt-3">
+          <div class="fcv2-field">
+            <label class="fcv2-label">Horizonte (semanas)</label>
+            <select id="batchHorizon" class="form-select fcv2-input">
+              <option value="4">4 semanas</option>
+              <option value="8" selected>8 semanas</option>
+              <option value="12">12 semanas</option>
+            </select>
+          </div>
+          <div class="fcv2-field">
+            <label class="fcv2-label">Lead time (semanas)</label>
+            <select id="batchLeadTime" class="form-select fcv2-input">
+              <option value="2">2 semanas</option>
+              <option value="4" selected>4 semanas</option>
+              <option value="6">6 semanas</option>
+              <option value="8">8 semanas</option>
+            </select>
+          </div>
+          <div class="fcv2-field">
+            <label class="fcv2-label">Safety %: <span id="batchSafetyLabel">10%</span></label>
+            <input type="range" id="batchSafetySlider" class="form-range fcv2-slider" min="0" max="30" value="10" step="1">
+          </div>
+          <div class="fcv2-field fcv2-field-btn">
+            <button type="button" id="btnRunBatch" class="btn fcv2-btn-run">
+              <i class="bi bi-play-fill me-1"></i>Generar Batch Forecast
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
-    <div class="fcv2-empty-title">Sin historial de ventas</div>
-    <div class="fcv2-empty-hint">No se encontró historial de ventas para este SKU / filtro</div>
+
+    <div class="fcv2-kpi-row fcv2-hidden" id="batchKpiCards">
+      <div class="fcv2-kpi fcv2-kpi-blue">
+        <div class="fcv2-kpi-icon"><i class="bi bi-boxes"></i></div>
+        <div class="fcv2-kpi-body">
+          <div class="fcv2-kpi-value" id="batchKpiTotal">—</div>
+          <div class="fcv2-kpi-label">SKUs Procesados</div>
+        </div>
+      </div>
+      <div class="fcv2-kpi fcv2-kpi-red">
+        <div class="fcv2-kpi-icon"><i class="bi bi-cart-check-fill"></i></div>
+        <div class="fcv2-kpi-body">
+          <div class="fcv2-kpi-value" id="batchKpiBuyNow">—</div>
+          <div class="fcv2-kpi-label">Comprar Ahora</div>
+        </div>
+      </div>
+      <div class="fcv2-kpi fcv2-kpi-amber">
+        <div class="fcv2-kpi-icon"><i class="bi bi-exclamation-circle-fill"></i></div>
+        <div class="fcv2-kpi-body">
+          <div class="fcv2-kpi-value" id="batchKpiReview">—</div>
+          <div class="fcv2-kpi-label">Revisar</div>
+        </div>
+      </div>
+      <div class="fcv2-kpi fcv2-kpi-green">
+        <div class="fcv2-kpi-icon"><i class="bi bi-x-circle-fill"></i></div>
+        <div class="fcv2-kpi-body">
+          <div class="fcv2-kpi-value" id="batchKpiDoNotBuy">—</div>
+          <div class="fcv2-kpi-label">No Comprar</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="fcv2-results-card fcv2-hidden" id="batchResultsCard">
+      <div class="fcv2-results-header">
+        <span><i class="bi bi-table me-2"></i>Resultados del Batch</span>
+        <a href="#" class="btn fcv2-btn-outline-sm" id="btnBatchExport">
+          <i class="bi bi-download me-1"></i>Exportar
+        </a>
+      </div>
+      <div class="fcv2-results-body">
+        <table class="fcv2-table" id="batchTable">
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Producto</th>
+              <th>Categoría</th>
+              <th>Ciclo</th>
+              <th>Dem. Sem.</th>
+              <th>Stock</th>
+              <th>Compra Sug.</th>
+              <th>Decisión</th>
+              <th>Razón</th>
+            </tr>
+          </thead>
+          <tbody id="batchTableBody"></tbody>
+        </table>
+        <div class="fcv2-pagination" id="batchPagination"></div>
+      </div>
+    </div>
+
+    <div id="batchEmptyState" class="fcv2-empty-state">
+      <div class="fcv2-empty-icon">
+        <i class="bi bi-file-earmark-arrow-up"></i>
+      </div>
+      <div class="fcv2-empty-title">Carga SKUs para generar forecast masivo</div>
+      <div class="fcv2-empty-hint">Sube un archivo o pega los SKUs en el campo de texto</div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="explainModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content fcv2-modal-content">
+      <div class="modal-header fcv2-modal-header">
+        <h5 class="modal-title"><i class="bi bi-lightbulb me-2"></i>Detalle de Recomendación</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body fcv2-modal-body">
+        <div class="fcv2-modal-sku" id="modalSku"></div>
+        <div class="fcv2-modal-product" id="modalProduct"></div>
+        <ul class="fcv2-explain-list" id="modalExplainList"></ul>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -208,15 +337,39 @@ document.addEventListener('DOMContentLoaded', function() {
   const emptyState = document.getElementById('emptyState');
   const noDataState = document.getElementById('noDataState');
   const kpiCards = document.getElementById('kpiCards');
-  const chartsRow = document.querySelector('.fcv2-charts-row');
+  const chartsRow = document.getElementById('chartsRow');
   const explainCard = document.getElementById('explainCard');
-  const actionsBar = document.querySelector('.fcv2-actions-bar');
+  const actionsBar = document.getElementById('actionsBar');
   const statusBadge = document.getElementById('statusBadge');
   const statusText = document.getElementById('statusText');
   const warningBanner = document.getElementById('warningBanner');
   const warningText = document.getElementById('warningText');
   const explainList = document.getElementById('explainList');
-  const helperDate = document.getElementById('helperDate');
+
+  const tabSingle = document.getElementById('tabSingle');
+  const tabBatch = document.getElementById('tabBatch');
+  const singleMode = document.getElementById('singleMode');
+  const batchMode = document.getElementById('batchMode');
+
+  let currentSku = '';
+  let currentBatchId = '';
+
+  tabSingle.addEventListener('click', () => switchTab('single'));
+  tabBatch.addEventListener('click', () => switchTab('batch'));
+
+  function switchTab(tab) {
+    if (tab === 'single') {
+      tabSingle.classList.add('active');
+      tabBatch.classList.remove('active');
+      singleMode.classList.remove('d-none');
+      batchMode.classList.add('d-none');
+    } else {
+      tabSingle.classList.remove('active');
+      tabBatch.classList.add('active');
+      singleMode.classList.add('d-none');
+      batchMode.classList.remove('d-none');
+    }
+  }
 
   safetySlider.addEventListener('input', function() {
     safetyLabel.textContent = this.value + '%';
@@ -288,6 +441,7 @@ document.addEventListener('DOMContentLoaded', function() {
       resetKPIs();
       return;
     }
+    currentSku = sku;
 
     hideStates();
     btnRun.disabled = true;
@@ -333,6 +487,7 @@ document.addEventListener('DOMContentLoaded', function() {
         renderPurchaseChart(data);
         updateExplainability(data);
         updateWarnings(data);
+        updateActionButtons(sku);
       })
       .catch(err => {
         console.error('Forecast error:', err);
@@ -350,72 +505,27 @@ document.addEventListener('DOMContentLoaded', function() {
     kpiStockCD.textContent = kpis.stock_cd.toLocaleString();
     kpiSuggested.textContent = kpis.suggested_purchase.toLocaleString();
     
-    const buyNow = data.buy_now || false;
-    const riskLevel = data.risk_level || 'LOW';
+    const decision = data.decision || 'REVIEW';
     
-    if (buyNow || kpis.suggested_purchase > 0) {
-      if (riskLevel === 'HIGH' || buyNow) {
-        purchaseHint.textContent = 'Comprar ahora';
-        purchaseHint.className = 'fcv2-kpi-hint fcv2-hint-urgent';
-        updateStatus('buy', 'Comprar ahora');
-      } else if (riskLevel === 'MEDIUM') {
-        purchaseHint.textContent = 'Revisar compra';
-        purchaseHint.className = 'fcv2-kpi-hint fcv2-hint-review';
-        updateStatus('review', 'Revisar');
-      } else {
-        purchaseHint.textContent = 'Compra recomendada';
-        purchaseHint.className = 'fcv2-kpi-hint fcv2-hint-recommend';
-        updateStatus('buy', 'Comprar');
-      }
+    if (decision === 'BUY_NOW') {
+      purchaseHint.textContent = 'Comprar ahora';
+      purchaseHint.className = 'fcv2-kpi-hint fcv2-hint-urgent';
+      updateStatus('buy', 'Comprar ahora');
+    } else if (decision === 'REVIEW') {
+      purchaseHint.textContent = 'Revisar compra';
+      purchaseHint.className = 'fcv2-kpi-hint fcv2-hint-review';
+      updateStatus('review', 'Revisar');
     } else {
-      purchaseHint.textContent = 'Sin necesidad de compra';
+      purchaseHint.textContent = 'No comprar';
       purchaseHint.className = 'fcv2-kpi-hint fcv2-hint-ok';
       updateStatus('nobuy', 'No comprar');
     }
   }
 
   function updateExplainability(data) {
-    const bullets = [];
-    const lifecycle = data.lifecycle_status || 'UNKNOWN';
-    const model = data.model_used || 'SMA';
-    const reasonCode = data.reason_code || '';
-    const riskLevel = data.risk_level || 'LOW';
-    
-    bullets.push('<li><strong>Ciclo de vida:</strong> ' + lifecycle + ' — Modelo aplicado: ' + model + '</li>');
-    
-    if (lifecycle === 'ACTIVE') {
-      bullets.push('<li><i class="bi bi-check-circle text-success me-1"></i>SKU activo con ventas en últimos 30 días</li>');
-    } else if (lifecycle === 'SLOW') {
-      bullets.push('<li><i class="bi bi-clock text-warning me-1"></i>SKU lento (31-90 días) — Penalización 50% aplicada</li>');
-    } else if (lifecycle === 'DEAD') {
-      bullets.push('<li><i class="bi bi-x-circle text-danger me-1"></i>SKU muerto (90+ días sin ventas) — Compra bloqueada</li>');
-    } else if (lifecycle === 'NEW') {
-      bullets.push('<li><i class="bi bi-star text-info me-1"></i>SKU nuevo — Usando promedio de categoría (cold start)</li>');
-    }
-    
-    if (reasonCode.includes('PROJECTED_STOCKOUT')) {
-      bullets.push('<li><i class="bi bi-exclamation-triangle text-danger me-1"></i>Alerta: Stockout proyectado — Compra urgente activada</li>');
-    }
-    if (reasonCode.includes('BROKEN_STOCK')) {
-      bullets.push('<li><i class="bi bi-exclamation-circle text-danger me-1"></i>Alerta: Quiebre de stock detectado</li>');
-    }
-    if (reasonCode.includes('OVERSTOCK')) {
-      bullets.push('<li><i class="bi bi-box text-warning me-1"></i>Alerta: Sobrestock — Compra bloqueada</li>');
-    }
-    if (reasonCode.includes('SLOW_STOCK_PENALTY')) {
-      bullets.push('<li><i class="bi bi-clock-history text-warning me-1"></i>Stock lento flaggeado — Reducción 50% en cantidad</li>');
-    }
-    if (reasonCode.includes('SILENT_SKU')) {
-      bullets.push('<li><i class="bi bi-volume-mute text-muted me-1"></i>SKU silencioso (sin ventas recientes)</li>');
-    }
-    
-    const leadTime = parseInt(leadTimeSelect.value);
-    const horizon = parseInt(horizonSelect.value);
-    const safety = parseInt(safetySlider.value);
-    bullets.push('<li><strong>Parámetros:</strong> Horizonte ' + horizon + ' sem, Lead time ' + leadTime + ' sem, Safety ' + safety + '%</li>');
-    
+    const bullets = data.explain_bullets || [];
     if (bullets.length > 0) {
-      explainList.innerHTML = bullets.join('');
+      explainList.innerHTML = bullets.map(b => '<li>' + b + '</li>').join('');
     } else {
       explainList.innerHTML = '<li class="fcv2-explain-empty"><i class="bi bi-info-circle me-2"></i>Sin información adicional</li>';
     }
@@ -423,7 +533,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function updateWarnings(data) {
     const lifecycle = data.lifecycle_status || '';
-    const riskLevel = data.risk_level || 'LOW';
     const reasonCode = data.reason_code || '';
     
     if (lifecycle === 'DEAD' || lifecycle === 'SLOW' || reasonCode.includes('SLOW_STOCK')) {
@@ -440,6 +549,21 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
+  function updateActionButtons(sku) {
+    const encodedSku = encodeURIComponent(sku);
+    const exportParams = new URLSearchParams({
+      sku: sku,
+      store: storeSelect.value,
+      horizon_weeks: horizonSelect.value,
+      lead_time_weeks: leadTimeSelect.value,
+      safety_pct: (parseInt(safetySlider.value) / 100).toFixed(2)
+    });
+    
+    document.getElementById('btnExport').href = '/forecast/export?' + exportParams.toString();
+    document.getElementById('btnAlerts').href = '/alerts?sku=' + encodedSku;
+    document.getElementById('btnSlowStock').href = '/slow_stock?sku_search=' + encodedSku;
+  }
+
   function renderSalesChart(data) {
     const historyWeeks = data.history.map(h => h.week);
     const historyUnits = data.history.map(h => h.units);
@@ -447,7 +571,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const forecastUnits = data.forecast.map(f => f.units);
 
     const traces = [];
-
     traces.push({
       x: historyWeeks,
       y: historyUnits,
@@ -457,7 +580,6 @@ document.addEventListener('DOMContentLoaded', function() {
       line: { color: '#3b82f6', width: 2.5 },
       marker: { size: 7, color: '#3b82f6' }
     });
-
     traces.push({
       x: forecastWeeks,
       y: forecastUnits,
@@ -504,10 +626,7 @@ document.addEventListener('DOMContentLoaded', function() {
       x: ['Demanda Lead Time', 'Stock Total', 'Compra Sugerida'],
       y: [demandLeadTime, kpis.stock_cd, kpis.suggested_purchase],
       type: 'bar',
-      marker: {
-        color: ['#06b6d4', '#22c55e', '#f59e0b'],
-        line: { width: 0 }
-      },
+      marker: { color: ['#06b6d4', '#22c55e', '#f59e0b'], line: { width: 0 } },
       text: [demandLeadTime.toLocaleString(), kpis.stock_cd.toLocaleString(), kpis.suggested_purchase.toLocaleString()],
       textposition: 'outside',
       textfont: { size: 13, weight: 600 }
@@ -529,12 +648,117 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   btnRun.addEventListener('click', runForecast);
-
   skuInput.addEventListener('keypress', function(e) {
-    if (e.key === 'Enter') {
-      runForecast();
-    }
+    if (e.key === 'Enter') runForecast();
   });
+
+  const batchSafetySlider = document.getElementById('batchSafetySlider');
+  const batchSafetyLabel = document.getElementById('batchSafetyLabel');
+  const btnRunBatch = document.getElementById('btnRunBatch');
+  const batchKpiCards = document.getElementById('batchKpiCards');
+  const batchResultsCard = document.getElementById('batchResultsCard');
+  const batchEmptyState = document.getElementById('batchEmptyState');
+  const batchTableBody = document.getElementById('batchTableBody');
+  const batchPagination = document.getElementById('batchPagination');
+
+  batchSafetySlider.addEventListener('input', function() {
+    batchSafetyLabel.textContent = this.value + '%';
+  });
+
+  btnRunBatch.addEventListener('click', runBatchForecast);
+
+  function runBatchForecast() {
+    const formData = new FormData();
+    const fileInput = document.getElementById('batchFile');
+    const skuText = document.getElementById('batchSkuText').value.trim();
+    
+    if (fileInput.files.length > 0) {
+      formData.append('file', fileInput.files[0]);
+    } else if (skuText) {
+      formData.append('sku_list', skuText);
+    } else {
+      alert('Por favor carga un archivo o ingresa SKUs');
+      return;
+    }
+    
+    formData.append('horizon_weeks', document.getElementById('batchHorizon').value);
+    formData.append('lead_time_weeks', document.getElementById('batchLeadTime').value);
+    formData.append('safety_pct', (parseInt(batchSafetySlider.value) / 100).toFixed(2));
+
+    btnRunBatch.disabled = true;
+    btnRunBatch.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Procesando...';
+
+    fetch('/api/forecast/batch', {
+      method: 'POST',
+      body: formData
+    })
+    .then(res => res.json())
+    .then(data => {
+      btnRunBatch.disabled = false;
+      btnRunBatch.innerHTML = '<i class="bi bi-play-fill me-1"></i>Generar Batch Forecast';
+
+      if (data.error) {
+        alert(data.error);
+        return;
+      }
+
+      currentBatchId = data.batch_id;
+      batchEmptyState.classList.add('d-none');
+      batchKpiCards.classList.remove('fcv2-hidden');
+      batchResultsCard.classList.remove('fcv2-hidden');
+
+      document.getElementById('batchKpiTotal').textContent = data.total_skus;
+      document.getElementById('batchKpiBuyNow').textContent = data.buy_now_count;
+      document.getElementById('batchKpiReview').textContent = data.review_count;
+      document.getElementById('batchKpiDoNotBuy').textContent = data.do_not_buy_count;
+
+      document.getElementById('btnBatchExport').href = '/forecast/batch/export/' + data.batch_id;
+
+      renderBatchTable(data.results);
+    })
+    .catch(err => {
+      console.error('Batch error:', err);
+      btnRunBatch.disabled = false;
+      btnRunBatch.innerHTML = '<i class="bi bi-play-fill me-1"></i>Generar Batch Forecast';
+      alert('Error al procesar batch');
+    });
+  }
+
+  function renderBatchTable(results) {
+    batchTableBody.innerHTML = '';
+    results.forEach(r => {
+      const decisionClass = r.decision === 'BUY_NOW' ? 'fcv2-badge-buy' : 
+                            r.decision === 'REVIEW' ? 'fcv2-badge-review' : 'fcv2-badge-nobuy';
+      const decisionLabel = r.decision === 'BUY_NOW' ? 'Comprar' : 
+                            r.decision === 'REVIEW' ? 'Revisar' : 'No Comprar';
+      
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td><code>${r.sku}</code></td>
+        <td>${r.product_name}</td>
+        <td>${r.category}</td>
+        <td><span class="fcv2-lifecycle-badge">${r.lifecycle_status}</span></td>
+        <td>${r.weekly_demand.toLocaleString()}</td>
+        <td>${r.total_stock.toLocaleString()}</td>
+        <td><strong>${r.suggested_purchase.toLocaleString()}</strong></td>
+        <td><span class="fcv2-decision-badge ${decisionClass}">${decisionLabel}</span></td>
+        <td><span class="fcv2-reason-text">${r.reason_summary}</span></td>
+      `;
+      row.style.cursor = 'pointer';
+      row.addEventListener('click', () => showExplainModal(r));
+      batchTableBody.appendChild(row);
+    });
+  }
+
+  function showExplainModal(item) {
+    document.getElementById('modalSku').textContent = 'SKU: ' + item.sku;
+    document.getElementById('modalProduct').textContent = item.product_name;
+    const bullets = item.explain_bullets || [];
+    document.getElementById('modalExplainList').innerHTML = bullets.map(b => '<li>' + b + '</li>').join('');
+    
+    const modal = new bootstrap.Modal(document.getElementById('explainModal'));
+    modal.show();
+  }
 
   showEmptyState();
 });

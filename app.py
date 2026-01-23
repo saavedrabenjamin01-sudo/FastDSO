@@ -318,6 +318,60 @@ class ForecastResult(db.Model):
     product = db.relationship('Product')
 
 
+class ForecastBatchRun(db.Model):
+    """Batch forecast run metadata."""
+    __tablename__ = 'forecast_batch_run'
+    id = db.Column(db.Integer, primary_key=True)
+    batch_id = db.Column(db.String(36), unique=True, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    params_json = db.Column(db.Text, nullable=True)
+    total_skus = db.Column(db.Integer, default=0)
+    buy_now_count = db.Column(db.Integer, default=0)
+    review_count = db.Column(db.Integer, default=0)
+    do_not_buy_count = db.Column(db.Integer, default=0)
+
+    user = db.relationship('User', backref='forecast_batch_runs')
+
+    def get_params(self):
+        if self.params_json:
+            try:
+                return json.loads(self.params_json)
+            except Exception:
+                return {}
+        return {}
+
+
+class ForecastBatchItem(db.Model):
+    """Individual SKU result in a batch forecast."""
+    __tablename__ = 'forecast_batch_item'
+    id = db.Column(db.Integer, primary_key=True)
+    batch_id = db.Column(db.String(36), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    sku = db.Column(db.String(64), nullable=False)
+    product_name = db.Column(db.String(255), nullable=True)
+    category = db.Column(db.String(100), nullable=True)
+    lifecycle_status = db.Column(db.String(20), nullable=True)
+    model_used = db.Column(db.String(50), nullable=True)
+    weekly_demand = db.Column(db.Float, default=0)
+    total_stock = db.Column(db.Integer, default=0)
+    suggested_purchase = db.Column(db.Integer, default=0)
+    decision = db.Column(db.String(20), nullable=True)
+    risk_level = db.Column(db.String(20), nullable=True)
+    reason_summary = db.Column(db.String(255), nullable=True)
+    explain_json = db.Column(db.Text, nullable=True)
+
+    product = db.relationship('Product')
+
+    def get_explain(self):
+        if self.explain_json:
+            try:
+                return json.loads(self.explain_json)
+            except Exception:
+                return []
+        return []
+
+
 class AuditLog(db.Model):
     """Audit trail for all significant actions in the system."""
     __tablename__ = 'audit_log'
@@ -3923,6 +3977,83 @@ def api_forecast_v2():
         "weeks_of_cover": weeks_of_cover
     }
 
+    store_id_filter = None
+    if store_param:
+        store_obj = Store.query.filter_by(name=store_param).first()
+        if store_obj:
+            store_id_filter = store_obj.id
+
+    sales_30d_map, sales_90d_map, sales_ever_map = get_lifecycle_sales_maps(store_id_filter)
+    lifecycle_map = classify_sku_lifecycle(sales_30d_map, sales_90d_map, sales_ever_map, {product.id})
+    lifecycle_status = lifecycle_map.get(product.id, 'UNKNOWN')
+    
+    all_alerts = compute_alerts()
+    sku_alerts = [a for a in all_alerts if a.get('sku', '').lower() == sku_param.lower()]
+    
+    slow_stock_flagged = not product.eligible_for_distribution if hasattr(product, 'eligible_for_distribution') else False
+    
+    buy_now = False
+    risk_level = 'LOW'
+    reason_codes = []
+    decision = 'REVIEW'
+    
+    for alert in sku_alerts:
+        alert_type = alert.get('type', '')
+        alert_severity = alert.get('severity', 'LOW')
+        if alert_type == 'PROJECTED_STOCKOUT':
+            buy_now = True
+            risk_level = 'HIGH' if alert_severity == 'HIGH' else 'MEDIUM'
+            reason_codes.append('PROJECTED_STOCKOUT')
+        elif alert_type == 'BROKEN_STOCK':
+            buy_now = True
+            if alert_severity == 'HIGH':
+                risk_level = 'HIGH'
+            reason_codes.append('BROKEN_STOCK')
+        elif alert_type == 'OVERSTOCK':
+            reason_codes.append('OVERSTOCK')
+            risk_level = 'LOW'
+        elif alert_type == 'SILENT_SKU':
+            reason_codes.append('SILENT_SKU')
+    
+    if slow_stock_flagged:
+        reason_codes.append('SLOW_STOCK_FLAG')
+        if risk_level == 'LOW':
+            risk_level = 'MEDIUM'
+    
+    if lifecycle_status == 'DEAD':
+        reason_codes.append('DEAD_SKU')
+        decision = 'DO_NOT_BUY'
+    elif lifecycle_status == 'SLOW':
+        reason_codes.append('SLOW_SKU')
+    
+    if 'OVERSTOCK' in reason_codes:
+        decision = 'DO_NOT_BUY'
+    elif buy_now or (weeks_of_cover < lead_time_weeks + (lead_time_weeks * safety_pct)):
+        decision = 'BUY_NOW'
+    elif suggested_purchase > 0:
+        decision = 'BUY_NOW' if risk_level == 'HIGH' else 'REVIEW'
+    else:
+        decision = 'DO_NOT_BUY'
+    
+    model_used = 'SMA4'
+    if lifecycle_status == 'SLOW':
+        model_used = 'SMA12_PENALTY'
+    elif lifecycle_status == 'NEW':
+        model_used = 'CATEGORY_AVG'
+    
+    explain_bullets = generate_forecast_explanation(
+        avg_weekly_demand=avg_last4,
+        horizon_demand=forecast_total,
+        total_stock=stock_cd,
+        weeks_of_cover=weeks_of_cover,
+        lead_time_weeks=lead_time_weeks,
+        safety_pct=safety_pct,
+        lifecycle_status=lifecycle_status,
+        alerts=sku_alerts,
+        slow_stock_flagged=slow_stock_flagged,
+        suggested_purchase=suggested_purchase
+    )
+
     log_audit(
         action='forecast_v2.run',
         status='success',
@@ -3939,6 +4070,8 @@ def api_forecast_v2():
 
     return jsonify({
         "sku": str(sku_param),
+        "product_name": product.name,
+        "category": product.category or '',
         "store": store_param if store_param else "ALL",
         "history": history_data,
         "forecast": forecast_data,
@@ -3946,8 +4079,551 @@ def api_forecast_v2():
             "lower": bands_lower,
             "upper": bands_upper
         },
-        "kpis": kpis
+        "kpis": kpis,
+        "lifecycle_status": lifecycle_status,
+        "model_used": model_used,
+        "buy_now": buy_now,
+        "risk_level": risk_level,
+        "decision": decision,
+        "reason_code": ';'.join(reason_codes[:3]) if reason_codes else 'STANDARD',
+        "alerts": [{"type": a.get('type'), "severity": a.get('severity')} for a in sku_alerts],
+        "slow_stock_flagged": slow_stock_flagged,
+        "explain_bullets": explain_bullets
     })
+
+
+def generate_forecast_explanation(avg_weekly_demand, horizon_demand, total_stock, weeks_of_cover,
+                                   lead_time_weeks, safety_pct, lifecycle_status, alerts,
+                                   slow_stock_flagged, suggested_purchase):
+    """Generate business-readable explanation bullets for forecast recommendation."""
+    bullets = []
+    
+    bullets.append(f"Demanda semanal promedio: {avg_weekly_demand:.1f} unidades")
+    bullets.append(f"Stock actual: {total_stock} u (~{weeks_of_cover:.1f} semanas de cobertura)")
+    
+    coverage_gap = lead_time_weeks + (lead_time_weeks * safety_pct) - weeks_of_cover
+    if coverage_gap > 0:
+        bullets.append(f"Lead time: {lead_time_weeks:.0f} semanas → riesgo de stockout durante lead time")
+    else:
+        bullets.append(f"Lead time: {lead_time_weeks:.0f} semanas → cobertura suficiente")
+    
+    for alert in alerts:
+        alert_type = alert.get('type', '')
+        if alert_type == 'PROJECTED_STOCKOUT':
+            bullets.append("Alerta: Stockout proyectado detectado")
+        elif alert_type == 'OVERSTOCK':
+            bullets.append("Alerta: Sobrestock activo - compra no recomendada")
+        elif alert_type == 'BROKEN_STOCK':
+            bullets.append("Alerta: Quiebre de stock detectado")
+        elif alert_type == 'SILENT_SKU':
+            bullets.append("Alerta: SKU sin movimiento reciente")
+    
+    if slow_stock_flagged:
+        bullets.append("SKU flaggeado como stock lento - revisar antes de comprar")
+    
+    if lifecycle_status == 'DEAD':
+        bullets.append("Ciclo de vida: MUERTO (90+ días sin ventas) - compra bloqueada")
+    elif lifecycle_status == 'SLOW':
+        bullets.append("Ciclo de vida: LENTO (31-90 días) - penalización 50% aplicada")
+    elif lifecycle_status == 'NEW':
+        bullets.append("Ciclo de vida: NUEVO - usando promedio de categoría")
+    elif lifecycle_status == 'ACTIVE':
+        bullets.append("Ciclo de vida: ACTIVO - ventas en últimos 30 días")
+    
+    if suggested_purchase > 0:
+        bullets.append(f"Compra sugerida: {suggested_purchase} unidades")
+    else:
+        bullets.append("Compra sugerida: 0 unidades (stock suficiente)")
+    
+    return bullets[:6]
+
+
+@app.route('/forecast/export', methods=['GET'])
+@login_required
+@require_permission('forecast_v2:run')
+def export_single_sku_forecast():
+    """Export single SKU forecast to Excel."""
+    import math
+    today = date.today()
+    
+    sku_param = request.args.get('sku', '').strip()
+    if not sku_param:
+        flash('SKU requerido para exportar', 'warning')
+        return redirect(url_for('purchase_forecast_v2'))
+    
+    store_param = request.args.get('store', '').strip()
+    try:
+        horizon_weeks = int(request.args.get('horizon_weeks', 8))
+    except ValueError:
+        horizon_weeks = 8
+    try:
+        lead_time_weeks = float(request.args.get('lead_time_weeks', 4))
+    except ValueError:
+        lead_time_weeks = 4.0
+    try:
+        safety_pct = float(request.args.get('safety_pct', 0.10))
+    except ValueError:
+        safety_pct = 0.10
+    
+    product = Product.query.filter_by(sku=sku_param).first()
+    if not product:
+        flash(f'SKU {sku_param} no encontrado', 'warning')
+        return redirect(url_for('purchase_forecast_v2'))
+    
+    store_id_filter = None
+    if store_param:
+        store_obj = Store.query.filter_by(name=store_param).first()
+        if store_obj:
+            store_id_filter = store_obj.id
+    
+    history_weeks = 12
+    history_cutoff = today - timedelta(days=history_weeks * 7)
+    
+    history_q = (
+        db.session.query(db.func.sum(SalesWeeklyAgg.units).label('units'))
+        .filter(SalesWeeklyAgg.product_id == product.id)
+        .filter(SalesWeeklyAgg.week_start >= history_cutoff)
+    )
+    if store_id_filter:
+        history_q = history_q.filter(SalesWeeklyAgg.store_id == store_id_filter)
+    
+    total_units = history_q.scalar() or 0
+    avg_weekly = total_units / history_weeks if history_weeks > 0 else 0
+    
+    latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar() or today
+    cd_stock = db.session.query(db.func.sum(StockCD.quantity)).filter(
+        StockCD.product_id == product.id, StockCD.as_of_date == latest_cd_date
+    ).scalar() or 0
+    
+    latest_store_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar() or today
+    store_stock_q = db.session.query(db.func.sum(StockSnapshot.quantity)).filter(
+        StockSnapshot.product_id == product.id, StockSnapshot.as_of_date == latest_store_date
+    )
+    if store_id_filter:
+        store_stock_q = store_stock_q.filter(StockSnapshot.store_id == store_id_filter)
+    store_stock = store_stock_q.scalar() or 0
+    
+    total_stock = int(cd_stock) + int(store_stock)
+    
+    sales_30d_map, sales_90d_map, sales_ever_map = get_lifecycle_sales_maps(store_id_filter)
+    lifecycle_map = classify_sku_lifecycle(sales_30d_map, sales_90d_map, sales_ever_map, {product.id})
+    lifecycle_status = lifecycle_map.get(product.id, 'UNKNOWN')
+    
+    all_alerts = compute_alerts()
+    sku_alerts = [a for a in all_alerts if a.get('sku', '').lower() == sku_param.lower()]
+    
+    slow_stock_flagged = not product.eligible_for_distribution if hasattr(product, 'eligible_for_distribution') else False
+    
+    buy_now = False
+    risk_level = 'LOW'
+    reasons = []
+    
+    for alert in sku_alerts:
+        alert_type = alert.get('type', '')
+        if alert_type in ['PROJECTED_STOCKOUT', 'BROKEN_STOCK']:
+            buy_now = True
+            risk_level = 'HIGH'
+            reasons.append(alert_type)
+        elif alert_type == 'OVERSTOCK':
+            reasons.append('OVERSTOCK')
+    
+    if slow_stock_flagged:
+        reasons.append('SLOW_STOCK')
+    if lifecycle_status in ['DEAD', 'SLOW']:
+        reasons.append(lifecycle_status)
+    
+    horizon_demand = avg_weekly * horizon_weeks
+    demand_lead_time = avg_weekly * lead_time_weeks
+    safety_units = math.ceil(demand_lead_time * safety_pct)
+    suggested_purchase = max(0, math.ceil(demand_lead_time + safety_units - total_stock))
+    
+    if lifecycle_status == 'DEAD' or 'OVERSTOCK' in reasons:
+        suggested_purchase = 0
+    
+    model_used = 'SMA4'
+    if lifecycle_status == 'SLOW':
+        model_used = 'SMA12_PENALTY'
+    elif lifecycle_status == 'NEW':
+        model_used = 'CATEGORY_AVG'
+    
+    data = [{
+        'SKU': str(sku_param),
+        'Producto': product.name,
+        'Categoría': product.category or '',
+        'Ciclo de Vida': lifecycle_status,
+        'Modelo Usado': model_used,
+        'Demanda Semanal': round(avg_weekly, 2),
+        'Demanda Horizonte': round(horizon_demand, 0),
+        'Stock CD': int(cd_stock),
+        'Stock Tiendas': int(store_stock),
+        'Stock Total': total_stock,
+        'Compra Sugerida': suggested_purchase,
+        'Comprar Ahora': 'Sí' if buy_now else 'No',
+        'Nivel Riesgo': risk_level,
+        'Razones': '; '.join(reasons) if reasons else 'STANDARD',
+        'Horizonte (sem)': horizon_weeks,
+        'Lead Time (sem)': lead_time_weeks,
+        'Safety %': f"{safety_pct*100:.0f}%",
+        'Tienda': store_param or 'Todas',
+        'Fecha Export': today.strftime('%Y-%m-%d')
+    }]
+    
+    df = pd.DataFrame(data)
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Forecast')
+    output.seek(0)
+    
+    filename = f"forecast_{sku_param}_{today.strftime('%Y%m%d')}.xlsx"
+    return send_file(output, as_attachment=True, download_name=filename,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@app.route('/api/forecast/batch', methods=['POST'])
+@login_required
+@require_permission('forecast_v2:run')
+def api_forecast_batch():
+    """Run batch forecast for multiple SKUs."""
+    import math
+    today = date.today()
+    
+    try:
+        horizon_weeks = int(request.form.get('horizon_weeks', 8))
+    except ValueError:
+        horizon_weeks = 8
+    try:
+        lead_time_weeks = float(request.form.get('lead_time_weeks', 4))
+    except ValueError:
+        lead_time_weeks = 4.0
+    try:
+        safety_pct = float(request.form.get('safety_pct', 0.10))
+    except ValueError:
+        safety_pct = 0.10
+    
+    sku_list = []
+    
+    if 'file' in request.files and request.files['file'].filename:
+        file = request.files['file']
+        try:
+            if file.filename.endswith('.csv'):
+                df = pd.read_csv(file)
+            else:
+                df = pd.read_excel(file)
+            
+            sku_col = None
+            for col in df.columns:
+                if col.lower() in ['sku', 'sku_code', 'codigo', 'código']:
+                    sku_col = col
+                    break
+            if sku_col is None and len(df.columns) > 0:
+                sku_col = df.columns[0]
+            
+            if sku_col:
+                sku_list = [str(s).strip() for s in df[sku_col].dropna().tolist() if str(s).strip()]
+        except Exception as e:
+            return jsonify({"error": f"Error procesando archivo: {str(e)}"}), 400
+    else:
+        sku_text = request.form.get('sku_list', '').strip()
+        if sku_text:
+            sku_list = [s.strip() for s in sku_text.replace(',', '\n').split('\n') if s.strip()]
+    
+    if not sku_list:
+        return jsonify({"error": "No SKUs provided"}), 400
+    
+    sku_list = list(dict.fromkeys(sku_list))[:500]
+    
+    products = Product.query.filter(Product.sku.in_(sku_list)).all()
+    product_map = {p.sku: p for p in products}
+    product_id_map = {p.id: p for p in products}
+    found_skus = set(product_map.keys())
+    
+    sales_30d_map, sales_90d_map, sales_ever_map = get_lifecycle_sales_maps(None)
+    all_product_ids = set(p.id for p in products)
+    lifecycle_map = classify_sku_lifecycle(sales_30d_map, sales_90d_map, sales_ever_map, all_product_ids)
+    
+    all_alerts = compute_alerts()
+    alerts_by_sku = {}
+    for a in all_alerts:
+        sku = a.get('sku', '')
+        if sku not in alerts_by_sku:
+            alerts_by_sku[sku] = []
+        alerts_by_sku[sku].append(a)
+    
+    history_weeks = 12
+    history_cutoff = today - timedelta(days=history_weeks * 7)
+    
+    sales_rows = (
+        db.session.query(
+            SalesWeeklyAgg.product_id,
+            db.func.sum(SalesWeeklyAgg.units).label('total_units')
+        )
+        .filter(SalesWeeklyAgg.product_id.in_(all_product_ids))
+        .filter(SalesWeeklyAgg.week_start >= history_cutoff)
+        .group_by(SalesWeeklyAgg.product_id)
+        .all()
+    )
+    sales_map = {r.product_id: r.total_units / history_weeks for r in sales_rows}
+    
+    latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar() or today
+    cd_rows = (
+        db.session.query(StockCD.product_id, db.func.sum(StockCD.quantity).label('qty'))
+        .filter(StockCD.product_id.in_(all_product_ids))
+        .filter(StockCD.as_of_date == latest_cd_date)
+        .group_by(StockCD.product_id)
+        .all()
+    )
+    cd_stock_map = {r.product_id: int(r.qty) for r in cd_rows}
+    
+    latest_store_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar() or today
+    store_rows = (
+        db.session.query(StockSnapshot.product_id, db.func.sum(StockSnapshot.quantity).label('qty'))
+        .filter(StockSnapshot.product_id.in_(all_product_ids))
+        .filter(StockSnapshot.as_of_date == latest_store_date)
+        .group_by(StockSnapshot.product_id)
+        .all()
+    )
+    store_stock_map = {r.product_id: int(r.qty) for r in store_rows}
+    
+    batch_id = str(uuid.uuid4())
+    results = []
+    buy_now_count = 0
+    review_count = 0
+    do_not_buy_count = 0
+    
+    for sku in sku_list:
+        if sku not in found_skus:
+            continue
+        
+        product = product_map[sku]
+        pid = product.id
+        
+        avg_weekly = sales_map.get(pid, 0)
+        cd_stock = cd_stock_map.get(pid, 0)
+        store_stock = store_stock_map.get(pid, 0)
+        total_stock = cd_stock + store_stock
+        
+        lifecycle_status = lifecycle_map.get(pid, 'UNKNOWN')
+        sku_alerts = alerts_by_sku.get(sku, [])
+        slow_stock_flagged = not product.eligible_for_distribution if hasattr(product, 'eligible_for_distribution') else False
+        
+        buy_now = False
+        risk_level = 'LOW'
+        reasons = []
+        
+        for alert in sku_alerts:
+            alert_type = alert.get('type', '')
+            if alert_type in ['PROJECTED_STOCKOUT', 'BROKEN_STOCK']:
+                buy_now = True
+                risk_level = 'HIGH'
+                reasons.append(alert_type)
+            elif alert_type == 'OVERSTOCK':
+                reasons.append('OVERSTOCK')
+        
+        if slow_stock_flagged:
+            reasons.append('SLOW_STOCK')
+            if risk_level == 'LOW':
+                risk_level = 'MEDIUM'
+        
+        if lifecycle_status == 'DEAD':
+            reasons.append('DEAD')
+        elif lifecycle_status == 'SLOW':
+            reasons.append('SLOW')
+        
+        weeks_of_cover = total_stock / max(avg_weekly, 1)
+        demand_lead_time = avg_weekly * lead_time_weeks
+        safety_units = math.ceil(demand_lead_time * safety_pct)
+        suggested_purchase = max(0, math.ceil(demand_lead_time + safety_units - total_stock))
+        
+        if lifecycle_status == 'DEAD' or 'OVERSTOCK' in reasons:
+            suggested_purchase = 0
+        
+        if 'OVERSTOCK' in reasons or lifecycle_status == 'DEAD':
+            decision = 'DO_NOT_BUY'
+            do_not_buy_count += 1
+        elif buy_now or (weeks_of_cover < lead_time_weeks + (lead_time_weeks * safety_pct)):
+            decision = 'BUY_NOW'
+            buy_now_count += 1
+        elif suggested_purchase > 0:
+            decision = 'REVIEW'
+            review_count += 1
+        else:
+            decision = 'DO_NOT_BUY'
+            do_not_buy_count += 1
+        
+        model_used = 'SMA4'
+        if lifecycle_status == 'SLOW':
+            model_used = 'SMA12_PENALTY'
+        elif lifecycle_status == 'NEW':
+            model_used = 'CATEGORY_AVG'
+        
+        explain_bullets = generate_forecast_explanation(
+            avg_weekly_demand=avg_weekly,
+            horizon_demand=avg_weekly * horizon_weeks,
+            total_stock=total_stock,
+            weeks_of_cover=weeks_of_cover,
+            lead_time_weeks=lead_time_weeks,
+            safety_pct=safety_pct,
+            lifecycle_status=lifecycle_status,
+            alerts=sku_alerts,
+            slow_stock_flagged=slow_stock_flagged,
+            suggested_purchase=suggested_purchase
+        )
+        
+        item = ForecastBatchItem(
+            batch_id=batch_id,
+            product_id=pid,
+            sku=str(sku),
+            product_name=product.name,
+            category=product.category or '',
+            lifecycle_status=lifecycle_status,
+            model_used=model_used,
+            weekly_demand=round(avg_weekly, 2),
+            total_stock=total_stock,
+            suggested_purchase=suggested_purchase,
+            decision=decision,
+            risk_level=risk_level,
+            reason_summary='; '.join(reasons[:3]) if reasons else 'STANDARD',
+            explain_json=json.dumps(explain_bullets)
+        )
+        db.session.add(item)
+        
+        results.append({
+            'sku': str(sku),
+            'product_name': product.name,
+            'category': product.category or '',
+            'lifecycle_status': lifecycle_status,
+            'model_used': model_used,
+            'weekly_demand': round(avg_weekly, 2),
+            'total_stock': total_stock,
+            'suggested_purchase': suggested_purchase,
+            'decision': decision,
+            'risk_level': risk_level,
+            'reason_summary': '; '.join(reasons[:3]) if reasons else 'STANDARD',
+            'explain_bullets': explain_bullets
+        })
+    
+    batch_run = ForecastBatchRun(
+        batch_id=batch_id,
+        created_by_user_id=current_user.id,
+        params_json=json.dumps({
+            'horizon_weeks': horizon_weeks,
+            'lead_time_weeks': lead_time_weeks,
+            'safety_pct': safety_pct
+        }),
+        total_skus=len(results),
+        buy_now_count=buy_now_count,
+        review_count=review_count,
+        do_not_buy_count=do_not_buy_count
+    )
+    db.session.add(batch_run)
+    db.session.commit()
+    
+    log_audit(
+        action='forecast_v2.batch',
+        status='success',
+        message=f'Batch forecast completed: {len(results)} SKUs',
+        run_id=batch_id,
+        metadata={
+            'total_skus': len(results),
+            'buy_now': buy_now_count,
+            'review': review_count,
+            'do_not_buy': do_not_buy_count
+        }
+    )
+    
+    return jsonify({
+        'batch_id': batch_id,
+        'total_skus': len(results),
+        'buy_now_count': buy_now_count,
+        'review_count': review_count,
+        'do_not_buy_count': do_not_buy_count,
+        'not_found': len(sku_list) - len(results),
+        'results': results
+    })
+
+
+@app.route('/api/forecast/batch/<batch_id>', methods=['GET'])
+@login_required
+@require_permission('forecast_v2:view')
+def api_get_batch_forecast(batch_id):
+    """Get batch forecast results with pagination."""
+    page = request.args.get('page', 1, type=int)
+    per_page = 10
+    
+    batch_run = ForecastBatchRun.query.filter_by(batch_id=batch_id).first()
+    if not batch_run:
+        return jsonify({"error": "Batch not found"}), 404
+    
+    items_q = ForecastBatchItem.query.filter_by(batch_id=batch_id).order_by(ForecastBatchItem.id)
+    total = items_q.count()
+    items = items_q.offset((page - 1) * per_page).limit(per_page).all()
+    
+    return jsonify({
+        'batch_id': batch_id,
+        'created_at': batch_run.created_at.isoformat(),
+        'total_skus': batch_run.total_skus,
+        'buy_now_count': batch_run.buy_now_count,
+        'review_count': batch_run.review_count,
+        'do_not_buy_count': batch_run.do_not_buy_count,
+        'page': page,
+        'per_page': per_page,
+        'total_pages': (total + per_page - 1) // per_page,
+        'results': [{
+            'sku': item.sku,
+            'product_name': item.product_name,
+            'category': item.category,
+            'lifecycle_status': item.lifecycle_status,
+            'model_used': item.model_used,
+            'weekly_demand': item.weekly_demand,
+            'total_stock': item.total_stock,
+            'suggested_purchase': item.suggested_purchase,
+            'decision': item.decision,
+            'risk_level': item.risk_level,
+            'reason_summary': item.reason_summary,
+            'explain_bullets': item.get_explain()
+        } for item in items]
+    })
+
+
+@app.route('/forecast/batch/export/<batch_id>', methods=['GET'])
+@login_required
+@require_permission('forecast_v2:run')
+def export_batch_forecast(batch_id):
+    """Export batch forecast to Excel."""
+    today = date.today()
+    
+    batch_run = ForecastBatchRun.query.filter_by(batch_id=batch_id).first()
+    if not batch_run:
+        flash('Batch no encontrado', 'warning')
+        return redirect(url_for('purchase_forecast_v2'))
+    
+    items = ForecastBatchItem.query.filter_by(batch_id=batch_id).order_by(ForecastBatchItem.id).all()
+    
+    data = []
+    for item in items:
+        data.append({
+            'SKU': str(item.sku),
+            'Producto': item.product_name,
+            'Categoría': item.category,
+            'Ciclo de Vida': item.lifecycle_status,
+            'Modelo Usado': item.model_used,
+            'Demanda Semanal': item.weekly_demand,
+            'Stock Total': item.total_stock,
+            'Compra Sugerida': item.suggested_purchase,
+            'Decisión': item.decision,
+            'Nivel Riesgo': item.risk_level,
+            'Razones': item.reason_summary
+        })
+    
+    df = pd.DataFrame(data)
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Batch Forecast')
+    output.seek(0)
+    
+    filename = f"batch_forecast_{batch_id[:8]}_{today.strftime('%Y%m%d')}.xlsx"
+    return send_file(output, as_attachment=True, download_name=filename,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
 @app.route('/export_cd_remanente', methods=['GET'])

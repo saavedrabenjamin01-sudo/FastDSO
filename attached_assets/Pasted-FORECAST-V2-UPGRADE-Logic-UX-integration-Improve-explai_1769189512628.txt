@@ -1,0 +1,149 @@
+FORECAST V2 UPGRADE (Logic + UX integration) — Improve explainability, add contextual links, fix export, and add Batch Forecast submodule
+
+Context:
+FastDSO Forecast V2 UI was improved visually, but functionality lacks:
+- real explainability (currently only shows lifecycle + params)
+- contextual navigation (buttons go to modules without filtering for SKU)
+- export button leads to 404
+We also want a submodule like Redistribution: a “Batch Forecast” mode to forecast many SKUs at once with the same business rules and clean UI.
+
+STRICT RULES
+- Do NOT break existing forecast calculations.
+- Keep Macro Sales as single source of truth.
+- Preserve leading zeros in SKU.
+- Keep performance acceptable (no huge loops without batching).
+- Keep UI style consistent with FastDSO (pill chips, KPI cards, zebra tables, sticky headers, compact layout).
+
+=====================================================
+PART A — FIX CONTEXTUAL BUTTONS (SKU-aware navigation)
+=====================================================
+
+1) “View in Alerts” button:
+- Must link to Alerts module with SKU filter applied:
+  /alerts?sku=<SKU>
+If Alerts supports filtering by sku param, use it.
+If not, add minimal support:
+- In alerts route, read request.args.get("sku") and filter the alerts dataset to that sku.
+
+2) “View in Slow Stock” button:
+- Must link to Slow Stock module filtered by sku:
+  /slow_stock?sku=<SKU>
+If slow_stock route does not support sku filter, add minimal support:
+- read request.args.get("sku") and filter results.
+
+3) Buttons must preserve existing page styling.
+
+=====================================================
+PART B — FIX EXPORT (remove 404)
+=====================================================
+
+Option preferred: Implement export endpoint
+- Add route: /forecast/export
+- Params: sku, horizon_weeks, lead_time_weeks, safety_pct (and store/category if used)
+- It should export the currently computed forecast for that SKU:
+  sku (as text), product_name, category, lifecycle_status, model_used, weekly_demand, horizon_demand,
+  stock_cd, stock_stores, total_stock, suggested_purchase, buy_now, risk_level, reason_summary
+
+If implementing export now is too much:
+- Disable the button (no 404) and show tooltip “Export coming soon”.
+But preferred: implement export properly.
+
+=====================================================
+PART C — REAL EXPLAINABILITY (causal summary)
+=====================================================
+
+Replace “Why this recommendation?” content with a causal, business-readable explanation:
+
+Requirements:
+- Generate 3–6 bullet points based on actual signals:
+  1) Demand (weekly_demand, horizon_demand)
+  2) Coverage (weeks of cover = total_stock / max(weekly_demand, 1))
+  3) Lead time vs coverage gap
+  4) Alerts influence (projected stockout / overstock / no movement)
+  5) Slow stock flag influence
+  6) Lifecycle status influence
+- Example for BUY NOW:
+  “• Avg weekly demand: 12 u”
+  “• Current total stock: 9 u (~0.8 weeks cover)”
+  “• Lead time: 3 weeks → risk of stockout during lead time”
+  “• Alert detected: Projected stockout”
+- Example for DO NOT BUY:
+  “• Current stock covers ~6.4 weeks”
+  “• Overstock alert active”
+  “• SKU flagged as slow stock”
+
+Also produce a short top-right badge:
+- BUY NOW / REVIEW / DO NOT BUY
+Derived from the same logic:
+- BUY NOW if projected stockout or coverage < lead_time + safety buffer
+- DO NOT BUY if overstock or no movement / dead lifecycle
+- REVIEW otherwise
+
+=====================================================
+PART D — ADD BATCH FORECAST SUBMODULE (like Redistribution tabs)
+=====================================================
+
+Add a tab/toggle at the top of Forecast page:
+- “Forecast (SKU)” (current single SKU mode)
+- “Forecast masivo” (new)
+
+Batch mode requirements:
+1) Input options:
+- Upload CSV/XLSX with a single required column: sku
+  Optional: category (only to fill Product.category if missing)
+- Also allow paste textarea (one sku per line) as fallback.
+2) Run button: “Generate batch forecast”
+3) Output:
+- KPI summary row:
+  - SKUs processed
+  - Buy Now count
+  - Review count
+  - Do Not Buy count
+- Results table (paginated 10/page):
+  Columns:
+   SKU | Product | Category | Lifecycle | Weekly demand | Total stock | Suggested purchase | Decision badge | Reason (short)
+- Clicking a row opens a modal with full explainability bullets (reuse same explain generator).
+
+Batch logic:
+- For each SKU, reuse the SAME forecast function used in single mode.
+- Must use Macro Sales + Alerts + Slow Stock + Lifecycle + Category cold start.
+- Must be efficient:
+  - Batch fetch products
+  - Batch fetch macro sales aggregates
+  - Batch fetch current stocks
+  - Batch fetch alerts for these SKUs
+  - Do not query per SKU in a loop (avoid N+1).
+
+Batch export:
+- Add /forecast/batch/export?batch_id=...
+- Export full batch results with reasons.
+Persist batch_id:
+- Store results in DB table ForecastBatchRun + ForecastBatchItem (recommended)
+OR store in server-side cache keyed by batch_id (acceptable for V1, but DB is better).
+
+=====================================================
+PART E — UI CONSISTENCY
+=====================================================
+
+- Use same style as Dashboard:
+  - premium pill chips for decision counts
+  - KPI cards
+  - tables: zebra + hover + sticky header
+  - compact spacing, max-width 1250px
+- Keep loader popup for upload/run actions.
+
+=====================================================
+DELIVERABLES
+=====================================================
+
+1) Updated forecast template implementing tabs (single + batch)
+2) Backend:
+   - SKU-filter support for /alerts and /slow_stock if missing
+   - Implement forecast export route (fix 404)
+   - Implement batch forecast route + persistence + export
+3) Explainability generator function used both in single and batch mode
+4) Confirm:
+   - Single SKU forecast still works
+   - Buttons route with SKU filter applied
+   - Batch mode processes multiple SKUs and produces paginated results
+   - No 404 remains
