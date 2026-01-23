@@ -2892,15 +2892,25 @@ def purchase_forecast_v2():
 @require_permission('forecast_v2:view')
 def purchase_forecast_v2_legacy():
     """
-    Legacy Purchase Forecast V2 (batch mode):
-    - Lead time (days)
-    - Safety stock (weeks)
-    - Coverage horizon (weeks)
-    - Demand method: sma3, sma2, last_week
-    - Optional store filter and campaign tag
+    Purchase Forecast V2 - Lifecycle-aware forecasting with alerts integration.
+    
+    Uses ONLY SalesWeeklyAgg as single source of truth for demand calculation.
+    Integrates with alerts table and slow stock analysis for risk assessment.
+    
+    Lifecycle model selection:
+    - ACTIVE: SMA from user-selected method (sma2, sma3, last_week)
+    - SLOW: Long SMA (8-12 weeks) with demand penalty
+    - DEAD: Forecast = 0, no purchase recommended
+    - NEW: Category-based cold start model
     """
+    from uuid import uuid4
     today = date.today()
     stores = Store.query.order_by(Store.name.asc()).all()
+    
+    MIN_FILL = 2
+    MAX_UNITS_PER_SKU = 10000
+    SLOW_DEMAND_PENALTY = 0.5
+    SLOW_LOOKBACK_WEEKS = 12
 
     if request.method == 'POST':
         try:
@@ -2940,40 +2950,84 @@ def purchase_forecast_v2_legacy():
     if demand_method == 'sma3':
         lookback_days = 21
         weeks_divisor = 3.0
+        model_label = 'SMA3'
     elif demand_method == 'sma2':
         lookback_days = 14
         weeks_divisor = 2.0
+        model_label = 'SMA2'
     else:
         lookback_days = 7
         weeks_divisor = 1.0
+        model_label = 'LAST_WEEK'
 
     cutoff = today - timedelta(days=lookback_days)
+    cutoff_slow = today - timedelta(days=SLOW_LOOKBACK_WEEKS * 7)
     lead_time_weeks = lead_time_days / 7.0
     total_weeks_needed = coverage_weeks + safety_weeks + lead_time_weeks
+
+    store_id_filter = None
+    if store_filter:
+        store_obj = Store.query.filter_by(name=store_filter).first()
+        if store_obj:
+            store_id_filter = store_obj.id
+
+    sales_30d_map, sales_90d_map, sales_ever_map = get_lifecycle_sales_maps(store_id_filter)
+
+    all_products = Product.query.all()
+    product_map = {p.id: p for p in all_products}
+    all_product_ids = set(product_map.keys())
+
+    lifecycle_map = classify_sku_lifecycle(sales_30d_map, sales_90d_map, sales_ever_map, all_product_ids)
+
+    for pid, status in lifecycle_map.items():
+        product = product_map.get(pid)
+        if product and product.lifecycle_status != status:
+            product.lifecycle_status = status
 
     sales_q = (
         db.session.query(
             Product.id.label('product_id'),
             Product.sku.label('sku'),
             Product.name.label('name'),
+            Product.category.label('category'),
             db.func.sum(SalesWeeklyAgg.units).label('qty_period'),
             db.func.count(db.func.distinct(SalesWeeklyAgg.week_start)).label('weeks_with_sales')
         )
         .join(Product, SalesWeeklyAgg.product_id == Product.id)
         .filter(SalesWeeklyAgg.week_start >= cutoff)
     )
+    if store_id_filter:
+        sales_q = sales_q.filter(SalesWeeklyAgg.store_id == store_id_filter)
 
-    if store_filter:
-        store_obj = Store.query.filter_by(name=store_filter).first()
-        if store_obj:
-            sales_q = sales_q.filter(SalesWeeklyAgg.store_id == store_obj.id)
-
-    sales_rows = (
+    sales_rows_active = (
         sales_q
-        .group_by(Product.id, Product.sku, Product.name)
+        .group_by(Product.id, Product.sku, Product.name, Product.category)
         .having(db.func.count(db.func.distinct(SalesWeeklyAgg.week_start)) >= min_weeks_history)
         .all()
     )
+    active_sales_map = {r.product_id: r for r in sales_rows_active}
+
+    sales_q_slow = (
+        db.session.query(
+            Product.id.label('product_id'),
+            Product.sku.label('sku'),
+            Product.name.label('name'),
+            Product.category.label('category'),
+            db.func.sum(SalesWeeklyAgg.units).label('qty_period'),
+            db.func.count(db.func.distinct(SalesWeeklyAgg.week_start)).label('weeks_with_sales')
+        )
+        .join(Product, SalesWeeklyAgg.product_id == Product.id)
+        .filter(SalesWeeklyAgg.week_start >= cutoff_slow)
+    )
+    if store_id_filter:
+        sales_q_slow = sales_q_slow.filter(SalesWeeklyAgg.store_id == store_id_filter)
+
+    sales_rows_slow = (
+        sales_q_slow
+        .group_by(Product.id, Product.sku, Product.name, Product.category)
+        .all()
+    )
+    slow_sales_map = {r.product_id: r for r in sales_rows_slow}
 
     latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar() or today
     cd_rows = (
@@ -2987,58 +3041,202 @@ def purchase_forecast_v2_legacy():
     )
     cd_stock_map = {r.product_id: int(r.cd_qty) for r in cd_rows}
 
+    latest_store_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar() or today
+    store_stock_rows = (
+        db.session.query(
+            StockSnapshot.product_id,
+            db.func.sum(StockSnapshot.quantity).label('store_qty')
+        )
+        .filter(StockSnapshot.as_of_date == latest_store_date)
+        .group_by(StockSnapshot.product_id)
+        .all()
+    )
+    store_stock_map = {r.product_id: int(r.store_qty) for r in store_stock_rows}
+
+    alerts_list = compute_alerts()
+    alerts_by_sku = {}
+    for alert in alerts_list:
+        sku = alert.get('sku')
+        if sku not in alerts_by_sku:
+            alerts_by_sku[sku] = []
+        alerts_by_sku[sku].append(alert)
+
+    slow_stock_skus = set()
+    slow_stock_run = SlowStockRun.query.order_by(SlowStockRun.created_at.desc()).first()
+    if slow_stock_run:
+        slow_suggestions = SlowStockSuggestion.query.filter_by(run_id=slow_stock_run.run_id).all()
+        for s in slow_suggestions:
+            product = product_map.get(s.product_id)
+            if product:
+                slow_stock_skus.add(product.sku)
+
+    category_demand_cache = {}
+
     result = []
-    for r in sales_rows:
-        demand_per_week = float(r.qty_period) / weeks_divisor if weeks_divisor > 0 else 0.0
-        required_units = demand_per_week * total_weeks_needed
-        available_units = cd_stock_map.get(r.product_id, 0)
-        suggested = max(int(round(required_units)) - available_units, 0)
+
+    for pid, lifecycle in lifecycle_map.items():
+        product = product_map.get(pid)
+        if not product:
+            continue
+
+        demand_per_week = 0.0
+        model_used = model_label
+        reason_codes = []
+        buy_now = False
+        risk_level = 'LOW'
+
+        if lifecycle == 'DEAD':
+            model_used = 'DEAD_BLOCK'
+            reason_codes.append('NO_RECENT_SALES')
+            risk_level = 'HIGH'
+            suggested = 0
+        elif lifecycle == 'NEW':
+            if product.category:
+                if product.category not in category_demand_cache:
+                    category_demand_cache[product.category] = get_category_avg_demand(
+                        product.category, store_id_filter, weeks=4
+                    )
+                category_avg = category_demand_cache[product.category]
+                demand_per_week = category_avg
+                model_used = 'CATEGORY_COLD_START'
+                reason_codes.append('CATEGORY_COLD_START')
+            else:
+                demand_per_week = 0.0
+                model_used = 'NO_CATEGORY'
+                reason_codes.append('NEW_NO_CATEGORY')
+            risk_level = 'MEDIUM'
+        elif lifecycle == 'SLOW':
+            sales_data = slow_sales_map.get(pid)
+            if sales_data and sales_data.weeks_with_sales > 0:
+                raw_demand = float(sales_data.qty_period) / float(SLOW_LOOKBACK_WEEKS)
+                demand_per_week = raw_demand * SLOW_DEMAND_PENALTY
+                model_used = f'SMA{SLOW_LOOKBACK_WEEKS}_PENALTY'
+                reason_codes.append('SLOW_DEMAND_REDUCED')
+            else:
+                demand_per_week = 0.0
+            risk_level = 'MEDIUM'
+        else:
+            sales_data = active_sales_map.get(pid)
+            if sales_data:
+                demand_per_week = float(sales_data.qty_period) / weeks_divisor if weeks_divisor > 0 else 0.0
+                model_used = model_label
+                reason_codes.append('RECENT_SALES_HIGH' if demand_per_week > 5 else 'RECENT_SALES_OK')
+
+        stock_cd = cd_stock_map.get(pid, 0)
+        stock_store = store_stock_map.get(pid, 0)
+        total_stock = stock_cd + stock_store
+
+        forecast_demand = demand_per_week * total_weeks_needed
+        purchase_qty = max(0, int(round(forecast_demand)) - total_stock)
+
+        if lifecycle == 'DEAD':
+            purchase_qty = 0
+
+        sku_alerts = alerts_by_sku.get(product.sku, [])
+        for alert in sku_alerts:
+            alert_type = alert.get('type', '')
+            alert_severity = alert.get('severity', 'LOW')
+
+            if alert_type == 'PROJECTED_STOCKOUT':
+                buy_now = True
+                if alert_severity == 'HIGH':
+                    risk_level = 'HIGH'
+                    reason_codes.append('PROJECTED_STOCKOUT_14D')
+                else:
+                    if risk_level != 'HIGH':
+                        risk_level = 'MEDIUM'
+                    reason_codes.append('PROJECTED_STOCKOUT_28D')
+
+            elif alert_type == 'BROKEN_STOCK':
+                if alert_severity == 'HIGH':
+                    buy_now = True
+                    risk_level = 'HIGH'
+                    reason_codes.append('BROKEN_STOCK_URGENT')
+                else:
+                    reason_codes.append('BROKEN_STOCK_RECENT')
+
+            elif alert_type == 'OVERSTOCK':
+                purchase_qty = 0
+                reason_codes.append('OVERSTOCK_BLOCK')
+                risk_level = 'LOW'
+
+            elif alert_type == 'SILENT_SKU':
+                reason_codes.append('SILENT_SKU_WARNING')
+
+        if product.sku in slow_stock_skus:
+            purchase_qty = int(purchase_qty * 0.5)
+            if risk_level == 'LOW':
+                risk_level = 'MEDIUM'
+            reason_codes.append('SLOW_STOCK_PENALTY')
+
+        if purchase_qty > 0 and purchase_qty < MIN_FILL:
+            purchase_qty = MIN_FILL
+        purchase_qty = min(purchase_qty, MAX_UNITS_PER_SKU)
+
+        if lifecycle == 'DEAD':
+            purchase_qty = 0
+
+        if not reason_codes:
+            reason_codes.append('STANDARD_FORECAST')
+        reason_code = ';'.join(reason_codes[:3])
 
         result.append({
-            "sku": r.sku,
-            "name": r.name,
+            "product_id": pid,
+            "sku": product.sku,
+            "name": product.name,
+            "category": product.category or '',
             "demand_per_week": round(demand_per_week, 2),
-            "available_cd": available_units,
-            "required_units": round(required_units, 2),
-            "suggested": suggested,
+            "available_cd": stock_cd,
+            "stock_store_total": stock_store,
+            "required_units": round(forecast_demand, 2),
+            "suggested": purchase_qty,
             "campaign_tag": campaign_tag,
+            "buy_now": buy_now,
+            "risk_level": risk_level,
+            "reason_code": reason_code,
+            "model_used": model_used,
+            "lifecycle_status": lifecycle,
         })
 
-    result.sort(key=lambda x: x["suggested"], reverse=True)
+    result = [r for r in result if r['suggested'] > 0 or r['buy_now']]
+    result.sort(key=lambda x: (0 if x['buy_now'] else 1, -x['suggested']))
 
     has_cd_stock = bool(cd_rows)
-    has_sales = bool(sales_rows)
+    has_sales = bool(sales_rows_active)
 
     forecast_run_id = None
     if request.method == 'POST' and result:
-        from uuid import uuid4
         forecast_run_id = str(uuid4())
         forecast_run = Run(
             run_id=forecast_run_id,
             run_type='forecast_v2',
             folio=campaign_tag or None,
             store_filter=store_filter or None,
-            notes=f"method={demand_method}, lead={lead_time_days}d, coverage={coverage_weeks}w, safety={safety_weeks}w",
+            notes=f"method={demand_method}, lead={lead_time_days}d, coverage={coverage_weeks}w, safety={safety_weeks}w, lifecycle_aware=true",
             status='completed',
             mode=demand_method
         )
         db.session.add(forecast_run)
 
         for r in result:
-            product = Product.query.filter_by(sku=str(r['sku'])).first()
-            if product:
-                fr = ForecastResult(
-                    run_id=forecast_run_id,
-                    product_id=product.id,
-                    sku=str(r['sku']),
-                    name=r['name'],
-                    demand_per_week=r['demand_per_week'],
-                    available_cd=r['available_cd'],
-                    required_units=r['required_units'],
-                    suggested=r['suggested'],
-                    campaign_tag=campaign_tag or None
-                )
-                db.session.add(fr)
+            fr = ForecastResult(
+                run_id=forecast_run_id,
+                product_id=r['product_id'],
+                sku=str(r['sku']),
+                name=r['name'],
+                demand_per_week=r['demand_per_week'],
+                available_cd=r['available_cd'],
+                required_units=r['required_units'],
+                suggested=r['suggested'],
+                campaign_tag=campaign_tag or None,
+                buy_now=r['buy_now'],
+                risk_level=r['risk_level'],
+                reason_code=r['reason_code'],
+                model_used=r['model_used'],
+                lifecycle_status=r['lifecycle_status'],
+                stock_store_total=r['stock_store_total']
+            )
+            db.session.add(fr)
 
         db.session.commit()
 
@@ -3067,9 +3265,14 @@ def purchase_forecast_v2_legacy():
 @login_required
 @require_permission('forecast_v2:run')
 def export_purchase_forecast_v2():
-    """Export Purchase Forecast V2 results to Excel."""
+    """Export Purchase Forecast V2 results to Excel with lifecycle-aware logic."""
     from datetime import datetime
     today = date.today()
+    
+    MIN_FILL = 2
+    MAX_UNITS_PER_SKU = 10000
+    SLOW_DEMAND_PENALTY = 0.5
+    SLOW_LOOKBACK_WEEKS = 12
 
     try:
         lead_time_days = int(request.form.get('lead_time_days', 14))
@@ -3100,85 +3303,239 @@ def export_purchase_forecast_v2():
     if demand_method == 'sma3':
         lookback_days = 21
         weeks_divisor = 3.0
+        model_label = 'SMA3'
     elif demand_method == 'sma2':
         lookback_days = 14
         weeks_divisor = 2.0
+        model_label = 'SMA2'
     else:
         lookback_days = 7
         weeks_divisor = 1.0
+        model_label = 'LAST_WEEK'
 
     cutoff = today - timedelta(days=lookback_days)
+    cutoff_slow = today - timedelta(days=SLOW_LOOKBACK_WEEKS * 7)
     lead_time_weeks = lead_time_days / 7.0
     total_weeks_needed = coverage_weeks + safety_weeks + lead_time_weeks
+
+    store_id_filter = None
+    if store_filter:
+        store_obj = Store.query.filter_by(name=store_filter).first()
+        if store_obj:
+            store_id_filter = store_obj.id
+
+    sales_30d_map, sales_90d_map, sales_ever_map = get_lifecycle_sales_maps(store_id_filter)
+
+    all_products = Product.query.all()
+    product_map = {p.id: p for p in all_products}
+    all_product_ids = set(product_map.keys())
+
+    lifecycle_map = classify_sku_lifecycle(sales_30d_map, sales_90d_map, sales_ever_map, all_product_ids)
 
     sales_q = (
         db.session.query(
             Product.id.label('product_id'),
             Product.sku.label('sku'),
             Product.name.label('name'),
+            Product.category.label('category'),
             db.func.sum(SalesWeeklyAgg.units).label('qty_period'),
         )
         .join(Product, SalesWeeklyAgg.product_id == Product.id)
         .filter(SalesWeeklyAgg.week_start >= cutoff)
     )
+    if store_id_filter:
+        sales_q = sales_q.filter(SalesWeeklyAgg.store_id == store_id_filter)
+    sales_rows_active = sales_q.group_by(Product.id, Product.sku, Product.name, Product.category).all()
+    active_sales_map = {r.product_id: r for r in sales_rows_active}
 
-    if store_filter:
-        store_obj = Store.query.filter_by(name=store_filter).first()
-        if store_obj:
-            sales_q = sales_q.filter(SalesWeeklyAgg.store_id == store_obj.id)
-
-    sales_rows = (
-        sales_q
-        .group_by(Product.id, Product.sku, Product.name)
-        .having(db.func.count(db.func.distinct(SalesWeeklyAgg.week_start)) >= min_weeks_history)
-        .all()
+    sales_q_slow = (
+        db.session.query(
+            Product.id.label('product_id'),
+            db.func.sum(SalesWeeklyAgg.units).label('qty_period'),
+        )
+        .join(Product, SalesWeeklyAgg.product_id == Product.id)
+        .filter(SalesWeeklyAgg.week_start >= cutoff_slow)
     )
+    if store_id_filter:
+        sales_q_slow = sales_q_slow.filter(SalesWeeklyAgg.store_id == store_id_filter)
+    sales_rows_slow = sales_q_slow.group_by(Product.id).all()
+    slow_sales_map = {r.product_id: r for r in sales_rows_slow}
 
     latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar() or today
     cd_rows = (
-        db.session.query(
-            StockCD.product_id,
-            db.func.sum(StockCD.quantity).label('cd_qty')
-        )
+        db.session.query(StockCD.product_id, db.func.sum(StockCD.quantity).label('cd_qty'))
         .filter(StockCD.as_of_date == latest_cd_date)
         .group_by(StockCD.product_id)
         .all()
     )
     cd_stock_map = {r.product_id: int(r.cd_qty) for r in cd_rows}
 
+    latest_store_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar() or today
+    store_stock_rows = (
+        db.session.query(StockSnapshot.product_id, db.func.sum(StockSnapshot.quantity).label('store_qty'))
+        .filter(StockSnapshot.as_of_date == latest_store_date)
+        .group_by(StockSnapshot.product_id)
+        .all()
+    )
+    store_stock_map = {r.product_id: int(r.store_qty) for r in store_stock_rows}
+
+    alerts_list = compute_alerts()
+    alerts_by_sku = {}
+    for alert in alerts_list:
+        sku = alert.get('sku')
+        if sku not in alerts_by_sku:
+            alerts_by_sku[sku] = []
+        alerts_by_sku[sku].append(alert)
+
+    slow_stock_skus = set()
+    slow_stock_run = SlowStockRun.query.order_by(SlowStockRun.created_at.desc()).first()
+    if slow_stock_run:
+        slow_suggestions = SlowStockSuggestion.query.filter_by(run_id=slow_stock_run.run_id).all()
+        for s in slow_suggestions:
+            product = product_map.get(s.product_id)
+            if product:
+                slow_stock_skus.add(product.sku)
+
+    category_demand_cache = {}
+
     rows = []
-    for r in sales_rows:
-        demand_per_week = float(r.qty_period) / weeks_divisor if weeks_divisor > 0 else 0.0
-        required_units = demand_per_week * total_weeks_needed
-        available_units = cd_stock_map.get(r.product_id, 0)
-        suggested = max(int(round(required_units)) - available_units, 0)
+    for pid, lifecycle in lifecycle_map.items():
+        product = product_map.get(pid)
+        if not product:
+            continue
 
-        rows.append({
-            "SKU": str(r.sku),
-            "Producto": r.name,
-            "Demanda/Semana": round(demand_per_week, 2),
-            "Stock CD": available_units,
-            "Requerido": round(required_units, 2),
-            "Sugerido Compra": suggested,
-            "Campana": campaign_tag or "",
-            "Metodo": demand_method,
-            "Lead Time Dias": lead_time_days,
-            "Cobertura Sem": coverage_weeks,
-            "Safety Sem": safety_weeks,
-        })
+        demand_per_week = 0.0
+        model_used = model_label
+        reason_codes = []
+        buy_now = False
+        risk_level = 'LOW'
 
-    rows.sort(key=lambda x: x["Sugerido Compra"], reverse=True)
+        if lifecycle == 'DEAD':
+            model_used = 'DEAD_BLOCK'
+            reason_codes.append('NO_RECENT_SALES')
+            risk_level = 'HIGH'
+            suggested = 0
+        elif lifecycle == 'NEW':
+            if product.category:
+                if product.category not in category_demand_cache:
+                    category_demand_cache[product.category] = get_category_avg_demand(product.category, store_id_filter, weeks=4)
+                category_avg = category_demand_cache[product.category]
+                demand_per_week = category_avg
+                model_used = 'CATEGORY_COLD_START'
+                reason_codes.append('CATEGORY_COLD_START')
+            else:
+                demand_per_week = 0.0
+                model_used = 'NO_CATEGORY'
+                reason_codes.append('NEW_NO_CATEGORY')
+            risk_level = 'MEDIUM'
+        elif lifecycle == 'SLOW':
+            sales_data = slow_sales_map.get(pid)
+            if sales_data and sales_data.qty_period > 0:
+                raw_demand = float(sales_data.qty_period) / float(SLOW_LOOKBACK_WEEKS)
+                demand_per_week = raw_demand * SLOW_DEMAND_PENALTY
+                model_used = f'SMA{SLOW_LOOKBACK_WEEKS}_PENALTY'
+                reason_codes.append('SLOW_DEMAND_REDUCED')
+            else:
+                demand_per_week = 0.0
+            risk_level = 'MEDIUM'
+        else:
+            sales_data = active_sales_map.get(pid)
+            if sales_data:
+                demand_per_week = float(sales_data.qty_period) / weeks_divisor if weeks_divisor > 0 else 0.0
+                model_used = model_label
+                reason_codes.append('RECENT_SALES_HIGH' if demand_per_week > 5 else 'RECENT_SALES_OK')
+
+        stock_cd = cd_stock_map.get(pid, 0)
+        stock_store = store_stock_map.get(pid, 0)
+        total_stock = stock_cd + stock_store
+
+        forecast_demand = demand_per_week * total_weeks_needed
+        purchase_qty = max(0, int(round(forecast_demand)) - total_stock)
+
+        if lifecycle == 'DEAD':
+            purchase_qty = 0
+
+        sku_alerts = alerts_by_sku.get(product.sku, [])
+        for alert in sku_alerts:
+            alert_type = alert.get('type', '')
+            alert_severity = alert.get('severity', 'LOW')
+            if alert_type == 'PROJECTED_STOCKOUT':
+                buy_now = True
+                if alert_severity == 'HIGH':
+                    risk_level = 'HIGH'
+                    reason_codes.append('PROJECTED_STOCKOUT_14D')
+                else:
+                    if risk_level != 'HIGH':
+                        risk_level = 'MEDIUM'
+                    reason_codes.append('PROJECTED_STOCKOUT_28D')
+            elif alert_type == 'BROKEN_STOCK':
+                if alert_severity == 'HIGH':
+                    buy_now = True
+                    risk_level = 'HIGH'
+                    reason_codes.append('BROKEN_STOCK_URGENT')
+            elif alert_type == 'OVERSTOCK':
+                purchase_qty = 0
+                reason_codes.append('OVERSTOCK_BLOCK')
+                risk_level = 'LOW'
+
+        if product.sku in slow_stock_skus:
+            purchase_qty = int(purchase_qty * 0.5)
+            if risk_level == 'LOW':
+                risk_level = 'MEDIUM'
+            reason_codes.append('SLOW_STOCK_PENALTY')
+
+        if purchase_qty > 0 and purchase_qty < MIN_FILL:
+            purchase_qty = MIN_FILL
+        purchase_qty = min(purchase_qty, MAX_UNITS_PER_SKU)
+
+        if lifecycle == 'DEAD':
+            purchase_qty = 0
+
+        if not reason_codes:
+            reason_codes.append('STANDARD_FORECAST')
+        reason_code = ';'.join(reason_codes[:3])
+
+        if purchase_qty > 0 or buy_now:
+            rows.append({
+                "SKU": str(product.sku),
+                "Producto": product.name,
+                "Categoria": product.category or '',
+                "Lifecycle": lifecycle,
+                "Demanda/Semana": round(demand_per_week, 2),
+                "Stock CD": stock_cd,
+                "Stock Tiendas": stock_store,
+                "Stock Total": total_stock,
+                "Requerido": round(forecast_demand, 2),
+                "Sugerido Compra": purchase_qty,
+                "Comprar Ahora": "SI" if buy_now else "NO",
+                "Riesgo": risk_level,
+                "Razon": reason_code,
+                "Modelo": model_used,
+                "Campana": campaign_tag or "",
+                "Lead Time Dias": lead_time_days,
+                "Cobertura Sem": coverage_weeks,
+                "Safety Sem": safety_weeks,
+            })
+
+    rows.sort(key=lambda x: (0 if x["Comprar Ahora"] == "SI" else 1, -x["Sugerido Compra"]))
 
     if not rows:
         rows.append({
             "SKU": "",
             "Producto": "Sin datos",
+            "Categoria": "",
+            "Lifecycle": "",
             "Demanda/Semana": 0,
             "Stock CD": 0,
+            "Stock Tiendas": 0,
+            "Stock Total": 0,
             "Requerido": 0,
             "Sugerido Compra": 0,
+            "Comprar Ahora": "NO",
+            "Riesgo": "",
+            "Razon": "",
+            "Modelo": "",
             "Campana": campaign_tag or "",
-            "Metodo": demand_method,
             "Lead Time Dias": lead_time_days,
             "Cobertura Sem": coverage_weeks,
             "Safety Sem": safety_weeks,
@@ -8808,6 +9165,103 @@ def get_alerts_summary(store_filter=None):
         'low_count': low_count,
         'total_count': total_count
     }
+
+
+def classify_sku_lifecycle(sales_30d_map, sales_90d_map, sales_ever_map, product_ids):
+    """
+    Classify SKUs by lifecycle status based on SalesWeeklyAgg data.
+    
+    Returns dict {product_id: lifecycle_status} where status is:
+    - ACTIVE: sales in last 30 days
+    - SLOW: no sales last 30d, but sales in 31-90 days
+    - DEAD: no sales last 90d, but has historical sales
+    - NEW: no sales ever (cold start candidates)
+    """
+    lifecycle = {}
+    for pid in product_ids:
+        sales_30 = sales_30d_map.get(pid, 0)
+        sales_90 = sales_90d_map.get(pid, 0)
+        sales_ever = sales_ever_map.get(pid, 0)
+        
+        if sales_30 > 0:
+            lifecycle[pid] = 'ACTIVE'
+        elif sales_90 > 0:
+            lifecycle[pid] = 'SLOW'
+        elif sales_ever > 0:
+            lifecycle[pid] = 'DEAD'
+        else:
+            lifecycle[pid] = 'NEW'
+    
+    return lifecycle
+
+
+def get_lifecycle_sales_maps(store_id_filter=None):
+    """
+    Build lifecycle classification maps from SalesWeeklyAgg.
+    Returns (sales_30d_map, sales_90d_map, sales_ever_map) dicts of {product_id: units}.
+    """
+    today = date.today()
+    cutoff_30d = today - timedelta(days=30)
+    cutoff_90d = today - timedelta(days=90)
+    
+    base_query = db.session.query(
+        SalesWeeklyAgg.product_id,
+        db.func.sum(SalesWeeklyAgg.units).label('total_units')
+    )
+    if store_id_filter:
+        base_query = base_query.filter(SalesWeeklyAgg.store_id == store_id_filter)
+    
+    sales_30d = base_query.filter(SalesWeeklyAgg.week_start >= cutoff_30d).group_by(SalesWeeklyAgg.product_id).all()
+    sales_30d_map = {r.product_id: int(r.total_units) for r in sales_30d}
+    
+    base_query_90 = db.session.query(
+        SalesWeeklyAgg.product_id,
+        db.func.sum(SalesWeeklyAgg.units).label('total_units')
+    )
+    if store_id_filter:
+        base_query_90 = base_query_90.filter(SalesWeeklyAgg.store_id == store_id_filter)
+    
+    sales_90d = base_query_90.filter(
+        SalesWeeklyAgg.week_start >= cutoff_90d,
+        SalesWeeklyAgg.week_start < cutoff_30d
+    ).group_by(SalesWeeklyAgg.product_id).all()
+    sales_90d_map = {r.product_id: int(r.total_units) for r in sales_90d}
+    
+    base_query_ever = db.session.query(
+        SalesWeeklyAgg.product_id,
+        db.func.sum(SalesWeeklyAgg.units).label('total_units')
+    )
+    if store_id_filter:
+        base_query_ever = base_query_ever.filter(SalesWeeklyAgg.store_id == store_id_filter)
+    
+    sales_ever = base_query_ever.group_by(SalesWeeklyAgg.product_id).all()
+    sales_ever_map = {r.product_id: int(r.total_units) for r in sales_ever}
+    
+    return sales_30d_map, sales_90d_map, sales_ever_map
+
+
+def get_category_avg_demand(category, store_id_filter=None, weeks=4):
+    """
+    Get average weekly demand for a category (for cold start NEW SKUs).
+    Returns average units per week per SKU in category.
+    """
+    today = date.today()
+    cutoff = today - timedelta(days=weeks * 7)
+    
+    query = db.session.query(
+        db.func.sum(SalesWeeklyAgg.units).label('total'),
+        db.func.count(db.func.distinct(SalesWeeklyAgg.product_id)).label('sku_count')
+    ).filter(
+        SalesWeeklyAgg.category == category,
+        SalesWeeklyAgg.week_start >= cutoff
+    )
+    if store_id_filter:
+        query = query.filter(SalesWeeklyAgg.store_id == store_id_filter)
+    
+    result = query.first()
+    if result and result.total and result.sku_count > 0:
+        return float(result.total) / float(result.sku_count) / float(weeks)
+    return 0.0
 
 
 def compute_alerts(params=None):
