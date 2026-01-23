@@ -1,23 +1,30 @@
 {% extends 'base.html' %}
 {% block title %}Forecast Compra V2{% endblock %}
-{% block page_title %}Proyección de Compras V2{% endblock %}
+{% block page_title %}Forecast de Compra (V2){% endblock %}
 {% block content %}
 
-<div class="forecast-wrap">
-  <div class="forecast-header">
-    <h1 class="forecast-title">Proyección de Compras (Semanal)</h1>
-    <p class="forecast-subtitle">Proyección de demanda basada en historial de ventas, lead time y stock de seguridad</p>
+<div class="fcv2-container">
+  <div class="fcv2-header">
+    <div class="fcv2-header-left">
+      <h1 class="fcv2-title">Forecast de Compra (V2)</h1>
+      <p class="fcv2-subtitle">Proyección basada en ventas macro, lead time y stock de seguridad</p>
+    </div>
+    <div class="fcv2-header-right">
+      <div class="fcv2-status-badge fcv2-status-neutral" id="statusBadge">
+        <i class="bi bi-dash-circle me-1"></i><span id="statusText">—</span>
+      </div>
+    </div>
   </div>
 
-  <div class="forecast-params-card">
-    <div class="forecast-params-header">
-      <i class="bi bi-sliders me-2"></i>Parámetros del Forecast
+  <div class="fcv2-params-card">
+    <div class="fcv2-params-header">
+      <i class="bi bi-sliders2 me-2"></i>Parámetros del Forecast
     </div>
-    <div class="forecast-params-body">
-      <div class="forecast-params-grid">
-        <div class="forecast-field forecast-field-lg">
-          <label class="forecast-label">SKU</label>
-          <input type="text" id="skuInput" class="form-control" list="skuList" placeholder="Buscar SKU...">
+    <div class="fcv2-params-body">
+      <div class="fcv2-params-grid">
+        <div class="fcv2-field fcv2-field-lg">
+          <label class="fcv2-label">SKU</label>
+          <input type="text" id="skuInput" class="form-control fcv2-input" list="skuList" placeholder="Buscar SKU...">
           <datalist id="skuList">
             {% for p in products %}
             <option value="{{ p.sku }}">{{ p.name }}</option>
@@ -25,9 +32,9 @@
           </datalist>
         </div>
 
-        <div class="forecast-field">
-          <label class="forecast-label">Tienda</label>
-          <select id="storeSelect" class="form-select">
+        <div class="fcv2-field">
+          <label class="fcv2-label">Tienda</label>
+          <select id="storeSelect" class="form-select fcv2-input">
             <option value="">Todas las tiendas</option>
             {% for s in stores %}
             <option value="{{ s.name }}">{{ s.name }}</option>
@@ -35,18 +42,18 @@
           </select>
         </div>
 
-        <div class="forecast-field">
-          <label class="forecast-label">Horizonte (semanas)</label>
-          <select id="horizonSelect" class="form-select">
+        <div class="fcv2-field">
+          <label class="fcv2-label">Horizonte (semanas)</label>
+          <select id="horizonSelect" class="form-select fcv2-input">
             <option value="4">4 semanas</option>
             <option value="8" selected>8 semanas</option>
             <option value="12">12 semanas</option>
           </select>
         </div>
 
-        <div class="forecast-field">
-          <label class="forecast-label">Lead time (semanas)</label>
-          <select id="leadTimeSelect" class="form-select">
+        <div class="fcv2-field">
+          <label class="fcv2-label">Lead time (semanas)</label>
+          <select id="leadTimeSelect" class="form-select fcv2-input">
             <option value="2">2 semanas</option>
             <option value="4" selected>4 semanas</option>
             <option value="6">6 semanas</option>
@@ -54,88 +61,128 @@
           </select>
         </div>
 
-        <div class="forecast-field">
-          <label class="forecast-label">Stock de seguridad: <span id="safetyLabel" class="forecast-safety-val">10%</span></label>
-          <input type="range" id="safetySlider" class="form-range" min="0" max="30" value="10" step="1">
+        <div class="fcv2-field">
+          <label class="fcv2-label">Stock de seguridad: <span id="safetyLabel" class="fcv2-safety-val">10%</span></label>
+          <input type="range" id="safetySlider" class="form-range fcv2-slider" min="0" max="30" value="10" step="1">
         </div>
 
-        <div class="forecast-field forecast-field-btn">
-          <button type="button" id="btnRunForecast" class="btn forecast-btn-run">
-            <i class="bi bi-play-fill me-1"></i>Ejecutar
+        <div class="fcv2-field fcv2-field-btn">
+          <button type="button" id="btnRunForecast" class="btn fcv2-btn-run">
+            <i class="bi bi-play-fill me-1"></i>Ejecutar Forecast
           </button>
         </div>
       </div>
-    </div>
-  </div>
-
-  <div class="forecast-kpi-row" id="kpiCards">
-    <div class="forecast-kpi forecast-kpi-blue">
-      <div class="forecast-kpi-badge"><i class="bi bi-graph-up"></i></div>
-      <div class="forecast-kpi-content">
-        <div class="forecast-kpi-value" id="kpiAvgLast4">-</div>
-        <div class="forecast-kpi-label">Promedio semanal</div>
-        <div class="forecast-kpi-hint">Últimas 4 semanas</div>
-      </div>
-      <div class="forecast-kpi-deco"></div>
-    </div>
-
-    <div class="forecast-kpi forecast-kpi-cyan">
-      <div class="forecast-kpi-badge"><i class="bi bi-calendar3"></i></div>
-      <div class="forecast-kpi-content">
-        <div class="forecast-kpi-value" id="kpiForecastTotal">-</div>
-        <div class="forecast-kpi-label">Forecast (horizonte)</div>
-        <div class="forecast-kpi-hint">Unidades proyectadas</div>
-      </div>
-      <div class="forecast-kpi-deco"></div>
-    </div>
-
-    <div class="forecast-kpi forecast-kpi-green">
-      <div class="forecast-kpi-badge"><i class="bi bi-box-seam"></i></div>
-      <div class="forecast-kpi-content">
-        <div class="forecast-kpi-value" id="kpiStockCD">-</div>
-        <div class="forecast-kpi-label">Stock CD disponible</div>
-        <div class="forecast-kpi-hint">Inventario actual</div>
-      </div>
-      <div class="forecast-kpi-deco"></div>
-    </div>
-
-    <div class="forecast-kpi forecast-kpi-amber">
-      <div class="forecast-kpi-badge"><i class="bi bi-cart-plus"></i></div>
-      <div class="forecast-kpi-content">
-        <div class="forecast-kpi-value" id="kpiSuggested">-</div>
-        <div class="forecast-kpi-label">Compra sugerida <button class="forecast-explain-btn" id="btnWhyPurchase" title="¿Por qué?"><i class="bi bi-question-circle"></i></button></div>
-        <div class="forecast-kpi-hint" id="purchaseHint">-</div>
-      </div>
-      <div class="forecast-kpi-deco"></div>
-    </div>
-  </div>
-
-  <div class="forecast-charts-row">
-    <div class="forecast-chart-card forecast-chart-main">
-      <div class="forecast-chart-header">
-        <i class="bi bi-activity me-2"></i>Historial de Ventas + Forecast
-      </div>
-      <div class="forecast-chart-body">
-        <div id="salesChart" style="height: 320px;"></div>
-      </div>
-    </div>
-
-    <div class="forecast-chart-card forecast-chart-side">
-      <div class="forecast-chart-header">
-        <i class="bi bi-bar-chart me-2"></i>Demanda vs Stock vs Compra
-      </div>
-      <div class="forecast-chart-body">
-        <div id="purchaseChart" style="height: 320px;"></div>
+      <div class="fcv2-helper-strip" id="helperStrip">
+        <i class="bi bi-database me-1"></i>Fuente: <strong>Ventas Macro (SalesWeeklyAgg)</strong> <span id="helperDate">—</span>
       </div>
     </div>
   </div>
 
-  <div id="emptyState" class="forecast-alert forecast-alert-info d-none">
-    <i class="bi bi-info-circle me-2"></i>Selecciona un SKU y haz clic en "Ejecutar" para generar proyecciones.
+  <div class="fcv2-warning-banner d-none" id="warningBanner">
+    <i class="bi bi-exclamation-triangle-fill me-2"></i>
+    <span id="warningText">SKU con riesgo alto: revisar compra / liquidación</span>
   </div>
 
-  <div id="noDataState" class="forecast-alert forecast-alert-warning d-none">
-    <i class="bi bi-exclamation-triangle me-2"></i>No se encontró historial de ventas para este SKU / filtro.
+  <div class="fcv2-kpi-row" id="kpiCards">
+    <div class="fcv2-kpi fcv2-kpi-blue">
+      <div class="fcv2-kpi-icon"><i class="bi bi-graph-up-arrow"></i></div>
+      <div class="fcv2-kpi-body">
+        <div class="fcv2-kpi-value" id="kpiAvgLast4">—</div>
+        <div class="fcv2-kpi-label">Demanda semanal</div>
+        <div class="fcv2-kpi-hint">Promedio últimas 4 sem</div>
+      </div>
+    </div>
+
+    <div class="fcv2-kpi fcv2-kpi-cyan">
+      <div class="fcv2-kpi-icon"><i class="bi bi-calendar-week"></i></div>
+      <div class="fcv2-kpi-body">
+        <div class="fcv2-kpi-value" id="kpiForecastTotal">—</div>
+        <div class="fcv2-kpi-label">Demanda horizonte</div>
+        <div class="fcv2-kpi-hint">Unidades proyectadas</div>
+      </div>
+    </div>
+
+    <div class="fcv2-kpi fcv2-kpi-green">
+      <div class="fcv2-kpi-icon"><i class="bi bi-box-seam-fill"></i></div>
+      <div class="fcv2-kpi-body">
+        <div class="fcv2-kpi-value" id="kpiStockCD">—</div>
+        <div class="fcv2-kpi-label">Stock total</div>
+        <div class="fcv2-kpi-hint">CD + Tiendas</div>
+      </div>
+    </div>
+
+    <div class="fcv2-kpi fcv2-kpi-amber">
+      <div class="fcv2-kpi-icon"><i class="bi bi-cart-plus-fill"></i></div>
+      <div class="fcv2-kpi-body">
+        <div class="fcv2-kpi-value" id="kpiSuggested">—</div>
+        <div class="fcv2-kpi-label">Compra sugerida</div>
+        <div class="fcv2-kpi-hint" id="purchaseHint">—</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="fcv2-charts-row">
+    <div class="fcv2-chart-card fcv2-chart-main">
+      <div class="fcv2-chart-header">
+        <i class="bi bi-activity me-2"></i>Historial + Forecast
+      </div>
+      <div class="fcv2-chart-body">
+        <div id="salesChart" class="fcv2-chart-canvas"></div>
+      </div>
+    </div>
+
+    <div class="fcv2-chart-card fcv2-chart-side">
+      <div class="fcv2-chart-header">
+        <i class="bi bi-bar-chart-fill me-2"></i>Demanda vs Stock vs Compra
+      </div>
+      <div class="fcv2-chart-body">
+        <div id="purchaseChart" class="fcv2-chart-canvas"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="fcv2-explain-card" id="explainCard">
+    <div class="fcv2-explain-header">
+      <i class="bi bi-lightbulb-fill me-2"></i>¿Por qué esta recomendación?
+    </div>
+    <div class="fcv2-explain-body" id="explainBody">
+      <ul class="fcv2-explain-list" id="explainList">
+        <li class="fcv2-explain-empty">
+          <i class="bi bi-info-circle me-2"></i>Ejecuta el forecast para ver el análisis detallado
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="fcv2-actions-bar">
+    <a href="/export/purchase_forecast_v2" class="btn fcv2-btn-outline" id="btnExport">
+      <i class="bi bi-file-earmark-excel me-1"></i>Exportar Forecast
+    </a>
+    <a href="/alerts" class="btn fcv2-btn-outline">
+      <i class="bi bi-bell me-1"></i>Ver en Alertas
+    </a>
+    <a href="/slow_stock" class="btn fcv2-btn-outline">
+      <i class="bi bi-clock-history me-1"></i>Ver Stock Lento
+    </a>
+    <button type="button" class="btn fcv2-btn-primary" id="btnAddToOrder" disabled>
+      <i class="bi bi-plus-circle me-1"></i>Agregar a orden de compra
+    </button>
+  </div>
+
+  <div id="emptyState" class="fcv2-empty-state">
+    <div class="fcv2-empty-icon">
+      <i class="bi bi-search"></i>
+    </div>
+    <div class="fcv2-empty-title">Selecciona un SKU para calcular forecast</div>
+    <div class="fcv2-empty-hint">Ingresa un SKU y haz clic en "Ejecutar" para ver proyecciones</div>
+  </div>
+
+  <div id="noDataState" class="fcv2-empty-state fcv2-empty-warning d-none">
+    <div class="fcv2-empty-icon">
+      <i class="bi bi-exclamation-triangle"></i>
+    </div>
+    <div class="fcv2-empty-title">Sin historial de ventas</div>
+    <div class="fcv2-empty-hint">No se encontró historial de ventas para este SKU / filtro</div>
   </div>
 </div>
 
@@ -160,6 +207,16 @@ document.addEventListener('DOMContentLoaded', function() {
   const purchaseChartEl = document.getElementById('purchaseChart');
   const emptyState = document.getElementById('emptyState');
   const noDataState = document.getElementById('noDataState');
+  const kpiCards = document.getElementById('kpiCards');
+  const chartsRow = document.querySelector('.fcv2-charts-row');
+  const explainCard = document.getElementById('explainCard');
+  const actionsBar = document.querySelector('.fcv2-actions-bar');
+  const statusBadge = document.getElementById('statusBadge');
+  const statusText = document.getElementById('statusText');
+  const warningBanner = document.getElementById('warningBanner');
+  const warningText = document.getElementById('warningText');
+  const explainList = document.getElementById('explainList');
+  const helperDate = document.getElementById('helperDate');
 
   safetySlider.addEventListener('input', function() {
     safetyLabel.textContent = this.value + '%';
@@ -173,27 +230,54 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function resetKPIs() {
-    kpiAvgLast4.textContent = '-';
-    kpiForecastTotal.textContent = '-';
-    kpiStockCD.textContent = '-';
-    kpiSuggested.textContent = '-';
-    purchaseHint.textContent = '-';
-    purchaseHint.className = 'forecast-kpi-hint';
+    kpiAvgLast4.textContent = '—';
+    kpiForecastTotal.textContent = '—';
+    kpiStockCD.textContent = '—';
+    kpiSuggested.textContent = '—';
+    purchaseHint.textContent = '—';
+  }
+
+  function updateStatus(type, text) {
+    statusBadge.className = 'fcv2-status-badge fcv2-status-' + type;
+    const icons = {
+      'buy': 'bi-cart-check-fill',
+      'review': 'bi-exclamation-circle-fill',
+      'nobuy': 'bi-check-circle-fill',
+      'neutral': 'bi-dash-circle'
+    };
+    statusBadge.querySelector('i').className = 'bi ' + (icons[type] || icons.neutral) + ' me-1';
+    statusText.textContent = text;
   }
 
   function showEmptyState() {
     emptyState.classList.remove('d-none');
     noDataState.classList.add('d-none');
+    kpiCards.classList.add('fcv2-hidden');
+    chartsRow.classList.add('fcv2-hidden');
+    explainCard.classList.add('fcv2-hidden');
+    actionsBar.classList.add('fcv2-hidden');
+    warningBanner.classList.add('d-none');
+    updateStatus('neutral', '—');
   }
 
   function showNoDataState() {
     emptyState.classList.add('d-none');
     noDataState.classList.remove('d-none');
+    kpiCards.classList.add('fcv2-hidden');
+    chartsRow.classList.add('fcv2-hidden');
+    explainCard.classList.add('fcv2-hidden');
+    actionsBar.classList.add('fcv2-hidden');
+    warningBanner.classList.add('d-none');
+    updateStatus('neutral', '—');
   }
 
   function hideStates() {
     emptyState.classList.add('d-none');
     noDataState.classList.add('d-none');
+    kpiCards.classList.remove('fcv2-hidden');
+    chartsRow.classList.remove('fcv2-hidden');
+    explainCard.classList.remove('fcv2-hidden');
+    actionsBar.classList.remove('fcv2-hidden');
   }
 
   function runForecast() {
@@ -206,6 +290,8 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     hideStates();
+    btnRun.disabled = true;
+    btnRun.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Calculando...';
 
     const params = new URLSearchParams({
       sku: sku,
@@ -229,6 +315,9 @@ document.addEventListener('DOMContentLoaded', function() {
         return res.json();
       })
       .then(data => {
+        btnRun.disabled = false;
+        btnRun.innerHTML = '<i class="bi bi-play-fill me-1"></i>Ejecutar Forecast';
+
         if (!data) return;
 
         if (data.history.length === 0 && data.forecast.length === 0) {
@@ -239,30 +328,115 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         hideStates();
-        updateKPIs(data.kpis);
+        updateKPIs(data.kpis, data);
         renderSalesChart(data);
         renderPurchaseChart(data);
+        updateExplainability(data);
+        updateWarnings(data);
       })
       .catch(err => {
         console.error('Forecast error:', err);
         showNoDataState();
         clearCharts();
         resetKPIs();
+        btnRun.disabled = false;
+        btnRun.innerHTML = '<i class="bi bi-play-fill me-1"></i>Ejecutar Forecast';
       });
   }
 
-  function updateKPIs(kpis) {
+  function updateKPIs(kpis, data) {
     kpiAvgLast4.textContent = kpis.avg_last4.toLocaleString();
     kpiForecastTotal.textContent = kpis.forecast_total.toLocaleString();
     kpiStockCD.textContent = kpis.stock_cd.toLocaleString();
     kpiSuggested.textContent = kpis.suggested_purchase.toLocaleString();
     
-    if (kpis.suggested_purchase > 0) {
-      purchaseHint.textContent = 'Compra recomendada';
-      purchaseHint.className = 'forecast-kpi-hint forecast-hint-recommend';
+    const buyNow = data.buy_now || false;
+    const riskLevel = data.risk_level || 'LOW';
+    
+    if (buyNow || kpis.suggested_purchase > 0) {
+      if (riskLevel === 'HIGH' || buyNow) {
+        purchaseHint.textContent = 'Comprar ahora';
+        purchaseHint.className = 'fcv2-kpi-hint fcv2-hint-urgent';
+        updateStatus('buy', 'Comprar ahora');
+      } else if (riskLevel === 'MEDIUM') {
+        purchaseHint.textContent = 'Revisar compra';
+        purchaseHint.className = 'fcv2-kpi-hint fcv2-hint-review';
+        updateStatus('review', 'Revisar');
+      } else {
+        purchaseHint.textContent = 'Compra recomendada';
+        purchaseHint.className = 'fcv2-kpi-hint fcv2-hint-recommend';
+        updateStatus('buy', 'Comprar');
+      }
     } else {
       purchaseHint.textContent = 'Sin necesidad de compra';
-      purchaseHint.className = 'forecast-kpi-hint forecast-hint-ok';
+      purchaseHint.className = 'fcv2-kpi-hint fcv2-hint-ok';
+      updateStatus('nobuy', 'No comprar');
+    }
+  }
+
+  function updateExplainability(data) {
+    const bullets = [];
+    const lifecycle = data.lifecycle_status || 'UNKNOWN';
+    const model = data.model_used || 'SMA';
+    const reasonCode = data.reason_code || '';
+    const riskLevel = data.risk_level || 'LOW';
+    
+    bullets.push('<li><strong>Ciclo de vida:</strong> ' + lifecycle + ' — Modelo aplicado: ' + model + '</li>');
+    
+    if (lifecycle === 'ACTIVE') {
+      bullets.push('<li><i class="bi bi-check-circle text-success me-1"></i>SKU activo con ventas en últimos 30 días</li>');
+    } else if (lifecycle === 'SLOW') {
+      bullets.push('<li><i class="bi bi-clock text-warning me-1"></i>SKU lento (31-90 días) — Penalización 50% aplicada</li>');
+    } else if (lifecycle === 'DEAD') {
+      bullets.push('<li><i class="bi bi-x-circle text-danger me-1"></i>SKU muerto (90+ días sin ventas) — Compra bloqueada</li>');
+    } else if (lifecycle === 'NEW') {
+      bullets.push('<li><i class="bi bi-star text-info me-1"></i>SKU nuevo — Usando promedio de categoría (cold start)</li>');
+    }
+    
+    if (reasonCode.includes('PROJECTED_STOCKOUT')) {
+      bullets.push('<li><i class="bi bi-exclamation-triangle text-danger me-1"></i>Alerta: Stockout proyectado — Compra urgente activada</li>');
+    }
+    if (reasonCode.includes('BROKEN_STOCK')) {
+      bullets.push('<li><i class="bi bi-exclamation-circle text-danger me-1"></i>Alerta: Quiebre de stock detectado</li>');
+    }
+    if (reasonCode.includes('OVERSTOCK')) {
+      bullets.push('<li><i class="bi bi-box text-warning me-1"></i>Alerta: Sobrestock — Compra bloqueada</li>');
+    }
+    if (reasonCode.includes('SLOW_STOCK_PENALTY')) {
+      bullets.push('<li><i class="bi bi-clock-history text-warning me-1"></i>Stock lento flaggeado — Reducción 50% en cantidad</li>');
+    }
+    if (reasonCode.includes('SILENT_SKU')) {
+      bullets.push('<li><i class="bi bi-volume-mute text-muted me-1"></i>SKU silencioso (sin ventas recientes)</li>');
+    }
+    
+    const leadTime = parseInt(leadTimeSelect.value);
+    const horizon = parseInt(horizonSelect.value);
+    const safety = parseInt(safetySlider.value);
+    bullets.push('<li><strong>Parámetros:</strong> Horizonte ' + horizon + ' sem, Lead time ' + leadTime + ' sem, Safety ' + safety + '%</li>');
+    
+    if (bullets.length > 0) {
+      explainList.innerHTML = bullets.join('');
+    } else {
+      explainList.innerHTML = '<li class="fcv2-explain-empty"><i class="bi bi-info-circle me-2"></i>Sin información adicional</li>';
+    }
+  }
+
+  function updateWarnings(data) {
+    const lifecycle = data.lifecycle_status || '';
+    const riskLevel = data.risk_level || 'LOW';
+    const reasonCode = data.reason_code || '';
+    
+    if (lifecycle === 'DEAD' || lifecycle === 'SLOW' || reasonCode.includes('SLOW_STOCK')) {
+      warningBanner.classList.remove('d-none');
+      if (lifecycle === 'DEAD') {
+        warningText.textContent = 'SKU muerto: considerar liquidación antes de nueva compra';
+      } else if (reasonCode.includes('SLOW_STOCK')) {
+        warningText.textContent = 'SKU con stock lento flaggeado: revisar antes de comprar';
+      } else {
+        warningText.textContent = 'SKU con riesgo alto: revisar compra / liquidación';
+      }
+    } else {
+      warningBanner.classList.add('d-none');
     }
   }
 
@@ -280,8 +454,8 @@ document.addEventListener('DOMContentLoaded', function() {
       type: 'scatter',
       mode: 'lines+markers',
       name: 'Histórico',
-      line: { color: '#3b82f6', width: 2 },
-      marker: { size: 6 }
+      line: { color: '#3b82f6', width: 2.5 },
+      marker: { size: 7, color: '#3b82f6' }
     });
 
     traces.push({
@@ -290,8 +464,8 @@ document.addEventListener('DOMContentLoaded', function() {
       type: 'scatter',
       mode: 'lines+markers',
       name: 'Forecast',
-      line: { color: '#f59e0b', width: 2, dash: 'dash' },
-      marker: { size: 6 }
+      line: { color: '#f59e0b', width: 2.5, dash: 'dash' },
+      marker: { size: 7, color: '#f59e0b' }
     });
 
     if (data.bands && data.bands.upper && data.bands.lower) {
@@ -299,7 +473,7 @@ document.addEventListener('DOMContentLoaded', function() {
         x: forecastWeeks.concat(forecastWeeks.slice().reverse()),
         y: data.bands.upper.concat(data.bands.lower.slice().reverse()),
         fill: 'toself',
-        fillcolor: 'rgba(245, 158, 11, 0.12)',
+        fillcolor: 'rgba(245, 158, 11, 0.1)',
         line: { color: 'transparent' },
         name: 'Banda de confianza',
         showlegend: true,
@@ -308,16 +482,17 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     const layout = {
-      margin: { t: 20, b: 50, l: 50, r: 20 },
-      xaxis: { title: 'Semana', tickangle: -45, gridcolor: '#f1f5f9' },
-      yaxis: { title: 'Unidades', gridcolor: '#f1f5f9' },
-      legend: { orientation: 'h', y: -0.25 },
+      margin: { t: 20, b: 50, l: 55, r: 20 },
+      xaxis: { title: 'Semana', tickangle: -45, gridcolor: '#e2e8f0', linecolor: '#e2e8f0' },
+      yaxis: { title: 'Unidades', gridcolor: '#e2e8f0', linecolor: '#e2e8f0' },
+      legend: { orientation: 'h', y: -0.28, x: 0.5, xanchor: 'center' },
       hovermode: 'x unified',
       paper_bgcolor: 'transparent',
-      plot_bgcolor: 'transparent'
+      plot_bgcolor: 'transparent',
+      font: { family: 'Inter, system-ui, sans-serif', size: 12 }
     };
 
-    Plotly.newPlot(salesChartEl, traces, layout, { responsive: true });
+    Plotly.newPlot(salesChartEl, traces, layout, { responsive: true, displayModeBar: false });
   }
 
   function renderPurchaseChart(data) {
@@ -326,28 +501,31 @@ document.addEventListener('DOMContentLoaded', function() {
     const demandLeadTime = Math.round(kpis.avg_last4 * leadTime);
 
     const trace = {
-      x: ['Demanda Lead Time', 'Stock CD', 'Compra Sugerida'],
+      x: ['Demanda Lead Time', 'Stock Total', 'Compra Sugerida'],
       y: [demandLeadTime, kpis.stock_cd, kpis.suggested_purchase],
       type: 'bar',
       marker: {
         color: ['#06b6d4', '#22c55e', '#f59e0b'],
-        borderRadius: 4
+        line: { width: 0 }
       },
       text: [demandLeadTime.toLocaleString(), kpis.stock_cd.toLocaleString(), kpis.suggested_purchase.toLocaleString()],
-      textposition: 'outside'
+      textposition: 'outside',
+      textfont: { size: 13, weight: 600 }
     };
 
     const layout = {
-      margin: { t: 30, b: 80, l: 50, r: 20 },
-      yaxis: { title: 'Unidades', gridcolor: '#f1f5f9' },
-      xaxis: { tickangle: -15 },
+      margin: { t: 30, b: 80, l: 55, r: 20 },
+      yaxis: { title: 'Unidades', gridcolor: '#e2e8f0', linecolor: '#e2e8f0' },
+      xaxis: { tickangle: -15, linecolor: '#e2e8f0' },
       showlegend: false,
       hovermode: 'closest',
       paper_bgcolor: 'transparent',
-      plot_bgcolor: 'transparent'
+      plot_bgcolor: 'transparent',
+      font: { family: 'Inter, system-ui, sans-serif', size: 12 },
+      bargap: 0.4
     };
 
-    Plotly.newPlot(purchaseChartEl, [trace], layout, { responsive: true });
+    Plotly.newPlot(purchaseChartEl, [trace], layout, { responsive: true, displayModeBar: false });
   }
 
   btnRun.addEventListener('click', runForecast);
@@ -358,163 +536,8 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   });
 
-  const btnWhyPurchase = document.getElementById('btnWhyPurchase');
-  let fcExplainModal = null;
-  
-  btnWhyPurchase.addEventListener('click', showForecastExplanation);
-
-  async function showForecastExplanation() {
-    const sku = String(skuInput.value).trim();
-    if (!sku) {
-      alert('Selecciona un SKU primero');
-      return;
-    }
-
-    if (!fcExplainModal) {
-      const modalEl = document.getElementById('forecastExplainModal');
-      if (modalEl && typeof bootstrap !== 'undefined') {
-        fcExplainModal = new bootstrap.Modal(modalEl);
-      } else {
-        alert('Error: No se puede mostrar la explicación');
-        return;
-      }
-    }
-    
-    document.getElementById('fcExplainSku').textContent = 'Cargando...';
-    document.getElementById('fcExplainProduct').textContent = '';
-    document.getElementById('fcExplainBullets').innerHTML = '<li>Cargando explicación...</li>';
-    fcExplainModal.show();
-
-    try {
-      const params = new URLSearchParams({
-        sku: sku,
-        horizon_weeks: horizonSelect.value,
-        lead_time_weeks: leadTimeSelect.value,
-        safety_pct: safetySlider.value / 100,
-        store: storeSelect.value || ''
-      });
-      const resp = await fetch('/api/explain/forecast?' + params);
-      const data = await resp.json();
-
-      if (!resp.ok || data.error) {
-        document.getElementById('fcExplainBullets').innerHTML = '<li>' + (data.error || 'Error al cargar explicación') + '</li>';
-        return;
-      }
-
-      document.getElementById('fcExplainSku').textContent = 'SKU: ' + (data.sku || 'N/A');
-      document.getElementById('fcExplainProduct').textContent = data.product_name || 'Producto desconocido';
-      document.getElementById('fcExplainStore').textContent = 'Tienda: ' + (data.store || 'Todas');
-
-      const bullets = data.bullets || [];
-      const bulletsHtml = bullets.length > 0 
-        ? bullets.map(b => '<li>' + b + '</li>').join('')
-        : '<li>Sin información disponible</li>';
-      document.getElementById('fcExplainBullets').innerHTML = bulletsHtml;
-    } catch (err) {
-      document.getElementById('fcExplainBullets').innerHTML = '<li>Error al cargar explicación: ' + err.message + '</li>';
-    }
-  }
-
   showEmptyState();
 });
 </script>
-
-<div class="modal fade" id="forecastExplainModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered">
-    <div class="modal-content fc-explain-modal-content">
-      <div class="modal-header fc-explain-modal-header">
-        <h5 class="modal-title"><i class="bi bi-lightbulb me-2"></i>¿Por qué esta compra sugerida?</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
-      </div>
-      <div class="modal-body fc-explain-modal-body">
-        <div class="fc-explain-header">
-          <div class="fc-explain-sku" id="fcExplainSku"></div>
-          <div class="fc-explain-product" id="fcExplainProduct"></div>
-          <div class="fc-explain-store" id="fcExplainStore"></div>
-        </div>
-        <ul class="fc-explain-bullets" id="fcExplainBullets"></ul>
-      </div>
-    </div>
-  </div>
-</div>
-
-<style>
-.forecast-explain-btn {
-  background: transparent;
-  border: none;
-  color: #f59e0b;
-  cursor: pointer;
-  padding: 2px 6px;
-  margin-left: 4px;
-  border-radius: 6px;
-  transition: all 0.15s ease;
-  font-size: 0.9rem;
-}
-.forecast-explain-btn:hover {
-  background: rgba(245, 158, 11, 0.15);
-  color: #d97706;
-}
-.fc-explain-modal-content {
-  border-radius: 16px;
-  border: none;
-  box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
-}
-.fc-explain-modal-header {
-  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
-  color: #fff;
-  border-radius: 16px 16px 0 0;
-  padding: 16px 20px;
-}
-.fc-explain-modal-header .btn-close {
-  filter: brightness(0) invert(1);
-}
-.fc-explain-modal-body {
-  padding: 20px;
-}
-.fc-explain-header {
-  margin-bottom: 16px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid #e2e8f0;
-}
-.fc-explain-sku {
-  font-family: 'SF Mono', 'Consolas', monospace;
-  font-size: 0.875rem;
-  color: #f59e0b;
-  font-weight: 600;
-}
-.fc-explain-product {
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: #1e293b;
-  margin-top: 4px;
-}
-.fc-explain-store {
-  font-size: 0.875rem;
-  color: #64748b;
-  margin-top: 4px;
-}
-.fc-explain-bullets {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-.fc-explain-bullets li {
-  padding: 8px 0 8px 24px;
-  position: relative;
-  font-size: 0.875rem;
-  color: #334155;
-  border-bottom: 1px solid #f1f5f9;
-}
-.fc-explain-bullets li:last-child {
-  border-bottom: none;
-}
-.fc-explain-bullets li::before {
-  content: '•';
-  position: absolute;
-  left: 8px;
-  color: #f59e0b;
-  font-weight: bold;
-}
-</style>
 
 {% endblock %}

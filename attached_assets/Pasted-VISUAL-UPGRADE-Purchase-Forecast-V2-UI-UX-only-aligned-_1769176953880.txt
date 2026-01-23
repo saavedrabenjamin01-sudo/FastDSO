@@ -1,0 +1,122 @@
+VISUAL UPGRADE — Purchase Forecast V2 (UI/UX only) aligned with FastDSO design system
+
+Context:
+FastDSO uses a modern SaaS dashboard design (rounded cards, soft shadows, blue/white palette, premium “pill” chips, zebra tables, sticky headers). We need to refactor ONLY the visual layout of the Purchase Forecast V2 page to be consistent with the rest of the app. Logic is already being improved separately.
+
+Scope:
+- Edit ONLY templates/purchase_forecast_v2.html (or the current forecast template file)
+- Append CSS only if needed to static/css/style.css under comment “/* Forecast V2 UI */”
+- Do NOT modify backend logic, calculations, queries, or routes.
+- Do NOT break Plotly charts. Keep chart data and rendering intact.
+
+Primary UX goal:
+Make the page answer, at a glance:
+1) “Should we buy now?”
+2) “How many units?”
+3) “Why?”
+
+=====================================================
+A) PAGE LAYOUT (MANDATORY STRUCTURE)
+=====================================================
+
+1) Header section (top)
+- Title: “Forecast de Compra (V2)”
+- Subtitle: “Proyección basada en ventas macro, lead time y stock de seguridad”
+- A compact status badge on the right:
+  - “Comprar ahora” (red) / “Revisar” (orange) / “No comprar” (green/gray)
+  This badge must use existing computed flags if available; if not, show “—”.
+
+2) Parameters card (compact, clean)
+Wrap all inputs in a single card:
+- SKU input / selector
+- Category (display only if available)
+- Horizon weeks
+- Lead time weeks
+- Safety stock %
+- Run Forecast button (primary, aligned right)
+
+Add a small “helper strip” under parameters:
+- “Fuente: Ventas Macro” + date/window info (if available) else “—”.
+
+3) KPI row (4 KPI cards max)
+Show 4 KPI cards (same style as dashboard KPI cards):
+- Demanda semanal (avg weekly demand)
+- Demanda horizonte (forecast demand)
+- Stock total (CD + tiendas)
+- Compra sugerida (final recommendation)
+
+KPI cards must:
+- Have icon badge on left
+- Big number
+- Small label
+- Subtext line (muted)
+
+4) Charts section (2 cards)
+Place charts in a two-column layout (stack on mobile):
+- Card left: “Historial + Forecast”
+- Card right: “Demanda vs Stock vs Compra”
+Each card must have:
+- Header with title
+- Body with Plotly chart
+- No extra controls clutter
+
+5) Explainability section (required)
+Add a card: “¿Por qué esta recomendación?”
+- Render 3–5 bullet points (short)
+- Must reference:
+  - lifecycle_status
+  - alerts impact (if present)
+  - slow stock flag (if present)
+  - lead time/horizon
+If no data available, show a premium empty state.
+
+6) Actions section (final CTA)
+Add a compact action bar:
+- “Exportar forecast” (outline)
+- “Ver en Alertas” (outline link)
+- “Ver en Stock Lento” (outline link)
+- Optional: “Agregar a orden de compra” (primary; can be placeholder if not implemented)
+
+=====================================================
+B) VISUAL SYSTEM (MUST MATCH FASTDSO)
+=====================================================
+
+- Use rounded corners: 14–18px
+- Soft shadows: consistent with dashboard
+- Spacing: compact, not empty
+- Use “pill” badges for status + alerts
+- Tables (if any) must be zebra + hover + sticky header
+- Keep color palette consistent with sidebar:
+  Blue primary, soft gray backgrounds, subtle red/orange/green accents.
+
+=====================================================
+C) EMPTY STATES (IMPORTANT)
+=====================================================
+
+If no SKU selected / no macro data:
+- Show a clean empty state:
+  icon + title + hint
+  “Selecciona un SKU para calcular forecast.”
+
+If SKU is DEAD / Slow Stock flagged:
+- Show warning banner:
+  “SKU con riesgo alto: revisar compra / liquidación”.
+
+=====================================================
+D) DO NOT BREAK EXISTING FUNCTIONALITY
+=====================================================
+
+- Keep form names and submit endpoints unchanged.
+- Keep Plotly scripts and chart rendering unchanged.
+- Keep current variables intact; only rearrange display.
+- Do NOT remove any existing export or button endpoints; just reposition them.
+
+=====================================================
+DELIVERABLES
+=====================================================
+
+1) Provide the updated full template file (purchase_forecast_v2.html).
+2) Provide only the appended CSS snippet (if needed).
+3) Confirm no backend changes.
+
+END.
