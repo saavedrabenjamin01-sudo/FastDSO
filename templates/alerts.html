@@ -3,144 +3,93 @@
 {% block content %}
 
 <div class="alerts-page">
-  <div class="alerts-header">
-    <h2 class="alerts-title"><i class="bi bi-bell me-2"></i>Centro de Alertas</h2>
-    <p class="alerts-subtitle">Alertas proactivas basadas en stock y velocidad de venta</p>
-  </div>
-
-  <div class="alerts-kpis">
-    <div class="alerts-kpi alerts-kpi-high">
-      <div class="alerts-kpi-icon"><i class="bi bi-exclamation-triangle-fill"></i></div>
-      <div class="alerts-kpi-body">
-        <div class="alerts-kpi-number">{{ kpi_high }}</div>
-        <div class="alerts-kpi-label">Alta</div>
+  <div class="alerts-header-card">
+    <div class="alerts-header-top">
+      <div class="alerts-header-title">
+        <h2><i class="bi bi-bell me-2"></i>Centro de Alertas</h2>
+        <p>Alertas proactivas basadas en stock y velocidad de venta</p>
       </div>
-    </div>
-    <div class="alerts-kpi alerts-kpi-medium">
-      <div class="alerts-kpi-icon"><i class="bi bi-exclamation-circle-fill"></i></div>
-      <div class="alerts-kpi-body">
-        <div class="alerts-kpi-number">{{ kpi_medium }}</div>
-        <div class="alerts-kpi-label">Media</div>
-      </div>
-    </div>
-    <div class="alerts-kpi alerts-kpi-low">
-      <div class="alerts-kpi-icon"><i class="bi bi-info-circle-fill"></i></div>
-      <div class="alerts-kpi-body">
-        <div class="alerts-kpi-number">{{ kpi_low }}</div>
-        <div class="alerts-kpi-label">Baja</div>
-      </div>
-    </div>
-    <div class="alerts-kpi alerts-kpi-stockout">
-      <div class="alerts-kpi-icon"><i class="bi bi-box"></i></div>
-      <div class="alerts-kpi-body">
-        <div class="alerts-kpi-number">{{ kpi_stockout }}</div>
-        <div class="alerts-kpi-label">Quiebres</div>
-      </div>
-    </div>
-    <div class="alerts-kpi alerts-kpi-overstock">
-      <div class="alerts-kpi-icon"><i class="bi bi-boxes"></i></div>
-      <div class="alerts-kpi-body">
-        <div class="alerts-kpi-number">{{ kpi_overstock }}</div>
-        <div class="alerts-kpi-label">Sobrestock</div>
-      </div>
-    </div>
-    <div class="alerts-kpi alerts-kpi-silent">
-      <div class="alerts-kpi-icon"><i class="bi bi-moon-stars"></i></div>
-      <div class="alerts-kpi-body">
-        <div class="alerts-kpi-number">{{ kpi_silent }}</div>
-        <div class="alerts-kpi-label">Sin movimiento</div>
-      </div>
-    </div>
-    <div class="alerts-kpi alerts-kpi-broken">
-      <div class="alerts-kpi-icon"><i class="bi bi-x-circle-fill"></i></div>
-      <div class="alerts-kpi-body">
-        <div class="alerts-kpi-number">{{ kpi_broken|default(0) }}</div>
-        <div class="alerts-kpi-label">Quiebre reciente</div>
-      </div>
-    </div>
-  </div>
-
-  <div class="alerts-chip-filters">
-    <div class="alerts-chip-group">
-      <div class="alerts-chip-group-header">
-        <span class="alerts-chip-group-title"><i class="bi bi-funnel me-1"></i>Filtrar por Severidad</span>
-      </div>
-      <div class="alerts-chip-list">
-        <button type="button" class="alerts-chip alerts-chip-high {% if 'HIGH' in selected_severities %}alerts-chip-selected{% endif %}" 
-                data-filter-type="severity" data-filter-value="HIGH">
-          <i class="bi bi-exclamation-triangle-fill me-1"></i>Alta
-          <span class="alerts-chip-count">{{ count_by_severity.HIGH }}</span>
-        </button>
-        <button type="button" class="alerts-chip alerts-chip-medium {% if 'MEDIUM' in selected_severities %}alerts-chip-selected{% endif %}"
-                data-filter-type="severity" data-filter-value="MEDIUM">
-          <i class="bi bi-exclamation-circle-fill me-1"></i>Media
-          <span class="alerts-chip-count">{{ count_by_severity.MEDIUM }}</span>
-        </button>
-        <button type="button" class="alerts-chip alerts-chip-low {% if 'LOW' in selected_severities %}alerts-chip-selected{% endif %}"
-                data-filter-type="severity" data-filter-value="LOW">
-          <i class="bi bi-info-circle-fill me-1"></i>Baja
-          <span class="alerts-chip-count">{{ count_by_severity.LOW }}</span>
-        </button>
-      </div>
-    </div>
-
-    <div class="alerts-chip-group">
-      <div class="alerts-chip-group-header">
-        <span class="alerts-chip-group-title"><i class="bi bi-tag me-1"></i>Filtrar por Tipo</span>
-      </div>
-      <div class="alerts-chip-list">
-        <button type="button" class="alerts-chip alerts-chip-type-stockout {% if 'PROJECTED_STOCKOUT' in selected_types %}alerts-chip-selected{% endif %}"
-                data-filter-type="type" data-filter-value="PROJECTED_STOCKOUT">
-          <i class="bi bi-box me-1"></i>Quiebre proyectado
-          <span class="alerts-chip-count">{{ count_by_type.PROJECTED_STOCKOUT }}</span>
-        </button>
-        <button type="button" class="alerts-chip alerts-chip-type-overstock {% if 'OVERSTOCK' in selected_types %}alerts-chip-selected{% endif %}"
-                data-filter-type="type" data-filter-value="OVERSTOCK">
-          <i class="bi bi-boxes me-1"></i>Sobrestock
-          <span class="alerts-chip-count">{{ count_by_type.OVERSTOCK }}</span>
-        </button>
-        <button type="button" class="alerts-chip alerts-chip-type-silent {% if 'SILENT_SKU' in selected_types %}alerts-chip-selected{% endif %}"
-                data-filter-type="type" data-filter-value="SILENT_SKU">
-          <i class="bi bi-moon-stars me-1"></i>Sin movimiento
-          <span class="alerts-chip-count">{{ count_by_type.SILENT_SKU }}</span>
-        </button>
-        <button type="button" class="alerts-chip alerts-chip-type-broken {% if 'BROKEN_STOCK' in selected_types %}alerts-chip-selected{% endif %}"
-                data-filter-type="type" data-filter-value="BROKEN_STOCK">
-          <i class="bi bi-x-circle-fill me-1"></i>Quiebre reciente
-          <span class="alerts-chip-count">{{ count_by_type.BROKEN_STOCK }}</span>
-        </button>
-      </div>
-    </div>
-
-    <div class="alerts-chip-actions">
-      {% if selected_severities or selected_types %}
-      <div class="alerts-selection-summary">
-        <i class="bi bi-check2-circle me-1"></i>
-        Selección: 
-        {% for s in selected_severities %}
-          <span class="alerts-selection-tag">{{ s }}</span>
-        {% endfor %}
-        {% for t in selected_types %}
-          <span class="alerts-selection-tag">{{ t|replace('_', ' ')|title }}</span>
-        {% endfor %}
-      </div>
-      {% endif %}
       <button type="button" class="btn btn-outline-secondary btn-sm" id="clearFiltersBtn">
         <i class="bi bi-x-lg me-1"></i>Limpiar filtros
       </button>
     </div>
+
+    <div class="alerts-chip-row">
+      <div class="alerts-chip-group">
+        <span class="alerts-chip-group-label"><i class="bi bi-funnel me-1"></i>Severidad</span>
+        <div class="alerts-chip-list">
+          <button type="button" class="alerts-chip alerts-chip-high {% if 'HIGH' in selected_severities %}alerts-chip-selected{% endif %}" 
+                  data-filter-type="severity" data-filter-value="HIGH">
+            <i class="bi bi-exclamation-triangle-fill me-1"></i>Alta
+            <span class="alerts-chip-count">{{ count_by_severity.HIGH }}</span>
+          </button>
+          <button type="button" class="alerts-chip alerts-chip-medium {% if 'MEDIUM' in selected_severities %}alerts-chip-selected{% endif %}"
+                  data-filter-type="severity" data-filter-value="MEDIUM">
+            <i class="bi bi-exclamation-circle-fill me-1"></i>Media
+            <span class="alerts-chip-count">{{ count_by_severity.MEDIUM }}</span>
+          </button>
+          <button type="button" class="alerts-chip alerts-chip-low {% if 'LOW' in selected_severities %}alerts-chip-selected{% endif %}"
+                  data-filter-type="severity" data-filter-value="LOW">
+            <i class="bi bi-info-circle-fill me-1"></i>Baja
+            <span class="alerts-chip-count">{{ count_by_severity.LOW }}</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="alerts-chip-divider"></div>
+
+      <div class="alerts-chip-group">
+        <span class="alerts-chip-group-label"><i class="bi bi-tag me-1"></i>Tipo</span>
+        <div class="alerts-chip-list">
+          <button type="button" class="alerts-chip alerts-chip-type-stockout {% if 'PROJECTED_STOCKOUT' in selected_types %}alerts-chip-selected{% endif %}"
+                  data-filter-type="type" data-filter-value="PROJECTED_STOCKOUT">
+            <i class="bi bi-box me-1"></i>Quiebre
+            <span class="alerts-chip-count">{{ count_by_type.PROJECTED_STOCKOUT }}</span>
+          </button>
+          <button type="button" class="alerts-chip alerts-chip-type-overstock {% if 'OVERSTOCK' in selected_types %}alerts-chip-selected{% endif %}"
+                  data-filter-type="type" data-filter-value="OVERSTOCK">
+            <i class="bi bi-boxes me-1"></i>Sobrestock
+            <span class="alerts-chip-count">{{ count_by_type.OVERSTOCK }}</span>
+          </button>
+          <button type="button" class="alerts-chip alerts-chip-type-silent {% if 'SILENT_SKU' in selected_types %}alerts-chip-selected{% endif %}"
+                  data-filter-type="type" data-filter-value="SILENT_SKU">
+            <i class="bi bi-moon-stars me-1"></i>Sin mov.
+            <span class="alerts-chip-count">{{ count_by_type.SILENT_SKU }}</span>
+          </button>
+          <button type="button" class="alerts-chip alerts-chip-type-broken {% if 'BROKEN_STOCK' in selected_types %}alerts-chip-selected{% endif %}"
+                  data-filter-type="type" data-filter-value="BROKEN_STOCK">
+            <i class="bi bi-x-circle-fill me-1"></i>Quiebre rec.
+            <span class="alerts-chip-count">{{ count_by_type.BROKEN_STOCK }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="alerts-results-summary">
+      <i class="bi bi-list-ul me-1"></i>
+      Mostrando: 
+      {% if selected_severities or selected_types %}
+        {% for s in selected_severities %}
+          <span class="alerts-filter-tag alerts-filter-tag-sev">{{ s }}</span>
+        {% endfor %}
+        {% for t in selected_types %}
+          <span class="alerts-filter-tag alerts-filter-tag-type">{{ t|replace('_', ' ')|replace('PROJECTED STOCKOUT', 'Quiebre')|replace('OVERSTOCK', 'Sobrestock')|replace('SILENT SKU', 'Sin mov.')|replace('BROKEN STOCK', 'Quiebre rec.') }}</span>
+        {% endfor %}
+        —
+      {% else %}
+        <span class="alerts-filter-tag alerts-filter-tag-all">Todas</span> —
+      {% endif %}
+      <strong>{{ total }}</strong> resultados
+    </div>
   </div>
 
   <div class="alerts-panel">
-    <div class="alerts-panel-header">
-      <span class="alerts-panel-title">Alertas ({{ total }})</span>
-    </div>
     <div class="alerts-table-wrap">
       <table class="table table-sm mb-0 alerts-table">
         <thead>
           <tr>
-            <th style="width:80px;">Severidad</th>
-            <th style="width:120px;">Tipo</th>
+            <th style="width:70px;">Severidad</th>
+            <th style="width:110px;">Tipo</th>
             <th>SKU</th>
             <th>Producto</th>
             <th>Ubicación</th>
@@ -167,9 +116,9 @@
                 {% elif alert.type == 'OVERSTOCK' %}
                 <span class="alerts-type-badge alerts-type-overstock"><i class="bi bi-boxes me-1"></i>Sobrestock</span>
                 {% elif alert.type == 'BROKEN_STOCK' %}
-                <span class="alerts-type-badge alerts-type-broken"><i class="bi bi-x-circle-fill me-1"></i>Quiebre reciente</span>
+                <span class="alerts-type-badge alerts-type-broken"><i class="bi bi-x-circle-fill me-1"></i>Quiebre rec.</span>
                 {% elif alert.type == 'SILENT_SKU' %}
-                <span class="alerts-type-badge alerts-type-silent"><i class="bi bi-moon-stars me-1"></i>Sin movimiento</span>
+                <span class="alerts-type-badge alerts-type-silent"><i class="bi bi-moon-stars me-1"></i>Sin mov.</span>
                 {% else %}
                 <span class="alerts-type-badge alerts-type-silent"><i class="bi bi-question-circle me-1"></i>{{ alert.type }}</span>
                 {% endif %}
@@ -230,114 +179,86 @@
 
 <style>
 .alerts-page {
-  padding: 24px;
+  padding: 16px 20px;
   background: #f5f7fb;
   min-height: 100vh;
 }
-.alerts-header {
-  margin-bottom: 24px;
+
+.alerts-header-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 14px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
 }
-.alerts-title {
-  font-size: 1.5rem;
+
+.alerts-header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.alerts-header-title h2 {
+  font-size: 1.25rem;
   font-weight: 600;
   color: #1e293b;
-  margin: 0 0 4px 0;
+  margin: 0 0 2px 0;
 }
-.alerts-subtitle {
-  font-size: 0.875rem;
+
+.alerts-header-title p {
+  font-size: 0.8rem;
   color: #64748b;
   margin: 0;
 }
-.alerts-kpis {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 12px;
-  margin-bottom: 20px;
+
+.alerts-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #f1f5f9;
 }
-@media (max-width: 1200px) {
-  .alerts-kpis { grid-template-columns: repeat(4, 1fr); }
-}
-@media (max-width: 768px) {
-  .alerts-kpis { grid-template-columns: repeat(2, 1fr); }
-}
-.alerts-kpi {
-  background: #fff;
-  border-radius: 12px;
-  padding: 14px;
+
+.alerts-chip-group {
   display: flex;
   align-items: center;
   gap: 10px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-}
-.alerts-kpi-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.1rem;
-}
-.alerts-kpi-high .alerts-kpi-icon { background: #fef2f2; color: #dc2626; }
-.alerts-kpi-medium .alerts-kpi-icon { background: #fffbeb; color: #d97706; }
-.alerts-kpi-low .alerts-kpi-icon { background: #f0f9ff; color: #0284c7; }
-.alerts-kpi-stockout .alerts-kpi-icon { background: #fef2f2; color: #dc2626; }
-.alerts-kpi-overstock .alerts-kpi-icon { background: #f0fdf4; color: #16a34a; }
-.alerts-kpi-silent .alerts-kpi-icon { background: #f8fafc; color: #64748b; }
-.alerts-kpi-broken .alerts-kpi-icon { background: #fef3c7; color: #b45309; }
-.alerts-kpi-body { flex: 1; }
-.alerts-kpi-number {
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: #1e293b;
-  line-height: 1;
-}
-.alerts-kpi-label {
-  font-size: 0.7rem;
-  color: #64748b;
-  margin-top: 3px;
 }
 
-.alerts-chip-filters {
-  background: #fff;
-  border-radius: 12px;
-  padding: 20px;
-  margin-bottom: 20px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 24px;
-  align-items: flex-start;
-}
-.alerts-chip-group {
-  flex: 1;
-  min-width: 280px;
-}
-.alerts-chip-group-header {
-  margin-bottom: 10px;
-}
-.alerts-chip-group-title {
-  font-size: 0.8rem;
+.alerts-chip-group-label {
+  font-size: 0.7rem;
   font-weight: 600;
-  color: #475569;
+  color: #64748b;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
 }
+
 .alerts-chip-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
+
+.alerts-chip-divider {
+  width: 1px;
+  height: 28px;
+  background: #e2e8f0;
+  margin: 0 4px;
+}
+
 .alerts-chip {
   display: inline-flex;
   align-items: center;
-  padding: 8px 14px;
-  border-radius: 20px;
-  font-size: 0.8125rem;
+  padding: 6px 10px;
+  border-radius: 16px;
+  font-size: 0.75rem;
   font-weight: 500;
   border: 2px solid transparent;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.12s ease;
   background: #f1f5f9;
   color: #475569;
 }
@@ -398,51 +319,47 @@
   background: #fde68a;
 }
 .alerts-chip-count {
-  background: rgba(0,0,0,0.1);
-  border-radius: 10px;
-  padding: 2px 8px;
-  font-size: 0.7rem;
+  background: rgba(0,0,0,0.08);
+  border-radius: 8px;
+  padding: 1px 6px;
+  font-size: 0.65rem;
   font-weight: 600;
-  margin-left: 6px;
+  margin-left: 5px;
 }
-.alerts-chip-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  align-items: flex-end;
-  margin-left: auto;
-}
-.alerts-selection-summary {
+
+.alerts-results-summary {
   font-size: 0.8rem;
   color: #64748b;
+  margin-top: 12px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
 }
-.alerts-selection-tag {
-  background: #e0f2fe;
-  color: #0369a1;
+.alerts-filter-tag {
   padding: 2px 8px;
   border-radius: 6px;
   font-size: 0.7rem;
   font-weight: 500;
 }
+.alerts-filter-tag-sev {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+.alerts-filter-tag-type {
+  background: #fef3c7;
+  color: #92400e;
+}
+.alerts-filter-tag-all {
+  background: #f1f5f9;
+  color: #475569;
+}
 
 .alerts-panel {
   background: #fff;
   border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
   overflow: hidden;
-}
-.alerts-panel-header {
-  padding: 16px 20px;
-  border-bottom: 1px solid #e2e8f0;
-}
-.alerts-panel-title {
-  font-size: 1rem;
-  font-weight: 600;
-  color: #1e293b;
 }
 .alerts-table-wrap {
   overflow-x: auto;
@@ -453,8 +370,8 @@
 }
 .alerts-table thead th {
   background: #f8fafc;
-  padding: 12px 16px;
-  font-size: 0.75rem;
+  padding: 10px 14px;
+  font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   color: #64748b;
@@ -469,21 +386,21 @@
   background: #f8fafc;
 }
 .alerts-table tbody td {
-  padding: 12px 16px;
-  font-size: 0.875rem;
+  padding: 10px 14px;
+  font-size: 0.8125rem;
   color: #334155;
   vertical-align: middle;
 }
 .alerts-mono {
   font-family: 'SF Mono', 'Consolas', monospace;
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
 }
 .alerts-badge {
   display: inline-flex;
   align-items: center;
-  padding: 4px 10px;
-  border-radius: 20px;
-  font-size: 0.6875rem;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 0.65rem;
   font-weight: 600;
   text-transform: uppercase;
 }
@@ -502,9 +419,9 @@
 .alerts-type-badge {
   display: inline-flex;
   align-items: center;
-  padding: 4px 8px;
-  border-radius: 6px;
-  font-size: 0.6875rem;
+  padding: 3px 7px;
+  border-radius: 5px;
+  font-size: 0.65rem;
   font-weight: 500;
 }
 .alerts-type-stockout {
@@ -526,9 +443,9 @@
 .alerts-loc-badge {
   display: inline-flex;
   align-items: center;
-  padding: 4px 8px;
-  border-radius: 6px;
-  font-size: 0.75rem;
+  padding: 3px 7px;
+  border-radius: 5px;
+  font-size: 0.7rem;
 }
 .alerts-loc-cd {
   background: #eff6ff;
@@ -540,15 +457,15 @@
 }
 .alerts-action {
   display: inline-flex;
-  padding: 4px 10px;
+  padding: 3px 8px;
   background: #f1f5f9;
-  border-radius: 6px;
-  font-size: 0.75rem;
+  border-radius: 5px;
+  font-size: 0.7rem;
   font-weight: 500;
   color: #475569;
 }
 .alerts-empty {
-  padding: 48px 16px;
+  padding: 40px 16px;
   text-align: center;
 }
 .alerts-empty-wrap {
@@ -557,25 +474,40 @@
   align-items: center;
 }
 .alerts-empty-icon {
-  font-size: 2.5rem;
+  font-size: 2rem;
   color: #16a34a;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 .alerts-empty-title {
-  font-size: 1rem;
+  font-size: 0.95rem;
   font-weight: 600;
   color: #1e293b;
 }
 .alerts-empty-hint {
-  font-size: 0.875rem;
+  font-size: 0.8rem;
   color: #64748b;
   margin-top: 4px;
 }
 .alerts-pagination {
-  padding: 16px 20px;
+  padding: 12px 16px;
   border-top: 1px solid #e2e8f0;
   display: flex;
   justify-content: center;
+}
+
+@media (max-width: 768px) {
+  .alerts-chip-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .alerts-chip-divider {
+    display: none;
+  }
+  .alerts-chip-group {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
 }
 </style>
 
