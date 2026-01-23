@@ -9,76 +9,108 @@
         <h2><i class="bi bi-bell me-2"></i>Centro de Alertas</h2>
         <p>Alertas proactivas basadas en stock y velocidad de venta</p>
       </div>
-      <button type="button" class="btn btn-outline-secondary btn-sm" id="clearFiltersBtn">
+      <button type="button" class="btn btn-outline-secondary btn-sm alerts-clear-btn" id="clearFiltersBtn">
         <i class="bi bi-x-lg me-1"></i>Limpiar filtros
       </button>
     </div>
 
-    <div class="alerts-chip-row">
-      <div class="alerts-chip-group">
-        <span class="alerts-chip-group-label"><i class="bi bi-funnel me-1"></i>Severidad</span>
-        <div class="alerts-chip-list">
-          <button type="button" class="alerts-chip alerts-chip-high {% if 'HIGH' in selected_severities %}alerts-chip-selected{% endif %}" 
-                  data-filter-type="severity" data-filter-value="HIGH">
-            <i class="bi bi-exclamation-triangle-fill me-1"></i>Alta
-            <span class="alerts-chip-count">{{ count_by_severity.HIGH }}</span>
+    <div class="alerts-filter-section">
+      <div class="alerts-filter-group">
+        <span class="alerts-filter-label"><i class="bi bi-funnel-fill me-1"></i>Filtrar por severidad</span>
+        <div class="alerts-pills-row">
+          <button type="button" 
+                  class="alert-pill alert-pill--high {% if 'HIGH' in selected_severities %}is-active{% endif %}"
+                  data-filter-type="severity" 
+                  data-filter-value="HIGH"
+                  aria-pressed="{{ 'true' if 'HIGH' in selected_severities else 'false' }}">
+            <span class="alert-pill__icon"><i class="bi bi-exclamation-triangle-fill"></i></span>
+            <span class="alert-pill__label">Alta</span>
+            <span class="alert-pill__badge">{{ count_by_severity.HIGH }}</span>
           </button>
-          <button type="button" class="alerts-chip alerts-chip-medium {% if 'MEDIUM' in selected_severities %}alerts-chip-selected{% endif %}"
-                  data-filter-type="severity" data-filter-value="MEDIUM">
-            <i class="bi bi-exclamation-circle-fill me-1"></i>Media
-            <span class="alerts-chip-count">{{ count_by_severity.MEDIUM }}</span>
+          <button type="button" 
+                  class="alert-pill alert-pill--medium {% if 'MEDIUM' in selected_severities %}is-active{% endif %}"
+                  data-filter-type="severity" 
+                  data-filter-value="MEDIUM"
+                  aria-pressed="{{ 'true' if 'MEDIUM' in selected_severities else 'false' }}">
+            <span class="alert-pill__icon"><i class="bi bi-exclamation-circle-fill"></i></span>
+            <span class="alert-pill__label">Media</span>
+            <span class="alert-pill__badge">{{ count_by_severity.MEDIUM }}</span>
           </button>
-          <button type="button" class="alerts-chip alerts-chip-low {% if 'LOW' in selected_severities %}alerts-chip-selected{% endif %}"
-                  data-filter-type="severity" data-filter-value="LOW">
-            <i class="bi bi-info-circle-fill me-1"></i>Baja
-            <span class="alerts-chip-count">{{ count_by_severity.LOW }}</span>
+          <button type="button" 
+                  class="alert-pill alert-pill--low {% if 'LOW' in selected_severities %}is-active{% endif %}"
+                  data-filter-type="severity" 
+                  data-filter-value="LOW"
+                  aria-pressed="{{ 'true' if 'LOW' in selected_severities else 'false' }}">
+            <span class="alert-pill__icon"><i class="bi bi-info-circle-fill"></i></span>
+            <span class="alert-pill__label">Baja</span>
+            <span class="alert-pill__badge">{{ count_by_severity.LOW }}</span>
           </button>
         </div>
       </div>
 
-      <div class="alerts-chip-divider"></div>
-
-      <div class="alerts-chip-group">
-        <span class="alerts-chip-group-label"><i class="bi bi-tag me-1"></i>Tipo</span>
-        <div class="alerts-chip-list">
-          <button type="button" class="alerts-chip alerts-chip-type-stockout {% if 'PROJECTED_STOCKOUT' in selected_types %}alerts-chip-selected{% endif %}"
-                  data-filter-type="type" data-filter-value="PROJECTED_STOCKOUT">
-            <i class="bi bi-box me-1"></i>Quiebre
-            <span class="alerts-chip-count">{{ count_by_type.PROJECTED_STOCKOUT }}</span>
+      <div class="alerts-filter-group">
+        <span class="alerts-filter-label"><i class="bi bi-tag-fill me-1"></i>Filtrar por tipo</span>
+        <div class="alerts-pills-row">
+          <button type="button" 
+                  class="alert-pill alert-pill--type alert-pill--stockout {% if 'PROJECTED_STOCKOUT' in selected_types %}is-active{% endif %}"
+                  data-filter-type="type" 
+                  data-filter-value="PROJECTED_STOCKOUT"
+                  aria-pressed="{{ 'true' if 'PROJECTED_STOCKOUT' in selected_types else 'false' }}">
+            <span class="alert-pill__icon"><i class="bi bi-graph-down-arrow"></i></span>
+            <span class="alert-pill__label">Quiebre proyectado</span>
+            <span class="alert-pill__badge">{{ count_by_type.PROJECTED_STOCKOUT }}</span>
           </button>
-          <button type="button" class="alerts-chip alerts-chip-type-overstock {% if 'OVERSTOCK' in selected_types %}alerts-chip-selected{% endif %}"
-                  data-filter-type="type" data-filter-value="OVERSTOCK">
-            <i class="bi bi-boxes me-1"></i>Sobrestock
-            <span class="alerts-chip-count">{{ count_by_type.OVERSTOCK }}</span>
+          <button type="button" 
+                  class="alert-pill alert-pill--type alert-pill--overstock {% if 'OVERSTOCK' in selected_types %}is-active{% endif %}"
+                  data-filter-type="type" 
+                  data-filter-value="OVERSTOCK"
+                  aria-pressed="{{ 'true' if 'OVERSTOCK' in selected_types else 'false' }}">
+            <span class="alert-pill__icon"><i class="bi bi-boxes"></i></span>
+            <span class="alert-pill__label">Sobrestock</span>
+            <span class="alert-pill__badge">{{ count_by_type.OVERSTOCK }}</span>
           </button>
-          <button type="button" class="alerts-chip alerts-chip-type-silent {% if 'SILENT_SKU' in selected_types %}alerts-chip-selected{% endif %}"
-                  data-filter-type="type" data-filter-value="SILENT_SKU">
-            <i class="bi bi-moon-stars me-1"></i>Sin mov.
-            <span class="alerts-chip-count">{{ count_by_type.SILENT_SKU }}</span>
+          <button type="button" 
+                  class="alert-pill alert-pill--type alert-pill--silent {% if 'SILENT_SKU' in selected_types %}is-active{% endif %}"
+                  data-filter-type="type" 
+                  data-filter-value="SILENT_SKU"
+                  aria-pressed="{{ 'true' if 'SILENT_SKU' in selected_types else 'false' }}">
+            <span class="alert-pill__icon"><i class="bi bi-pause-circle"></i></span>
+            <span class="alert-pill__label">Sin movimiento</span>
+            <span class="alert-pill__badge">{{ count_by_type.SILENT_SKU }}</span>
           </button>
-          <button type="button" class="alerts-chip alerts-chip-type-broken {% if 'BROKEN_STOCK' in selected_types %}alerts-chip-selected{% endif %}"
-                  data-filter-type="type" data-filter-value="BROKEN_STOCK">
-            <i class="bi bi-x-circle-fill me-1"></i>Quiebre rec.
-            <span class="alerts-chip-count">{{ count_by_type.BROKEN_STOCK }}</span>
+          <button type="button" 
+                  class="alert-pill alert-pill--type alert-pill--broken {% if 'BROKEN_STOCK' in selected_types %}is-active{% endif %}"
+                  data-filter-type="type" 
+                  data-filter-value="BROKEN_STOCK"
+                  aria-pressed="{{ 'true' if 'BROKEN_STOCK' in selected_types else 'false' }}">
+            <span class="alert-pill__icon"><i class="bi bi-lightning-charge-fill"></i></span>
+            <span class="alert-pill__label">Quiebre reciente</span>
+            <span class="alert-pill__badge">{{ count_by_type.BROKEN_STOCK }}</span>
           </button>
         </div>
       </div>
     </div>
 
     <div class="alerts-results-summary">
-      <i class="bi bi-list-ul me-1"></i>
-      Mostrando: 
+      <i class="bi bi-list-check me-1"></i>
+      <span>Mostrando:</span>
       {% if selected_severities or selected_types %}
         {% for s in selected_severities %}
-          <span class="alerts-filter-tag alerts-filter-tag-sev">{{ s }}</span>
+          <span class="alerts-summary-tag alerts-summary-tag--sev">
+            {% if s == 'HIGH' %}Alta{% elif s == 'MEDIUM' %}Media{% else %}Baja{% endif %}
+          </span>
+          {% if not loop.last or selected_types %}<span class="alerts-summary-plus">+</span>{% endif %}
         {% endfor %}
         {% for t in selected_types %}
-          <span class="alerts-filter-tag alerts-filter-tag-type">{{ t|replace('_', ' ')|replace('PROJECTED STOCKOUT', 'Quiebre')|replace('OVERSTOCK', 'Sobrestock')|replace('SILENT SKU', 'Sin mov.')|replace('BROKEN STOCK', 'Quiebre rec.') }}</span>
+          <span class="alerts-summary-tag alerts-summary-tag--type">
+            {% if t == 'PROJECTED_STOCKOUT' %}Quiebre{% elif t == 'OVERSTOCK' %}Sobrestock{% elif t == 'SILENT_SKU' %}Sin mov.{% else %}Quiebre rec.{% endif %}
+          </span>
+          {% if not loop.last %}<span class="alerts-summary-plus">+</span>{% endif %}
         {% endfor %}
-        —
       {% else %}
-        <span class="alerts-filter-tag alerts-filter-tag-all">Todas</span> —
+        <span class="alerts-summary-tag alerts-summary-tag--all">Todas las alertas</span>
       {% endif %}
+      <span class="alerts-summary-dash">—</span>
       <strong>{{ total }}</strong> resultados
     </div>
   </div>
@@ -89,7 +121,7 @@
         <thead>
           <tr>
             <th style="width:70px;">Severidad</th>
-            <th style="width:110px;">Tipo</th>
+            <th style="width:120px;">Tipo</th>
             <th>SKU</th>
             <th>Producto</th>
             <th>Ubicación</th>
@@ -112,13 +144,13 @@
               </td>
               <td>
                 {% if alert.type == 'PROJECTED_STOCKOUT' %}
-                <span class="alerts-type-badge alerts-type-stockout"><i class="bi bi-box me-1"></i>Quiebre</span>
+                <span class="alerts-type-badge alerts-type-stockout"><i class="bi bi-graph-down-arrow me-1"></i>Quiebre</span>
                 {% elif alert.type == 'OVERSTOCK' %}
                 <span class="alerts-type-badge alerts-type-overstock"><i class="bi bi-boxes me-1"></i>Sobrestock</span>
                 {% elif alert.type == 'BROKEN_STOCK' %}
-                <span class="alerts-type-badge alerts-type-broken"><i class="bi bi-x-circle-fill me-1"></i>Quiebre rec.</span>
+                <span class="alerts-type-badge alerts-type-broken"><i class="bi bi-lightning-charge-fill me-1"></i>Quiebre rec.</span>
                 {% elif alert.type == 'SILENT_SKU' %}
-                <span class="alerts-type-badge alerts-type-silent"><i class="bi bi-moon-stars me-1"></i>Sin mov.</span>
+                <span class="alerts-type-badge alerts-type-silent"><i class="bi bi-pause-circle me-1"></i>Sin mov.</span>
                 {% else %}
                 <span class="alerts-type-badge alerts-type-silent"><i class="bi bi-question-circle me-1"></i>{{ alert.type }}</span>
                 {% endif %}
@@ -180,197 +212,275 @@
 <style>
 .alerts-page {
   padding: 16px 20px;
-  background: #f5f7fb;
+  background: linear-gradient(135deg, #f5f7fb 0%, #e8ecf4 100%);
   min-height: 100vh;
 }
 
 .alerts-header-card {
   background: #fff;
-  border-radius: 12px;
-  padding: 16px 20px;
-  margin-bottom: 14px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  border-radius: 16px;
+  padding: 20px 24px;
+  margin-bottom: 16px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
 }
 
 .alerts-header-top {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 14px;
+  margin-bottom: 20px;
 }
 
 .alerts-header-title h2 {
-  font-size: 1.25rem;
-  font-weight: 600;
+  font-size: 1.35rem;
+  font-weight: 700;
   color: #1e293b;
-  margin: 0 0 2px 0;
+  margin: 0 0 4px 0;
 }
 
 .alerts-header-title p {
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   color: #64748b;
   margin: 0;
 }
 
-.alerts-chip-row {
+.alerts-clear-btn {
+  border-radius: 20px;
+  padding: 6px 14px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.alerts-filter-section {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 16px;
-  align-items: center;
-  padding-bottom: 12px;
+  padding-bottom: 16px;
   border-bottom: 1px solid #f1f5f9;
 }
 
-.alerts-chip-group {
+.alerts-filter-group {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 10px;
 }
 
-.alerts-chip-group-label {
+.alerts-filter-label {
   font-size: 0.7rem;
   font-weight: 600;
   color: #64748b;
   text-transform: uppercase;
-  letter-spacing: 0.3px;
-  white-space: nowrap;
+  letter-spacing: 0.5px;
 }
 
-.alerts-chip-list {
+.alerts-pills-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 10px;
 }
 
-.alerts-chip-divider {
-  width: 1px;
-  height: 28px;
-  background: #e2e8f0;
-  margin: 0 4px;
-}
-
-.alerts-chip {
+.alert-pill {
   display: inline-flex;
   align-items: center;
-  padding: 6px 10px;
-  border-radius: 16px;
-  font-size: 0.75rem;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  font-size: 0.8rem;
   font-weight: 500;
   border: 2px solid transparent;
   cursor: pointer;
-  transition: all 0.12s ease;
-  background: #f1f5f9;
+  transition: all 0.18s ease;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
   color: #475569;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
 }
-.alerts-chip:hover {
-  background: #e2e8f0;
+
+.alert-pill:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(0,0,0,0.08);
 }
-.alerts-chip-selected {
-  border-color: currentColor !important;
-  font-weight: 600;
+
+.alert-pill:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
 }
-.alerts-chip-high {
-  background: #fef2f2;
+
+.alert-pill.is-active {
+  border-color: #3b82f6;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
+  transform: scale(1.02);
+}
+
+.alert-pill__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+}
+
+.alert-pill__label {
+  font-weight: 500;
+}
+
+.alert-pill__badge {
+  background: rgba(0,0,0,0.08);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  min-width: 24px;
+  text-align: center;
+}
+
+.alert-pill--high {
+  background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
   color: #dc2626;
 }
-.alerts-chip-high.alerts-chip-selected {
-  background: #fecaca;
+.alert-pill--high .alert-pill__badge {
+  background: rgba(220, 38, 38, 0.15);
 }
-.alerts-chip-medium {
-  background: #fffbeb;
+.alert-pill--high.is-active {
+  background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+  border-color: #ef4444;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.25);
+}
+
+.alert-pill--medium {
+  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
   color: #d97706;
 }
-.alerts-chip-medium.alerts-chip-selected {
-  background: #fde68a;
+.alert-pill--medium .alert-pill__badge {
+  background: rgba(217, 119, 6, 0.15);
 }
-.alerts-chip-low {
-  background: #f0f9ff;
+.alert-pill--medium.is-active {
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  border-color: #f59e0b;
+  box-shadow: 0 4px 12px rgba(217, 119, 6, 0.25);
+}
+
+.alert-pill--low {
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
   color: #0284c7;
 }
-.alerts-chip-low.alerts-chip-selected {
-  background: #bae6fd;
+.alert-pill--low .alert-pill__badge {
+  background: rgba(2, 132, 199, 0.15);
 }
-.alerts-chip-type-stockout {
-  background: #fef2f2;
-  color: #dc2626;
+.alert-pill--low.is-active {
+  background: linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%);
+  border-color: #0ea5e9;
+  box-shadow: 0 4px 12px rgba(2, 132, 199, 0.25);
 }
-.alerts-chip-type-stockout.alerts-chip-selected {
-  background: #fecaca;
+
+.alert-pill--type {
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  color: #475569;
 }
-.alerts-chip-type-overstock {
-  background: #f0fdf4;
-  color: #16a34a;
+.alert-pill--type .alert-pill__badge {
+  background: rgba(71, 85, 105, 0.12);
 }
-.alerts-chip-type-overstock.alerts-chip-selected {
-  background: #bbf7d0;
+.alert-pill--type.is-active {
+  background: linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%);
+  color: #0369a1;
+  border-color: #0ea5e9;
+  box-shadow: 0 4px 12px rgba(14, 165, 233, 0.25);
 }
-.alerts-chip-type-silent {
-  background: #f8fafc;
+.alert-pill--type.is-active .alert-pill__badge {
+  background: rgba(3, 105, 161, 0.15);
+}
+
+.alert-pill--stockout {
+  background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+  color: #b91c1c;
+}
+.alert-pill--stockout .alert-pill__badge {
+  background: rgba(185, 28, 28, 0.12);
+}
+
+.alert-pill--overstock {
+  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+  color: #15803d;
+}
+.alert-pill--overstock .alert-pill__badge {
+  background: rgba(21, 128, 61, 0.12);
+}
+
+.alert-pill--silent {
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
   color: #64748b;
 }
-.alerts-chip-type-silent.alerts-chip-selected {
-  background: #cbd5e1;
+.alert-pill--silent .alert-pill__badge {
+  background: rgba(100, 116, 139, 0.12);
 }
-.alerts-chip-type-broken {
-  background: #fef3c7;
+
+.alert-pill--broken {
+  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
   color: #b45309;
 }
-.alerts-chip-type-broken.alerts-chip-selected {
-  background: #fde68a;
-}
-.alerts-chip-count {
-  background: rgba(0,0,0,0.08);
-  border-radius: 8px;
-  padding: 1px 6px;
-  font-size: 0.65rem;
-  font-weight: 600;
-  margin-left: 5px;
+.alert-pill--broken .alert-pill__badge {
+  background: rgba(180, 83, 9, 0.12);
 }
 
 .alerts-results-summary {
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   color: #64748b;
-  margin-top: 12px;
+  margin-top: 16px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
 }
-.alerts-filter-tag {
-  padding: 2px 8px;
-  border-radius: 6px;
-  font-size: 0.7rem;
-  font-weight: 500;
+
+.alerts-summary-tag {
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 0.72rem;
+  font-weight: 600;
 }
-.alerts-filter-tag-sev {
-  background: #e0f2fe;
-  color: #0369a1;
+
+.alerts-summary-tag--sev {
+  background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+  color: #1d4ed8;
 }
-.alerts-filter-tag-type {
-  background: #fef3c7;
+
+.alerts-summary-tag--type {
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
   color: #92400e;
 }
-.alerts-filter-tag-all {
+
+.alerts-summary-tag--all {
   background: #f1f5f9;
   color: #475569;
+}
+
+.alerts-summary-plus {
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.alerts-summary-dash {
+  color: #cbd5e1;
+  margin: 0 4px;
 }
 
 .alerts-panel {
   background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  border-radius: 16px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
   overflow: hidden;
 }
+
 .alerts-table-wrap {
   overflow-x: auto;
 }
+
 .alerts-table {
   width: 100%;
   border-collapse: collapse;
 }
+
 .alerts-table thead th {
-  background: #f8fafc;
-  padding: 10px 14px;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  padding: 12px 14px;
   font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
@@ -379,141 +489,163 @@
   position: sticky;
   top: 0;
 }
+
 .alerts-table tbody tr {
   border-bottom: 1px solid #f1f5f9;
+  transition: background 0.1s ease;
 }
+
 .alerts-table tbody tr:hover {
   background: #f8fafc;
 }
+
 .alerts-table tbody td {
-  padding: 10px 14px;
+  padding: 11px 14px;
   font-size: 0.8125rem;
   color: #334155;
   vertical-align: middle;
 }
+
 .alerts-mono {
   font-family: 'SF Mono', 'Consolas', monospace;
   font-size: 0.75rem;
 }
+
 .alerts-badge {
   display: inline-flex;
   align-items: center;
-  padding: 3px 8px;
-  border-radius: 12px;
+  padding: 4px 10px;
+  border-radius: 14px;
   font-size: 0.65rem;
   font-weight: 600;
   text-transform: uppercase;
 }
+
 .alerts-badge-high {
-  background: #fef2f2;
+  background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
   color: #dc2626;
 }
+
 .alerts-badge-medium {
-  background: #fffbeb;
+  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
   color: #d97706;
 }
+
 .alerts-badge-low {
-  background: #f0f9ff;
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
   color: #0284c7;
 }
+
 .alerts-type-badge {
   display: inline-flex;
   align-items: center;
-  padding: 3px 7px;
-  border-radius: 5px;
-  font-size: 0.65rem;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 0.68rem;
   font-weight: 500;
 }
+
 .alerts-type-stockout {
-  background: #fef2f2;
+  background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
   color: #dc2626;
 }
+
 .alerts-type-overstock {
-  background: #f0fdf4;
+  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
   color: #16a34a;
 }
+
 .alerts-type-silent {
   background: #f8fafc;
   color: #64748b;
 }
+
 .alerts-type-broken {
-  background: #fef3c7;
+  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
   color: #b45309;
 }
+
 .alerts-loc-badge {
   display: inline-flex;
   align-items: center;
-  padding: 3px 7px;
-  border-radius: 5px;
-  font-size: 0.7rem;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 0.72rem;
 }
+
 .alerts-loc-cd {
-  background: #eff6ff;
+  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
   color: #1d4ed8;
 }
+
 .alerts-loc-store {
-  background: #f5f3ff;
+  background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
   color: #7c3aed;
 }
+
 .alerts-action {
   display: inline-flex;
-  padding: 3px 8px;
-  background: #f1f5f9;
-  border-radius: 5px;
-  font-size: 0.7rem;
+  padding: 4px 10px;
+  background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+  border-radius: 6px;
+  font-size: 0.72rem;
   font-weight: 500;
   color: #475569;
 }
+
 .alerts-empty {
-  padding: 40px 16px;
+  padding: 48px 16px;
   text-align: center;
 }
+
 .alerts-empty-wrap {
   display: flex;
   flex-direction: column;
   align-items: center;
 }
+
 .alerts-empty-icon {
-  font-size: 2rem;
+  font-size: 2.5rem;
   color: #16a34a;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
+
 .alerts-empty-title {
-  font-size: 0.95rem;
+  font-size: 1rem;
   font-weight: 600;
   color: #1e293b;
 }
+
 .alerts-empty-hint {
-  font-size: 0.8rem;
+  font-size: 0.85rem;
   color: #64748b;
   margin-top: 4px;
 }
+
 .alerts-pagination {
-  padding: 12px 16px;
+  padding: 14px 16px;
   border-top: 1px solid #e2e8f0;
   display: flex;
   justify-content: center;
 }
 
 @media (max-width: 768px) {
-  .alerts-chip-row {
-    flex-direction: column;
-    align-items: flex-start;
+  .alerts-pills-row {
+    gap: 8px;
   }
-  .alerts-chip-divider {
+  .alert-pill {
+    padding: 8px 12px;
+    font-size: 0.75rem;
+  }
+  .alert-pill__label {
     display: none;
-  }
-  .alerts-chip-group {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 6px;
   }
 }
 </style>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-  const chips = document.querySelectorAll('.alerts-chip[data-filter-type]');
+  const pills = document.querySelectorAll('.alert-pill[data-filter-type]');
   const clearBtn = document.getElementById('clearFiltersBtn');
   
   let selectedSeverities = {{ selected_severities|tojson|safe }};
@@ -531,8 +663,8 @@ document.addEventListener('DOMContentLoaded', function() {
     window.location.href = '{{ url_for("alerts_page") }}?' + params.toString();
   }
   
-  chips.forEach(function(chip) {
-    chip.addEventListener('click', function() {
+  pills.forEach(function(pill) {
+    pill.addEventListener('click', function() {
       const filterType = this.dataset.filterType;
       const filterValue = this.dataset.filterValue;
       

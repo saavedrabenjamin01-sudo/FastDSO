@@ -1,0 +1,73 @@
+ALERTS UI VISUAL UPGRADE — Make grouped chips look premium (“pill” style) with icons + count badges
+
+Context:
+We already have grouped chip filters for:
+- Severity: High / Medium / Low
+- Type: Projected stockout / Overstock / No movement / Recent stockout
+Chips are functional (multi-select), but look flat. We want a more premium “pill” design aligned with FastDSO UI.
+
+STRICT RULES
+- UI-only change: do NOT change filtering logic, query params, pagination, or backend.
+- Keep multi-select behavior exactly as-is.
+- Keep counts displayed on each chip.
+
+DESIGN REQUIREMENTS
+1) Pill style:
+- Fully rounded pills (border-radius: 999px)
+- Soft gradient or subtle background tint
+- Icon on the left
+- Label centered/left
+- Small count badge on the right
+
+2) Severity chips:
+- High: subtle red tint
+- Medium: subtle orange tint
+- Low: subtle blue/gray tint
+Selected state:
+- Add blue outline (primary) + stronger shadow
+- Slight scale up (e.g., transform: scale(1.02))
+
+3) Type chips:
+- Neutral tint by default (light gray/blue)
+- On hover: slightly darker background
+- On selected: blue outline + slightly stronger background
+Icons (Bootstrap Icons):
+- Projected stockout: bi-graph-down-arrow or bi-exclamation-triangle
+- Overstock: bi-boxes
+- No movement: bi-pause-circle
+- Recent stockout: bi-lightning-charge
+
+4) Layout:
+- Put Severity pills in one row with label “Filtrar por severidad”
+- Put Type pills in a second row with label “Filtrar por tipo”
+- Add a small “Selected summary” line under:
+  “Mostrando: Alta + Quiebre reciente — 123 resultados”
+- Keep “Limpiar filtros” button aligned right
+
+IMPLEMENTATION NOTES
+A) Template:
+- Add structure for pills:
+  <button class="alert-pill alert-pill--severity alert-pill--high is-active">…</button>
+  <span class="alert-pill__icon"><i class="bi ..."></i></span>
+  <span class="alert-pill__label">Alta</span>
+  <span class="alert-pill__badge">91045</span>
+
+B) CSS (static/css/style.css)
+Append under:
+/* === Alerts pill chips === */
+Include styles:
+- .alert-pill (base)
+- .alert-pill__icon, .alert-pill__label, .alert-pill__badge
+- .alert-pill.is-active (selected)
+- Variants:
+  .alert-pill--high / --medium / --low
+- Type variants with neutral tint
+
+C) Ensure accessibility:
+- Use aria-pressed=true/false on pills if possible
+- Focus-visible outline for keyboard nav
+
+Deliverables:
+- Updated alerts template markup for pill structure
+- CSS snippet for pill styling
+- No changes to JS logic (only class toggling should remain compatible)
