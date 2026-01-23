@@ -37,7 +37,12 @@ Do not make changes to the folder `Excel tipo/`.
 ### System Design and Features
 - **Data Management**: Tools for uploading and managing sales, store stock, and distribution center stock data.
 - **Distribution Predictions**: Generates product distribution suggestions based on moving averages and historical data.
-- **Advanced Forecasting (Forecast Compra V2)**: Provides comprehensive purchase forecasting, integrating lead time, safety stock, coverage, and various demand calculation methods.
+- **Advanced Forecasting (Forecast Compra V2)**: Lifecycle-aware purchase forecasting using SalesWeeklyAgg as single source of truth:
+    - **Lifecycle Classification**: SKUs classified as ACTIVE (30d sales), SLOW (31-90d), DEAD (90d+), or NEW (no history)
+    - **Model Selection**: ACTIVE uses user-selected SMA, SLOW uses 12-week SMA with 0.5 penalty, DEAD blocks purchases, NEW uses category cold start
+    - **Alerts Integration**: PROJECTED_STOCKOUT/BROKEN_STOCK force buy_now=true, OVERSTOCK blocks purchase
+    - **Slow Stock Integration**: Reduces purchase qty by 50% for flagged SKUs
+    - **Explainability**: Each result includes buy_now, risk_level (HIGH/MEDIUM/LOW), reason_code, model_used, lifecycle_status
 - **Inventory Optimization**:
     - **Store-to-Store Rebalancing**: A consolidated module offering auto-suggestions based on WOC and sales velocity, and an assisted manual plan where the system calculates optimal transfer amounts for user-provided SKUs.
     - **Stock-out Replenishment (BREAK_REPLENISH)**: Identifies and suggests replenishment for out-of-stock SKU-Store pairs with historical demand.

@@ -2983,6 +2983,11 @@ def purchase_forecast_v2_legacy():
         product = product_map.get(pid)
         if product and product.lifecycle_status != status:
             product.lifecycle_status = status
+    
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
 
     sales_q = (
         db.session.query(
@@ -3148,11 +3153,13 @@ def purchase_forecast_v2_legacy():
                     reason_codes.append('PROJECTED_STOCKOUT_28D')
 
             elif alert_type == 'BROKEN_STOCK':
+                buy_now = True
                 if alert_severity == 'HIGH':
-                    buy_now = True
                     risk_level = 'HIGH'
                     reason_codes.append('BROKEN_STOCK_URGENT')
                 else:
+                    if risk_level == 'LOW':
+                        risk_level = 'MEDIUM'
                     reason_codes.append('BROKEN_STOCK_RECENT')
 
             elif alert_type == 'OVERSTOCK':
@@ -3339,13 +3346,19 @@ def export_purchase_forecast_v2():
             Product.name.label('name'),
             Product.category.label('category'),
             db.func.sum(SalesWeeklyAgg.units).label('qty_period'),
+            db.func.count(db.func.distinct(SalesWeeklyAgg.week_start)).label('weeks_with_sales')
         )
         .join(Product, SalesWeeklyAgg.product_id == Product.id)
         .filter(SalesWeeklyAgg.week_start >= cutoff)
     )
     if store_id_filter:
         sales_q = sales_q.filter(SalesWeeklyAgg.store_id == store_id_filter)
-    sales_rows_active = sales_q.group_by(Product.id, Product.sku, Product.name, Product.category).all()
+    sales_rows_active = (
+        sales_q
+        .group_by(Product.id, Product.sku, Product.name, Product.category)
+        .having(db.func.count(db.func.distinct(SalesWeeklyAgg.week_start)) >= min_weeks_history)
+        .all()
+    )
     active_sales_map = {r.product_id: r for r in sales_rows_active}
 
     sales_q_slow = (
