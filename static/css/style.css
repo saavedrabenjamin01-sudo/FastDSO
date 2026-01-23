@@ -6480,7 +6480,27 @@ body{
   padding: 12px 18px;
   display: flex;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
+}
+.fcv2-page-btn {
+  background: #fff;
+  border: 1.5px solid #e2e8f0;
+  color: #475569;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-weight: 500;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.fcv2-page-btn:hover {
+  border-color: #3b82f6;
+  color: #3b82f6;
+}
+.fcv2-page-btn.active {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  border-color: #2563eb;
+  color: #fff;
 }
 .fcv2-modal-content {
   border-radius: 16px;

@@ -714,7 +714,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
       document.getElementById('btnBatchExport').href = '/forecast/batch/export/' + data.batch_id;
 
-      renderBatchTable(data.results);
+      if (data.total_skus > 10) {
+        loadBatchPage(data.batch_id, 1);
+      } else {
+        renderBatchTable(data.results);
+        batchPagination.innerHTML = '';
+      }
     })
     .catch(err => {
       console.error('Batch error:', err);
@@ -759,6 +764,50 @@ document.addEventListener('DOMContentLoaded', function() {
     const modal = new bootstrap.Modal(document.getElementById('explainModal'));
     modal.show();
   }
+
+  function loadBatchPage(batchId, page) {
+    fetch('/api/forecast/batch/' + batchId + '?page=' + page)
+      .then(res => res.json())
+      .then(data => {
+        if (data.error) {
+          console.error(data.error);
+          return;
+        }
+        renderBatchTable(data.results);
+        renderPagination(batchId, data.page, data.total_pages);
+      })
+      .catch(err => console.error('Pagination error:', err));
+  }
+
+  function renderPagination(batchId, currentPage, totalPages) {
+    if (totalPages <= 1) {
+      batchPagination.innerHTML = '';
+      return;
+    }
+    let html = '';
+    
+    if (currentPage > 1) {
+      html += '<button class="fcv2-page-btn" onclick="loadBatchPageGlobal(\'' + batchId + '\',' + (currentPage-1) + ')">&laquo;</button>';
+    }
+    
+    const startPage = Math.max(1, currentPage - 2);
+    const endPage = Math.min(totalPages, currentPage + 2);
+    
+    for (let i = startPage; i <= endPage; i++) {
+      const active = i === currentPage ? ' active' : '';
+      html += '<button class="fcv2-page-btn' + active + '" onclick="loadBatchPageGlobal(\'' + batchId + '\',' + i + ')">' + i + '</button>';
+    }
+    
+    if (currentPage < totalPages) {
+      html += '<button class="fcv2-page-btn" onclick="loadBatchPageGlobal(\'' + batchId + '\',' + (currentPage+1) + ')">&raquo;</button>';
+    }
+    
+    batchPagination.innerHTML = html;
+  }
+
+  window.loadBatchPageGlobal = function(batchId, page) {
+    loadBatchPage(batchId, page);
+  };
 
   showEmptyState();
 });
