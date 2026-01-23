@@ -42,7 +42,10 @@ Do not make changes to the folder `Excel tipo/`.
     - **Model Selection**: ACTIVE uses user-selected SMA, SLOW uses 12-week SMA with 0.5 penalty, DEAD blocks purchases, NEW uses category cold start
     - **Alerts Integration**: PROJECTED_STOCKOUT/BROKEN_STOCK force buy_now=true, OVERSTOCK blocks purchase
     - **Slow Stock Integration**: Reduces purchase qty by 50% for flagged SKUs
-    - **Explainability**: Each result includes buy_now, risk_level (HIGH/MEDIUM/LOW), reason_code, model_used, lifecycle_status
+    - **Explainability**: Each result includes buy_now, risk_level (HIGH/MEDIUM/LOW), reason_code, model_used, lifecycle_status; generate_forecast_explanation() produces 6 business-readable bullets
+    - **Single SKU Export**: /forecast/export route generates Excel with complete SKU forecast details
+    - **Batch Forecast Mode**: Two-tab interface (Single/Batch) with file upload (CSV/XLSX) or text paste, max 500 SKUs per run, stored in ForecastBatchRun and ForecastBatchItem models, with paginated results table, KPI cards (BUY_NOW/REVIEW/DO_NOT_BUY counts), explain modal, and batch export
+    - **SKU-Aware Navigation**: Export, Alerts, and Slow Stock buttons pass SKU as query param for contextual filtering
 - **Inventory Optimization**:
     - **Store-to-Store Rebalancing**: A consolidated module offering auto-suggestions based on WOC and sales velocity, and an assisted manual plan where the system calculates optimal transfer amounts for user-provided SKUs.
     - **Stock-out Replenishment (BREAK_REPLENISH)**: Identifies and suggests replenishment for out-of-stock SKU-Store pairs with historical demand.
