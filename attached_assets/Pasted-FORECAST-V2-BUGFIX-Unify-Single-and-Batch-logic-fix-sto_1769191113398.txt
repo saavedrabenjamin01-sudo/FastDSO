@@ -1,0 +1,57 @@
+FORECAST V2 BUGFIX — Unify Single and Batch logic, fix stock_total in single, and enforce decision consistency
+
+Problems:
+1) Single-SKU forecast shows “Stock total (CD + Tiendas)” but is only using CD stock (missing store stock sum).
+2) Single-SKU badge says “DO NOT BUY” but still shows a positive “Suggested purchase” quantity (inconsistent).
+Batch mode works correctly for stock_total, so single and batch are using divergent logic.
+
+Goal:
+- Single and Batch must use EXACTLY the same core forecast function.
+- stock_total must always be cd_stock + store_stock_sum in both modes.
+- If the decision badge is DO_NOT_BUY, the final suggested_purchase must be 0 (or decision must be REVIEW). Pick policy A: DO_NOT_BUY => final_purchase_qty = 0.
+- Keep performance: batch must still be batched (no N+1).
+
+Implementation requirements:
+
+A) Create/confirm a single core function:
+forecast_core(sku, params, context) -> dict with:
+- stock_cd
+- stock_stores
+- stock_total
+- weekly_demand
+- horizon_demand
+- raw_purchase_qty (before decision overrides)
+- decision (BUY_NOW / REVIEW / DO_NOT_BUY)
+- reason_codes (list)
+- final_purchase_qty (after applying decision rules)
+
+B) Stock logic (fix single mode):
+- stock_cd: from StockCD latest snapshot date for that SKU
+- stock_stores: SUM of StockSnapshot latest snapshot date across all stores for that SKU (or filtered store if single-store mode exists)
+- stock_total = stock_cd + stock_stores
+Single mode must display stock_total using this value.
+
+C) Decision logic (consistency):
+- Compute decision from alerts + lifecycle + slow stock flags.
+- Apply policy:
+  IF decision == DO_NOT_BUY:
+     final_purchase_qty = 0
+  ELSE:
+     final_purchase_qty = max(raw_purchase_qty, 0)
+- Ensure the UI shows final_purchase_qty, not raw_purchase_qty.
+- In explainability, mention if purchase was blocked by DO_NOT_BUY reason (e.g., OVERSTOCK_BLOCK or NO_MOVEMENT).
+
+D) Use the same function in both views:
+- Single forecast route calls forecast_core once.
+- Batch route calls forecast_core per SKU but with batched prefetch; if you already batch compute, keep it, but ensure output is identical to single.
+
+E) UI fixes:
+- In single view, the KPI “Stock total (CD + Tiendas)” must show the computed stock_total.
+- The top-right badge must match decision.
+- The “Compra sugerida” KPI must display final_purchase_qty (after decision rules).
+
+Acceptance tests:
+1) For the same SKU, single and batch must show identical:
+   stock_cd, stock_stores, stock_total, decision, final_purchase_qty.
+2) If badge shows DO_NOT_BUY, final_purchase_qty must be 0.
+3) If final_purchase_qty > 0, badge must not be DO_NOT_BUY (should be BUY_NOW or REVIEW).

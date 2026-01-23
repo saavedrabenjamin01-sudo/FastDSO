@@ -3962,18 +3962,35 @@ def api_forecast_v2():
     )
     stock_cd = int(cd_stock_row.qty) if cd_stock_row and cd_stock_row.qty else 0
 
+    latest_store_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar() or today
+    store_stock_q = (
+        db.session.query(db.func.sum(StockSnapshot.quantity).label('qty'))
+        .filter(StockSnapshot.product_id == product.id)
+        .filter(StockSnapshot.as_of_date == latest_store_date)
+    )
+    if store_param:
+        store_obj = Store.query.filter_by(name=store_param).first()
+        if store_obj:
+            store_stock_q = store_stock_q.filter(StockSnapshot.store_id == store_obj.id)
+    store_stock_row = store_stock_q.first()
+    stock_stores = int(store_stock_row.qty) if store_stock_row and store_stock_row.qty else 0
+    
+    stock_total = stock_cd + stock_stores
+
     forecast_total = sum(f['units'] for f in forecast_data)
     demand_over_lead_time = avg_last4 * lead_time_weeks
     safety_units = math.ceil(demand_over_lead_time * safety_pct)
-    suggested_purchase = max(0, math.ceil(demand_over_lead_time + safety_units - stock_cd))
+    raw_purchase_qty = max(0, math.ceil(demand_over_lead_time + safety_units - stock_total))
 
-    weeks_of_cover = round(stock_cd / max(avg_last4, 1), 1)
+    weeks_of_cover = round(stock_total / max(avg_last4, 1), 1)
 
     kpis = {
         "avg_last4": round(avg_last4, 2),
         "forecast_total": forecast_total,
-        "stock_cd": stock_cd,
-        "suggested_purchase": suggested_purchase,
+        "stock_cd": stock_total,
+        "stock_stores": stock_stores,
+        "stock_cd_only": stock_cd,
+        "suggested_purchase": raw_purchase_qty,
         "weeks_of_cover": weeks_of_cover
     }
 
@@ -4030,10 +4047,17 @@ def api_forecast_v2():
         decision = 'DO_NOT_BUY'
     elif buy_now or (weeks_of_cover < lead_time_weeks + (lead_time_weeks * safety_pct)):
         decision = 'BUY_NOW'
-    elif suggested_purchase > 0:
+    elif raw_purchase_qty > 0:
         decision = 'BUY_NOW' if risk_level == 'HIGH' else 'REVIEW'
     else:
         decision = 'DO_NOT_BUY'
+    
+    if decision == 'DO_NOT_BUY':
+        final_purchase_qty = 0
+    else:
+        final_purchase_qty = raw_purchase_qty
+    
+    kpis['suggested_purchase'] = final_purchase_qty
     
     model_used = 'SMA4'
     if lifecycle_status == 'SLOW':
@@ -4044,14 +4068,14 @@ def api_forecast_v2():
     explain_bullets = generate_forecast_explanation(
         avg_weekly_demand=avg_last4,
         horizon_demand=forecast_total,
-        total_stock=stock_cd,
+        total_stock=stock_total,
         weeks_of_cover=weeks_of_cover,
         lead_time_weeks=lead_time_weeks,
         safety_pct=safety_pct,
         lifecycle_status=lifecycle_status,
         alerts=sku_alerts,
         slow_stock_flagged=slow_stock_flagged,
-        suggested_purchase=suggested_purchase
+        suggested_purchase=final_purchase_qty
     )
 
     log_audit(
@@ -4432,10 +4456,7 @@ def api_forecast_batch():
         weeks_of_cover = total_stock / max(avg_weekly, 1)
         demand_lead_time = avg_weekly * lead_time_weeks
         safety_units = math.ceil(demand_lead_time * safety_pct)
-        suggested_purchase = max(0, math.ceil(demand_lead_time + safety_units - total_stock))
-        
-        if lifecycle_status == 'DEAD' or 'OVERSTOCK' in reasons:
-            suggested_purchase = 0
+        raw_purchase_qty = max(0, math.ceil(demand_lead_time + safety_units - total_stock))
         
         if 'OVERSTOCK' in reasons or lifecycle_status == 'DEAD':
             decision = 'DO_NOT_BUY'
@@ -4443,12 +4464,20 @@ def api_forecast_batch():
         elif buy_now or (weeks_of_cover < lead_time_weeks + (lead_time_weeks * safety_pct)):
             decision = 'BUY_NOW'
             buy_now_count += 1
-        elif suggested_purchase > 0:
-            decision = 'REVIEW'
-            review_count += 1
+        elif raw_purchase_qty > 0:
+            decision = 'BUY_NOW' if risk_level == 'HIGH' else 'REVIEW'
+            if decision == 'BUY_NOW':
+                buy_now_count += 1
+            else:
+                review_count += 1
         else:
             decision = 'DO_NOT_BUY'
             do_not_buy_count += 1
+        
+        if decision == 'DO_NOT_BUY':
+            final_purchase_qty = 0
+        else:
+            final_purchase_qty = raw_purchase_qty
         
         model_used = 'SMA4'
         if lifecycle_status == 'SLOW':
@@ -4466,7 +4495,7 @@ def api_forecast_batch():
             lifecycle_status=lifecycle_status,
             alerts=sku_alerts,
             slow_stock_flagged=slow_stock_flagged,
-            suggested_purchase=suggested_purchase
+            suggested_purchase=final_purchase_qty
         )
         
         item = ForecastBatchItem(
@@ -4479,7 +4508,7 @@ def api_forecast_batch():
             model_used=model_used,
             weekly_demand=round(avg_weekly, 2),
             total_stock=total_stock,
-            suggested_purchase=suggested_purchase,
+            suggested_purchase=final_purchase_qty,
             decision=decision,
             risk_level=risk_level,
             reason_summary='; '.join(reasons[:3]) if reasons else 'STANDARD',
@@ -4495,7 +4524,7 @@ def api_forecast_batch():
             'model_used': model_used,
             'weekly_demand': round(avg_weekly, 2),
             'total_stock': total_stock,
-            'suggested_purchase': suggested_purchase,
+            'suggested_purchase': final_purchase_qty,
             'decision': decision,
             'risk_level': risk_level,
             'reason_summary': '; '.join(reasons[:3]) if reasons else 'STANDARD',
