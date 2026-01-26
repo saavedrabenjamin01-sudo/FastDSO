@@ -37,6 +37,7 @@ Do not make changes to the folder `Excel tipo/`.
 ### System Design and Features
 - **Data Management**: Tools for uploading and managing sales, store stock, and distribution center stock data.
 - **Distribution Predictions**: Generates product distribution suggestions based on moving averages and historical data.
+    - **Stockout-Aware Backoff**: For all SMA modes (SMA1/SMA2/SMA3), if a store has 0 sales in the primary window AND is currently stocked out (stock=0), the system falls back to a 12-week window rate if proven demand exists. This prevents high-selling stores from receiving 0 units just because they were stocked out during the primary window. Reason code: BACKOFF_STOCKOUT.
 - **Advanced Forecasting (Forecast Compra V2)**: Lifecycle-aware purchase forecasting using SalesWeeklyAgg as single source of truth:
     - **Lifecycle Classification**: SKUs classified as ACTIVE (30d sales), SLOW (31-90d), DEAD (90d+), or NEW (no history)
     - **Model Selection**: ACTIVE uses user-selected SMA, SLOW uses 12-week SMA with 0.5 penalty, DEAD blocks purchases, NEW uses category cold start
