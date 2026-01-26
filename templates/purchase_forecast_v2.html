@@ -161,6 +161,9 @@
       <a href="/slow_stock" class="btn fcv2-btn-outline" id="btnSlowStock">
         <i class="bi bi-clock-history me-1"></i>Ver Stock Lento
       </a>
+      <a href="/rebalancing" class="btn fcv2-btn-warning d-none" id="btnRebalance">
+        <i class="bi bi-arrow-left-right me-1"></i>Redistribuir SKU
+      </a>
     </div>
 
     <div id="emptyState" class="fcv2-empty-state">
@@ -310,6 +313,48 @@
         <div class="fcv2-modal-sku" id="modalSku"></div>
         <div class="fcv2-modal-product" id="modalProduct"></div>
         <ul class="fcv2-explain-list" id="modalExplainList"></ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="brokenStockModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content fcv2-modal-content">
+      <div class="modal-header" style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); color: white;">
+        <h5 class="modal-title"><i class="bi bi-exclamation-triangle-fill me-2"></i>Quiebres detectados en tiendas</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body fcv2-modal-body">
+        <p>Este SKU tiene tiendas quebradas con demanda reciente. Se recomienda redistribuir antes de comprar.</p>
+        <p class="text-muted small">Puedes generar redistribución desde este panel para balancear el stock antes de realizar una nueva compra.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+        <a href="#" class="btn btn-warning" id="brokenStockModalBtn">
+          <i class="bi bi-arrow-left-right me-1"></i>Generar redistribución
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="batchBrokenStockModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content fcv2-modal-content">
+      <div class="modal-header" style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); color: white;">
+        <h5 class="modal-title"><i class="bi bi-exclamation-triangle-fill me-2"></i>SKUs con quiebres detectados</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body fcv2-modal-body">
+        <p>Se detectaron <strong id="batchBrokenCount">0</strong> SKUs con tiendas quebradas y demanda reciente.</p>
+        <p class="text-muted small">Recomendación: revisar redistribución antes de compra.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+        <button type="button" class="btn btn-warning" id="filterBrokenBtn">
+          <i class="bi bi-funnel me-1"></i>Ver solo SKUs con quiebre
+        </button>
       </div>
     </div>
   </div>
@@ -487,7 +532,9 @@ document.addEventListener('DOMContentLoaded', function() {
         renderPurchaseChart(data);
         updateExplainability(data);
         updateWarnings(data);
-        updateActionButtons(sku);
+        updateActionButtons(sku, data);
+        
+        checkBrokenStockPopup(data);
       })
       .catch(err => {
         console.error('Forecast error:', err);
@@ -549,7 +596,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
-  function updateActionButtons(sku) {
+  function updateActionButtons(sku, data) {
     const encodedSku = encodeURIComponent(sku);
     const exportParams = new URLSearchParams({
       sku: sku,
@@ -562,7 +609,50 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('btnExport').href = '/forecast/export?' + exportParams.toString();
     document.getElementById('btnAlerts').href = '/alerts?sku=' + encodedSku;
     document.getElementById('btnSlowStock').href = '/slow_stock?sku_search=' + encodedSku;
+    
+    const btnRebalance = document.getElementById('btnRebalance');
+    const brokenStockFlag = data && data.broken_stock_flag;
+    const reasonCode = data && data.reason_code || '';
+    
+    if (brokenStockFlag || reasonCode.includes('BROKEN_STOCK')) {
+      btnRebalance.classList.remove('d-none');
+      btnRebalance.href = '/rebalancing?sku=' + encodedSku;
+    } else {
+      btnRebalance.classList.add('d-none');
+    }
   }
+
+  function checkBrokenStockPopup(data) {
+    const brokenStockFlag = data && data.broken_stock_flag;
+    const reasonCode = data && data.reason_code || '';
+    const decision = data && data.decision || '';
+    
+    if ((brokenStockFlag || reasonCode.includes('BROKEN_STOCK') || reasonCode.includes('BROKEN_STOCK_REBALANCE')) && decision === 'REVIEW') {
+      const encodedSku = encodeURIComponent(data.sku);
+      document.getElementById('brokenStockModalBtn').href = '/rebalancing?sku=' + encodedSku;
+      const modal = new bootstrap.Modal(document.getElementById('brokenStockModal'));
+      modal.show();
+    }
+  }
+
+  let allBatchResults = [];
+  let showOnlyBroken = false;
+
+  function checkBatchBrokenStockPopup(results, brokenCount) {
+    if (brokenCount > 0) {
+      document.getElementById('batchBrokenCount').textContent = brokenCount;
+      const modal = new bootstrap.Modal(document.getElementById('batchBrokenStockModal'));
+      modal.show();
+    }
+  }
+
+  document.getElementById('filterBrokenBtn').addEventListener('click', function() {
+    showOnlyBroken = !showOnlyBroken;
+    const filteredResults = showOnlyBroken ? allBatchResults.filter(r => r.broken_stock_flag) : allBatchResults;
+    renderBatchTable(filteredResults);
+    bootstrap.Modal.getInstance(document.getElementById('batchBrokenStockModal')).hide();
+    this.innerHTML = showOnlyBroken ? '<i class="bi bi-list me-1"></i>Ver todos' : '<i class="bi bi-funnel me-1"></i>Ver solo SKUs con quiebre';
+  });
 
   function renderSalesChart(data) {
     const historyWeeks = data.history.map(h => h.week);
@@ -714,11 +804,19 @@ document.addEventListener('DOMContentLoaded', function() {
 
       document.getElementById('btnBatchExport').href = '/forecast/batch/export/' + data.batch_id;
 
+      allBatchResults = data.results;
+      showOnlyBroken = false;
+
       if (data.total_skus > 10) {
         loadBatchPage(data.batch_id, 1);
       } else {
         renderBatchTable(data.results);
         batchPagination.innerHTML = '';
+      }
+
+      const brokenCount = data.broken_stock_count || 0;
+      if (brokenCount > 0) {
+        checkBatchBrokenStockPopup(data.results, brokenCount);
       }
     })
     .catch(err => {
@@ -737,9 +835,15 @@ document.addEventListener('DOMContentLoaded', function() {
       const decisionLabel = r.decision === 'BUY_NOW' ? 'Comprar' : 
                             r.decision === 'REVIEW' ? 'Revisar' : 'No Comprar';
       
+      const brokenBadge = r.broken_stock_flag ? 
+        '<span class="badge bg-warning text-dark ms-1" title="Tiendas con quiebre"><i class="bi bi-exclamation-triangle-fill"></i></span>' : '';
+      
+      const redistributeLink = r.broken_stock_flag ? 
+        '<a href="/rebalancing?sku=' + encodeURIComponent(r.sku) + '" class="btn btn-sm btn-outline-warning ms-1" title="Redistribuir" onclick="event.stopPropagation();"><i class="bi bi-arrow-left-right"></i></a>' : '';
+      
       const row = document.createElement('tr');
       row.innerHTML = `
-        <td><code>${r.sku}</code></td>
+        <td><code>${r.sku}</code>${brokenBadge}</td>
         <td>${r.product_name}</td>
         <td>${r.category}</td>
         <td><span class="fcv2-lifecycle-badge">${r.lifecycle_status}</span></td>
@@ -747,7 +851,7 @@ document.addEventListener('DOMContentLoaded', function() {
         <td>${r.total_stock.toLocaleString()}</td>
         <td><strong>${r.suggested_purchase.toLocaleString()}</strong></td>
         <td><span class="fcv2-decision-badge ${decisionClass}">${decisionLabel}</span></td>
-        <td><span class="fcv2-reason-text">${r.reason_summary}</span></td>
+        <td><span class="fcv2-reason-text">${r.reason_summary}</span>${redistributeLink}</td>
       `;
       row.style.cursor = 'pointer';
       row.addEventListener('click', () => showExplainModal(r));

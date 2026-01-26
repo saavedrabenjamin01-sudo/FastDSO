@@ -166,7 +166,7 @@
             <div class="rebal-field-divider">o</div>
             <div class="rebal-field rebal-field-textarea">
               <label class="rebal-label">Lista SKUs (uno por línea)</label>
-              <textarea id="manualSkuText" class="form-control form-control-sm" rows="3" placeholder="SKU001&#10;SKU002&#10;SKU003"></textarea>
+              <textarea id="manualSkuText" class="form-control form-control-sm" rows="3" placeholder="SKU001&#10;SKU002&#10;SKU003">{% if prefill_sku %}{{ prefill_sku }}{% endif %}</textarea>
             </div>
           </div>
           <div class="rebal-manual-actions">
@@ -375,6 +375,14 @@ document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('autoRebalancingForm')?.addEventListener('submit', function() {
     syncAutoParams();
   });
+
+  const prefillSku = '{{ prefill_sku|default("", true) }}';
+  if (prefillSku) {
+    modeTabs.forEach(t => t.classList.remove('active'));
+    document.querySelector('[data-mode="manual"]')?.classList.add('active');
+    autoContent.classList.remove('active');
+    if (manualContent) manualContent.classList.add('active');
+  }
 
   let calculatedPlan = [];
 

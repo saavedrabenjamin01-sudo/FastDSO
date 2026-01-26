@@ -6277,6 +6277,21 @@ body{
   color: #3b82f6;
   background: rgba(59,130,246,0.04);
 }
+.fcv2-btn-warning {
+  background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+  color: #fff;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  text-decoration: none;
+}
+.fcv2-btn-warning:hover {
+  background: linear-gradient(135deg, #ea580c 0%, #c2410c 100%);
+  color: #fff;
+  transform: translateY(-1px);
+}
 .fcv2-btn-primary {
   background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
   border: none;

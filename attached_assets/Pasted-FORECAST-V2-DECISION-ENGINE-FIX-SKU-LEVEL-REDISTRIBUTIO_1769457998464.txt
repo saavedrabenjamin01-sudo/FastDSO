@@ -1,0 +1,158 @@
+FORECAST V2 — DECISION ENGINE FIX + SKU-LEVEL REDISTRIBUTION CTA + POPUP WARNINGS (Single + Batch)
+
+Context:
+We have Forecast V2 (single SKU + batch forecast). We detected contradictory outputs:
+- reason_code includes "overstock; broken_stock; broken_stock"
+- decision badge may show DO_NOT_BUY while suggested purchase > 0
+We also want actionable workflow:
+- If broken_stock is present, show a “Generate Redistribution for this SKU” option.
+- In single forecast: show a popup warning when this condition occurs.
+- In batch forecast: show a popup summary + show a per-row tag/summary in the results table.
+
+STRICT RULES
+- Do NOT break existing forecast calculations (weekly_demand, horizon_demand, stock totals).
+- Keep Macro Sales as the source of truth.
+- Keep performance: no N+1 queries.
+- Preserve leading zeros in SKU.
+- Keep existing UI styling system (cards + pill chips).
+- If a route name differs, use the existing rebalancing endpoint.
+
+=====================================================
+PART A — FIX DECISION ENGINE PRECEDENCE + DEDUPE REASONS
+=====================================================
+
+Problem:
+Forecast can simultaneously produce OVERSTOCK and BROKEN_STOCK signals and still decide DO_NOT_BUY even when:
+- horizon_demand > total_stock
+- broken_stock_flag == True
+Also reasons are duplicated.
+
+Required changes:
+
+1) Compute base metrics (already existing):
+- raw_purchase_qty = max(0, horizon_demand - total_stock)
+- coverage_weeks = total_stock / max(weekly_demand, 0.1)
+- broken_stock_flag = (stores_stock0_with_recent_sales_count > 0)   # your existing broken_stock logic
+- lifecycle_status and slow_stock_flag as you already have
+- MAX_WOC constant exists
+
+2) Redefine overstock_flag to avoid contradiction:
+- overstock_flag = (coverage_weeks > MAX_WOC) AND (broken_stock_flag == False)
+
+3) Decision precedence (policy):
+A) If overstock_flag == True:
+   decision = DO_NOT_BUY
+   final_purchase_qty = 0
+   add reason OVERSTOCK_BLOCK
+B) Else if broken_stock_flag == True and raw_purchase_qty == 0:
+   decision = REVIEW
+   final_purchase_qty = 0
+   add reason BROKEN_STOCK_REBALANCE
+C) Else if raw_purchase_qty > 0:
+   decision = BUY_NOW if (coverage_weeks < lead_time_weeks) else REVIEW
+   final_purchase_qty = raw_purchase_qty
+   add reason DEMAND_EXCEEDS_STOCK
+   if broken_stock_flag: add reason BROKEN_STOCK
+D) Else:
+   decision = DO_NOT_BUY (or REVIEW) based on existing lifecycle/no_movement rules
+   final_purchase_qty must stay consistent with decision
+
+4) Consistency guards:
+- If decision == DO_NOT_BUY => final_purchase_qty must be 0
+- If final_purchase_qty > 0 => decision cannot be DO_NOT_BUY (force REVIEW if needed)
+
+5) Reason codes:
+- Maintain reasons as a SET to deduplicate.
+- Then join for display (or better: pass as list for bullet rendering).
+- Ensure BROKEN_STOCK appears at most once.
+
+Deliverable:
+- Single forecast and batch forecast must use the same decision logic and output fields:
+  decision, final_purchase_qty, reasons (deduped).
+
+=====================================================
+PART B — ADD “GENERATE REDISTRIBUTION FOR THIS SKU” CTA
+=====================================================
+
+Goal:
+If broken_stock_flag triggers (or BROKEN_STOCK_REBALANCE reason exists), provide a call-to-action to open Redistribution prefiltered for that SKU.
+
+Single forecast UI:
+- Add a button: “Generar redistribución para este SKU”
+- It should link to /rebalancing with a prefilled SKU filter:
+  /rebalancing?sku=<SKU>
+If rebalancing page doesn’t accept sku param yet:
+- Add minimal support: read request.args.get("sku") and prefill the SKU input/textarea in the manual assisted section (or filter candidates).
+
+Batch forecast UI:
+- In each row where broken_stock_flag == True, show a small action icon/button:
+  “↔ Redistribuir”
+  linking to /rebalancing?sku=<SKU>
+
+=====================================================
+PART C — POPUP WARNINGS (Single + Batch)
+=====================================================
+
+Single SKU popup:
+Trigger condition:
+- decision == REVIEW and reasons include BROKEN_STOCK or BROKEN_STOCK_REBALANCE
+Popup message (Spanish, concise):
+Title: “Quiebres detectados en tiendas”
+Body:
+“Este SKU tiene tiendas quebradas con demanda reciente. Se recomienda redistribuir antes de comprar. Puedes generar redistribución desde este panel.”
+Buttons:
+- “Generar redistribución”
+- “Cerrar”
+
+Batch popup:
+Trigger condition:
+- After batch forecast completes, if any SKUs have broken_stock_flag == True:
+Show popup:
+Title: “SKUs con quiebres detectados”
+Body:
+“Se detectaron X SKUs con tiendas quebradas y demanda reciente. Recomendación: revisar redistribución antes de compra.”
+Buttons:
+- “Ver solo SKUs con quiebre” (apply client-side filter or add query param broken=1)
+- “Cerrar”
+
+Table summary (Batch):
+- Add a column or badge “Quiebre” for rows with broken_stock_flag True.
+- Also add a short reason tag in the Reason column:
+  e.g., “Quiebre: redistribuir” vs “Compra recomendada”.
+
+Implementation note:
+- Use the existing loader/modal system if available, or Bootstrap modal.
+- Avoid heavy JS. Simple conditional rendering + small JS to show modal on page load when condition met.
+
+=====================================================
+PART D — FIX EXPORT / URL ROUTES (NO 404)
+=====================================================
+
+- Ensure export routes for forecast single and batch do not 404.
+- If export is not implemented, disable button with tooltip (no broken link).
+- Prefer: implement export endpoints that export the FINAL outputs:
+  decision + final_purchase_qty + reasons.
+
+=====================================================
+ACCEPTANCE TESTS
+=====================================================
+
+1) Case: weekly_demand=12.25, horizon_demand=48, total_stock=21, broken_stock_flag=True
+- decision must NOT be DO_NOT_BUY
+- final_purchase_qty must be > 0 OR decision REVIEW with “redistribute first” reasoning
+- reasons must not include duplicate broken_stock
+- popup appears in single forecast
+- batch popup appears when multiple broken_stock items exist
+
+2) Overstock case:
+- broken_stock_flag=False, coverage_weeks > MAX_WOC
+- decision DO_NOT_BUY and final_purchase_qty=0
+
+3) Batch completeness:
+- rows show badges correctly and redistribuir link works.
+
+Deliverables:
+- Updated forecast decision logic (single + batch)
+- Updated templates (single + batch) with CTA + popup
+- Updated rebalancing route/template to accept sku query param prefill
+- No performance regressions, no N+1 queries
