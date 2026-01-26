@@ -1041,9 +1041,10 @@ def generate_predictions(
         if weekly.shape[0] < effective_min_weeks:
             continue
 
-        # Get last N weeks for SMA calculation
+        # Get last N weeks for SMA calculation (primary window)
         last_weeks = weekly.tail(win)
-        base_mean = float(last_weeks['quantity'].mean())
+        primary_units_sum = float(last_weeks['quantity'].sum())
+        primary_weekly_rate = float(last_weeks['quantity'].mean())
         
         # Debug: capture individual week values (w0 = most recent, w1 = previous)
         week_values = last_weeks['quantity'].tolist()
@@ -1072,10 +1073,31 @@ def generate_predictions(
         # Get CD stock for this product
         cd_qty = cd_stock_lookup.get(product.id, 0)
 
+        # --- Stockout-aware backoff logic ---
+        # If primary window has 0 sales, store is stocked out, but has proven demand in fallback window
+        FALLBACK_WINDOW_WEEKS = 12
+        fallback_weekly_rate = 0.0
+        fallback_units_sum = 0.0
+        weekly_rate_used = primary_weekly_rate
+        backoff_applied = False
+        
+        if primary_units_sum == 0 and stock_qty == 0:
+            # Compute fallback window rate (last 12 weeks)
+            fallback_weeks = weekly.tail(FALLBACK_WINDOW_WEEKS)
+            fallback_units_sum = float(fallback_weeks['quantity'].sum())
+            if fallback_units_sum > 0:
+                fallback_weekly_rate = fallback_units_sum / min(len(fallback_weeks), FALLBACK_WINDOW_WEEKS)
+                weekly_rate_used = fallback_weekly_rate
+                backoff_applied = True
+        
+        base_mean = weekly_rate_used
+
         suggested_before_caps = max(int(round(base_mean)) - stock_qty, 0)
         
         # Determine reason code
-        if cd_qty == 0:
+        if backoff_applied:
+            reason_code = "BACKOFF_STOCKOUT"
+        elif cd_qty == 0:
             reason_code = "CD_ZERO"
         elif stock_qty >= base_mean and suggested_before_caps == 0:
             reason_code = "STOCK_COVERS"
@@ -1100,6 +1122,11 @@ def generate_predictions(
             "cd_stock_used": int(cd_qty),
             "suggested_before_caps": suggested_before_caps,
             "reason_code": reason_code,
+            "primary_units_sum": int(primary_units_sum),
+            "weekly_rate_primary": round(primary_weekly_rate, 2),
+            "weekly_rate_used": round(weekly_rate_used, 2),
+            "fallback_units_sum": int(fallback_units_sum),
+            "backoff_applied": backoff_applied,
         })
 
     # 4) Aplicar límite por stock CD (priorizar tiendas con más demanda)
@@ -1675,7 +1702,10 @@ def generate_predictions_from_macro(
             if weekly.shape[0] < effective_min_weeks:
                 continue
             
-            weekly_rate = float(weekly.tail(win)['quantity'].mean())
+            # Get last N weeks for SMA calculation (primary window)
+            last_weeks = weekly.tail(win)
+            primary_units_sum = float(last_weeks['quantity'].sum())
+            primary_weekly_rate = float(last_weeks['quantity'].mean())
             
             sku_key = str(sku).strip()
             store_key = str(store).strip()
@@ -1702,6 +1732,25 @@ def generate_predictions_from_macro(
             else:
                 stock_qty = 0
             
+            # --- Stockout-aware backoff logic ---
+            # If primary window has 0 sales, store is stocked out, but has proven demand in fallback window
+            FALLBACK_WINDOW_WEEKS = 12
+            fallback_weekly_rate = 0.0
+            fallback_units_sum = 0.0
+            weekly_rate_used = primary_weekly_rate
+            backoff_applied = False
+            
+            if primary_units_sum == 0 and stock_qty == 0:
+                # Compute fallback window rate (last 12 weeks)
+                fallback_weeks = weekly.tail(FALLBACK_WINDOW_WEEKS)
+                fallback_units_sum = float(fallback_weeks['quantity'].sum())
+                if fallback_units_sum > 0:
+                    fallback_weekly_rate = fallback_units_sum / min(len(fallback_weeks), FALLBACK_WINDOW_WEEKS)
+                    weekly_rate_used = fallback_weekly_rate
+                    backoff_applied = True
+            
+            weekly_rate = weekly_rate_used
+            
             import math
             # Horizon-based target: target_units = ceil(weekly_rate * weeks_target)
             target_units = math.ceil(weekly_rate * weeks_target) if weekly_rate > 0 else 0
@@ -1711,7 +1760,9 @@ def generate_predictions_from_macro(
             
             # Determine reason code for caps and zero cases
             reason_code = "OK"
-            if suggested_raw == 0 and weekly_rate > 0:
+            if backoff_applied:
+                reason_code = "BACKOFF_STOCKOUT"
+            elif suggested_raw == 0 and weekly_rate > 0:
                 # STOCK_COVERS: stock already covers the horizon target
                 reason_code = "STOCK_COVERS"
             elif weekly_rate == 0:
@@ -1723,7 +1774,6 @@ def generate_predictions_from_macro(
                     reason_code = "CAPPED_WOC"
             
             # Get week values for debug (last N weeks)
-            last_weeks = weekly.tail(win)
             week_values = last_weeks['quantity'].tolist()
             w0_units = int(week_values[-1]) if len(week_values) >= 1 else 0
             w1_units = int(week_values[-2]) if len(week_values) >= 2 else 0
@@ -1748,6 +1798,11 @@ def generate_predictions_from_macro(
                 "stock_store_used": int(stock_qty),
                 "reason_code": reason_code,
                 "total_sales_in_window": total_sales_in_window,
+                "primary_units_sum": int(primary_units_sum),
+                "weekly_rate_primary": round(primary_weekly_rate, 2),
+                "weekly_rate_used": round(weekly_rate_used, 2),
+                "fallback_units_sum": int(fallback_units_sum),
+                "backoff_applied": backoff_applied,
             })
             skus_with_sales_estimation.add(sku_key)
     
@@ -9594,6 +9649,7 @@ def explain_distribution(product_id, store_id, prediction_qty, run_id=None):
             else:
                 method_label = "Última semana sin ajuste de stock"
         
+        # Primary window sales query
         sales_q = (
             db.session.query(
                 db.func.strftime('%Y-%W', DistributionRecord.event_date).label('week'),
@@ -9612,7 +9668,7 @@ def explain_distribution(product_id, store_id, prediction_qty, run_id=None):
         weekly_totals = [int(r.qty) for r in sales_q]
         total_weeks = len(weekly_totals)
         total_sales = sum(weekly_totals) if weekly_totals else 0
-        sma_value = round(total_sales / max(total_weeks, 1), 1)
+        primary_sma_value = round(total_sales / max(total_weeks, 1), 1)
         
         store_stock = 0
         stock_date = "N/A"
@@ -9628,6 +9684,35 @@ def explain_distribution(product_id, store_id, prediction_qty, run_id=None):
             )
             store_stock = latest_stock.quantity if latest_stock else 0
             stock_date = latest_stock.as_of_date if latest_stock else "N/A"
+        
+        # Stockout-aware backoff logic
+        FALLBACK_WINDOW_WEEKS = 12
+        backoff_applied = False
+        fallback_sma_value = 0.0
+        sma_value = primary_sma_value
+        
+        if total_sales == 0 and store_stock == 0:
+            # Query fallback window (12 weeks)
+            fallback_q = (
+                db.session.query(
+                    db.func.strftime('%Y-%W', DistributionRecord.event_date).label('week'),
+                    db.func.sum(DistributionRecord.quantity).label('qty')
+                )
+                .filter(
+                    DistributionRecord.product_id == product_id,
+                    DistributionRecord.store_id == store_id
+                )
+                .group_by(db.func.strftime('%Y-%W', DistributionRecord.event_date))
+                .order_by(db.func.strftime('%Y-%W', DistributionRecord.event_date).desc())
+                .limit(FALLBACK_WINDOW_WEEKS)
+                .all()
+            )
+            fallback_totals = [int(r.qty) for r in fallback_q]
+            fallback_sum = sum(fallback_totals) if fallback_totals else 0
+            if fallback_sum > 0:
+                fallback_sma_value = round(fallback_sum / min(len(fallback_totals), FALLBACK_WINDOW_WEEKS), 1)
+                sma_value = fallback_sma_value
+                backoff_applied = True
         
         latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar()
         cd_stock = 0
@@ -9647,7 +9732,12 @@ def explain_distribution(product_id, store_id, prediction_qty, run_id=None):
         if run_meta:
             bullets.append(f"Run: {run_meta}")
         
-        if total_weeks > 0:
+        if backoff_applied:
+            bullets.append(f"BACKOFF STOCKOUT: Tienda sin stock y sin ventas en ventana primaria ({win} semanas)")
+            bullets.append(f"Se usa promedio de 12 semanas en lugar de SMA{win}")
+            bullets.append(f"Ventas últimas 12 semanas: {int(fallback_sum)} unidades")
+            bullets.append(f"Promedio semanal (fallback 12 sem): {sma_value} unidades")
+        elif total_weeks > 0:
             weeks_str = ", ".join([str(w) for w in weekly_totals])
             bullets.append(f"Ventas últimas {total_weeks} semanas: [{weeks_str}]")
             bullets.append(f"Promedio semanal (SMA{win}): {sma_value} unidades")
@@ -9656,7 +9746,10 @@ def explain_distribution(product_id, store_id, prediction_qty, run_id=None):
         
         if use_stock:
             bullets.append(f"Stock tienda actual: {store_stock} unidades (fecha: {stock_date})")
-            bullets.append(f"Cálculo: SMA{win} ({sma_value}) - Stock tienda ({store_stock}) = {raw_suggested}")
+            if backoff_applied:
+                bullets.append(f"Cálculo: Fallback ({sma_value}) - Stock tienda ({store_stock}) = {raw_suggested}")
+            else:
+                bullets.append(f"Cálculo: SMA{win} ({sma_value}) - Stock tienda ({store_stock}) = {raw_suggested}")
         else:
             bullets.append("Ajuste de stock: desactivado para este run")
             bullets.append(f"Cálculo: SMA{win} ({sma_value}) = {raw_suggested}")
