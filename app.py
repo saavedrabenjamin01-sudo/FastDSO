@@ -1026,6 +1026,35 @@ def generate_predictions(
         for row in cd_rows:
             cd_stock_lookup[row.product_id] = row.quantity or 0
     
+    # Pre-compute category sales rates per store (for BACKOFF_STOCKOUT tie-breaking)
+    cat_store_sales_rate = {}
+    product_category_map_legacy = {}
+    all_products = Product.query.all()
+    for p in all_products:
+        product_category_map_legacy[p.id] = p.category
+    categories_in_scope = set(c for c in product_category_map_legacy.values() if c)
+    
+    if categories_in_scope:
+        from datetime import timedelta
+        cutoff_date = date.today() - timedelta(weeks=12)
+        cat_agg = (
+            db.session.query(
+                SalesWeeklyAgg.category,
+                SalesWeeklyAgg.store_id,
+                func.sum(SalesWeeklyAgg.units).label('total_units'),
+                func.count(func.distinct(SalesWeeklyAgg.week_start)).label('weeks_count')
+            )
+            .filter(
+                SalesWeeklyAgg.category.in_(categories_in_scope),
+                SalesWeeklyAgg.week_start >= cutoff_date
+            )
+            .group_by(SalesWeeklyAgg.category, SalesWeeklyAgg.store_id)
+            .all()
+        )
+        for cat, store_id, total_units, weeks_count in cat_agg:
+            if weeks_count > 0:
+                cat_store_sales_rate[(cat, store_id)] = total_units / max(weeks_count, 1)
+    
     # 3b) Generar sugerencias base por SKU–Tienda
     raw_preds = []
 
@@ -1108,6 +1137,16 @@ def generate_predictions(
         else:
             reason_code = "OK"
 
+        # Prioritization metrics for deterministic allocation order
+        need_units = suggested_before_caps  # Primary: cover stockouts first
+        sku_sales_rate_store = round(weekly_rate_used, 4)  # Secondary: higher SKU sellers first
+        
+        # Category rate for BACKOFF_STOCKOUT tie-breaking only
+        product_category = product_category_map_legacy.get(product.id)
+        cat_sales_rate_store = 0.0
+        if product_category:
+            cat_sales_rate_store = round(cat_store_sales_rate.get((product_category, store_ent.id), 0.0), 4)
+        
         raw_preds.append({
             "sku": sku_key,
             "store": store_key,
@@ -1127,6 +1166,9 @@ def generate_predictions(
             "weekly_rate_used": round(weekly_rate_used, 2),
             "fallback_units_sum": int(fallback_units_sum),
             "backoff_applied": backoff_applied,
+            "need_units": need_units,
+            "sku_sales_rate_store": sku_sales_rate_store,
+            "cat_sales_rate_store": cat_sales_rate_store,
         })
 
     # 4) Aplicar límite por stock CD (priorizar tiendas con más demanda)
@@ -1140,9 +1182,30 @@ def generate_predictions(
 
     final_preds = []
 
+    # Deterministic prioritization sort key function
+    def prioritization_sort_key(x):
+        """
+        Sorting policy (must be exact):
+        1) need_units DESC (primary - cover stockouts first)
+        2) sku_sales_rate_store DESC (secondary - higher SKU sellers first)
+        3) cat_sales_rate_store DESC (tertiary, only when reason_code == BACKOFF_STOCKOUT)
+        4) store_name ASC (final stable tie-break)
+        """
+        need = x.get("need_units", 0)
+        sku_rate = x.get("sku_sales_rate_store", 0)
+        # Category rate only used as tie-breaker when BACKOFF_STOCKOUT
+        cat_rate = x.get("cat_sales_rate_store", 0) if x.get("reason_code") == "BACKOFF_STOCKOUT" else 0
+        store_name = x.get("store", "")
+        # Return tuple: negative for DESC, positive for ASC
+        return (-need, -sku_rate, -cat_rate, store_name)
+
     for product_id, items in per_product.items():
-        # Ordenar de mayor a menor sugerido
-        items.sort(key=lambda x: x["suggested"], reverse=True)
+        # Apply deterministic prioritization sort
+        items.sort(key=prioritization_sort_key)
+        
+        # Assign allocation rank after sorting
+        for rank, it in enumerate(items, start=1):
+            it["alloc_rank"] = rank
 
         available = cd_stock.get(product_id, None)
         if available is None:
@@ -1687,6 +1750,33 @@ def generate_predictions_from_macro(
     raw_preds = []
     skus_with_sales_estimation = set()
     
+    # Pre-compute category sales rates per store (for BACKOFF_STOCKOUT tie-breaking)
+    # Map: (category, store_id) -> avg_weekly_rate
+    cat_store_sales_rate = {}
+    product_category_map = {p.id: p.category for p in product_map.values()}
+    categories_in_scope = set(c for c in product_category_map.values() if c)
+    
+    if categories_in_scope:
+        from datetime import timedelta
+        cutoff_date = date.today() - timedelta(weeks=12)
+        cat_agg = (
+            db.session.query(
+                SalesWeeklyAgg.category,
+                SalesWeeklyAgg.store_id,
+                func.sum(SalesWeeklyAgg.units).label('total_units'),
+                func.count(func.distinct(SalesWeeklyAgg.week_start)).label('weeks_count')
+            )
+            .filter(
+                SalesWeeklyAgg.category.in_(categories_in_scope),
+                SalesWeeklyAgg.week_start >= cutoff_date
+            )
+            .group_by(SalesWeeklyAgg.category, SalesWeeklyAgg.store_id)
+            .all()
+        )
+        for cat, store_id, total_units, weeks_count in cat_agg:
+            if weeks_count > 0:
+                cat_store_sales_rate[(cat, store_id)] = total_units / max(weeks_count, 1)
+    
     if data:
         df = pd.DataFrame(data)
         df['week_start'] = pd.to_datetime(df['week_start'])
@@ -1781,6 +1871,16 @@ def generate_predictions_from_macro(
             # Compute total sales in window for ranking
             total_sales_in_window = float(weekly.tail(win)['quantity'].sum())
             
+            # Prioritization metrics for deterministic allocation order
+            need_units = suggested_raw  # Primary: cover stockouts first
+            sku_sales_rate_store = round(weekly_rate, 4)  # Secondary: higher SKU sellers first
+            
+            # Category rate for BACKOFF_STOCKOUT tie-breaking only
+            product_category = product_category_map.get(product.id)
+            cat_sales_rate_store = 0.0
+            if product_category:
+                cat_sales_rate_store = round(cat_store_sales_rate.get((product_category, store_id), 0.0), 4)
+            
             raw_preds.append({
                 "sku": sku_key,
                 "store": store_key,
@@ -1803,6 +1903,9 @@ def generate_predictions_from_macro(
                 "weekly_rate_used": round(weekly_rate_used, 2),
                 "fallback_units_sum": int(fallback_units_sum),
                 "backoff_applied": backoff_applied,
+                "need_units": need_units,
+                "sku_sales_rate_store": sku_sales_rate_store,
+                "cat_sales_rate_store": cat_sales_rate_store,
             })
             skus_with_sales_estimation.add(sku_key)
     
@@ -1847,8 +1950,30 @@ def generate_predictions_from_macro(
     
     final_preds = []
     
+    # Deterministic prioritization sort key function
+    def prioritization_sort_key(x):
+        """
+        Sorting policy (must be exact):
+        1) need_units DESC (primary - cover stockouts first)
+        2) sku_sales_rate_store DESC (secondary - higher SKU sellers first)
+        3) cat_sales_rate_store DESC (tertiary, only when reason_code == BACKOFF_STOCKOUT)
+        4) store_name ASC (final stable tie-break)
+        """
+        need = x.get("need_units", 0)
+        sku_rate = x.get("sku_sales_rate_store", 0)
+        # Category rate only used as tie-breaker when BACKOFF_STOCKOUT
+        cat_rate = x.get("cat_sales_rate_store", 0) if x.get("reason_code") == "BACKOFF_STOCKOUT" else 0
+        store_name = x.get("store", "")
+        # Return tuple: negative for DESC, positive for ASC
+        return (-need, -sku_rate, -cat_rate, store_name)
+    
     for product_id, items in per_product.items():
-        items.sort(key=lambda x: x["suggested"], reverse=True)
+        # Apply deterministic prioritization sort
+        items.sort(key=prioritization_sort_key)
+        
+        # Assign allocation rank after sorting
+        for rank, it in enumerate(items, start=1):
+            it["alloc_rank"] = rank
         
         available = cd_stock.get(product_id, None)
         original_cd = available if available is not None else 0
