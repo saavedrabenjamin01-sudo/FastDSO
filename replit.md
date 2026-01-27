@@ -51,6 +51,14 @@ Do not make changes to the folder `Excel tipo/`.
     - **Store-to-Store Rebalancing**: A consolidated module offering auto-suggestions based on WOC and sales velocity, and an assisted manual plan where the system calculates optimal transfer amounts for user-provided SKUs.
     - **Stock-out Replenishment (BREAK_REPLENISH)**: Identifies and suggests replenishment for out-of-stock SKU-Store pairs with historical demand.
     - **Slow Stock & Smart Reallocation**: Manages dead and slow-moving inventory with configurable thresholds, offering store-level and CD-level classification, KPI cards, and smart transfer suggestions. Includes a product flagging workflow to manage risk.
+- **FastPlanner (Warehouse Execution)**: A Kanban-based module for warehouse operations to manage distribution plan execution:
+    - **Kanban Board**: 5-column workflow (APPROVED → IN_PROGRESS → PACKED → DISPATCHED → CLOSED)
+    - **Plan Cards**: Display folio, urgency (LOW/MEDIUM/URGENT), SKU/unit/store counts, assigned operator
+    - **Status Transitions**: Take (claim plan), Pack, Dispatch, Close actions with activity logging
+    - **Plan Details**: Line-by-line view with pagination, commercial/warehouse notes, activity timeline
+    - **Picking Export**: Excel export with SKU, product, store, quantity preserving leading zeros
+    - **Permissions**: `planner:view` for viewing, `planner:operate` for status changes (Admin/WarehouseOps only)
+    - **Models**: DistributionPlan, DistributionPlanLine, PlanActivityLog
 - **Run Management**: A "Runs Center" for managing, activating, comparing, and tracking data processing runs.
 - **User & Access Management**: Administrators can manage users and their roles, controlling feature access.
 - **Reporting & Exports**: Enables exporting predictions, forecasts, and analysis results to Excel.
