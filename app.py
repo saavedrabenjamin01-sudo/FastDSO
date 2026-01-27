@@ -2747,6 +2747,65 @@ def dashboard():
     # --- Lista de tiendas para el select ---
     stores = Store.query.order_by(Store.name.asc()).all()
     
+    # --- CD Stock Health Distribution (lightweight aggregation) ---
+    cd_health_data = {'healthy': 0, 'slow': 0, 'dead': 0, 'allocated': 0}
+    try:
+        DEAD_DAYS = 90
+        SLOW_DAYS = 30
+        cutoff_dead = today - timedelta(days=DEAD_DAYS)
+        cutoff_slow = today - timedelta(days=SLOW_DAYS)
+        
+        last_sale_subq = (
+            db.session.query(
+                SalesWeeklyAgg.product_id,
+                func.max(SalesWeeklyAgg.week_start).label('last_sale')
+            )
+            .filter(SalesWeeklyAgg.units > 0)
+            .group_by(SalesWeeklyAgg.product_id)
+            .subquery()
+        )
+        
+        cd_with_sales = (
+            db.session.query(
+                StockCD.product_id,
+                StockCD.quantity,
+                last_sale_subq.c.last_sale
+            )
+            .outerjoin(last_sale_subq, StockCD.product_id == last_sale_subq.c.product_id)
+            .filter(StockCD.as_of_date == today)
+            .filter(StockCD.quantity > 0)
+            .all()
+        )
+        
+        allocated_subq = (
+            db.session.query(
+                DistributionPlanLine.product_id,
+                func.sum(DistributionPlanLine.qty_planned).label('allocated_qty')
+            )
+            .join(DistributionPlan, DistributionPlanLine.plan_id == DistributionPlan.id)
+            .filter(DistributionPlan.status.in_(['APPROVED', 'IN_PROGRESS', 'PACKED']))
+            .group_by(DistributionPlanLine.product_id)
+            .all()
+        )
+        allocated_map = {r.product_id: int(r.allocated_qty or 0) for r in allocated_subq}
+        
+        for row in cd_with_sales:
+            qty = int(row.quantity or 0)
+            last_sale = row.last_sale
+            alloc = min(allocated_map.get(row.product_id, 0), qty)
+            remaining = qty - alloc
+            cd_health_data['allocated'] += alloc
+            
+            if remaining > 0:
+                if last_sale is None or last_sale < cutoff_dead:
+                    cd_health_data['dead'] += remaining
+                elif last_sale < cutoff_slow:
+                    cd_health_data['slow'] += remaining
+                else:
+                    cd_health_data['healthy'] += remaining
+    except Exception:
+        pass
+    
     # --- Lightweight alerts summary for dashboard (cached) ---
     try:
         alerts_summary = get_alerts_summary(store_filter=store_filter)
@@ -2781,6 +2840,8 @@ def dashboard():
         kpi_skus_distintos=kpi_skus_distintos,
         kpi_tiendas_alcanzadas=kpi_tiendas_alcanzadas,
         kpi_stock_cd_total=int(kpi_stock_cd_total or 0),
+
+        cd_health_data=cd_health_data,
 
         active_simulations={
             sim_type: get_simulation_results(sim_type)

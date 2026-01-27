@@ -210,8 +210,8 @@
       <div id="chartStoreDistribution" class="chart-container"></div>
     </div>
     <div class="chart-card">
-      <div class="chart-title"><i class="bi bi-archive-fill me-2"></i>Remanente CD (Top 10 SKUs)</div>
-      <div id="chartCDRemainder" class="chart-container"></div>
+      <div class="chart-title"><i class="bi bi-heart-pulse-fill me-2"></i>CD Stock Health Overview</div>
+      <div id="chartCDHealth" class="chart-container"></div>
     </div>
   </div>
 
@@ -463,34 +463,49 @@ function buildCharts() {
     document.getElementById('chartStoreDistribution').innerHTML = '<div class="chart-empty"><i class="bi bi-bar-chart"></i><span>Sin datos de distribución</span></div>';
   }
   
-  // Chart 2: CD Remainder (Top 10 SKUs)
-  const cdData = [
-    {% if stock_cd_filtered and stock_cd_filtered|length > 0 %}
-      {% for cd, prod in stock_cd_filtered[:50] %}
-        {sku: "{{ prod.sku }}", qty: {{ cd.quantity }}},
-      {% endfor %}
-    {% endif %}
-  ];
+  // Chart 2: CD Stock Health Donut
+  const cdHealthData = {
+    healthy: {{ cd_health_data.healthy if cd_health_data else 0 }},
+    slow: {{ cd_health_data.slow if cd_health_data else 0 }},
+    dead: {{ cd_health_data.dead if cd_health_data else 0 }},
+    allocated: {{ cd_health_data.allocated if cd_health_data else 0 }}
+  };
   
-  // Sort and take top 10
-  cdData.sort((a, b) => b.qty - a.qty);
-  const top10CD = cdData.slice(0, 10);
+  const totalHealth = cdHealthData.healthy + cdHealthData.slow + cdHealthData.dead + cdHealthData.allocated;
   
-  if (top10CD.length > 0) {
-    Plotly.newPlot('chartCDRemainder', [{
-      x: top10CD.map(d => d.sku),
-      y: top10CD.map(d => d.qty),
-      type: 'bar',
-      marker: { color: '#10b981', cornerradius: 4 }
+  if (totalHealth > 0) {
+    const labels = ['Saludable', 'Lento', 'Muerto', 'Asignado'];
+    const values = [cdHealthData.healthy, cdHealthData.slow, cdHealthData.dead, cdHealthData.allocated];
+    const colors = ['#10b981', '#f59e0b', '#ef4444', '#6366f1'];
+    
+    const percentages = values.map(v => ((v / totalHealth) * 100).toFixed(1));
+    const hoverText = values.map((v, i) => `${labels[i]}: ${v.toLocaleString()} uds (${percentages[i]}%)`);
+    
+    Plotly.newPlot('chartCDHealth', [{
+      values: values,
+      labels: labels,
+      type: 'pie',
+      hole: 0.5,
+      marker: { colors: colors },
+      textinfo: 'percent',
+      textposition: 'outside',
+      textfont: { size: 11 },
+      hoverinfo: 'text',
+      hovertext: hoverText,
+      pull: [0, 0, 0.02, 0]
     }], {
-      margin: { t: 20, b: 80, l: 50, r: 20 },
-      xaxis: { tickangle: -45, tickfont: { size: 10 } },
-      yaxis: { title: 'Stock CD' },
+      margin: { t: 30, b: 30, l: 30, r: 30 },
       paper_bgcolor: 'transparent',
-      plot_bgcolor: 'transparent'
+      showlegend: true,
+      legend: { orientation: 'h', y: -0.1, x: 0.5, xanchor: 'center', font: { size: 10 } },
+      annotations: [{
+        text: `<b>${totalHealth.toLocaleString()}</b><br>Total`,
+        showarrow: false,
+        font: { size: 14, color: '#374151' }
+      }]
     }, { responsive: true, displayModeBar: false });
   } else {
-    document.getElementById('chartCDRemainder').innerHTML = '<div class="chart-empty"><i class="bi bi-archive"></i><span>Sin datos de stock CD</span></div>';
+    document.getElementById('chartCDHealth').innerHTML = '<div class="chart-empty"><i class="bi bi-heart-pulse"></i><span>Sin datos de stock CD</span></div>';
   }
 }
 
