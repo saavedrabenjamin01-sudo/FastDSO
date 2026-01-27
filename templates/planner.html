@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}FastPlanner - Kanban{% endblock %}
+{% block content %}
+<div class="content-header">
+  <h1><i class="bi bi-kanban"></i> FastPlanner</h1>
+  <p class="text-muted">Tablero Kanban de ejecución de almacén</p>
+</div>
+
+<div class="card mb-4">
+  <div class="card-body">
+    <form method="get" class="row g-3 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label fw-semibold">Urgencia</label>
+        <select name="urgency" class="form-select form-select-sm">
+          <option value="">Todas</option>
+          {% for u in PLAN_URGENCIES %}
+          <option value="{{ u }}" {% if urgency_filter == u %}selected{% endif %}>{{ u }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label fw-semibold">Buscar Folio</label>
+        <input type="text" name="folio" class="form-control form-control-sm" placeholder="Ej: PLAN-2026-001" value="{{ folio_search }}">
+      </div>
+      <div class="col-md-3">
+        <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-search"></i> Filtrar</button>
+        <a href="{{ url_for('planner') }}" class="btn btn-sm btn-outline-secondary">Limpiar</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="kanban-container">
+  {% set columns = [
+    ('APPROVED', 'Aprobado', 'success'),
+    ('IN_PROGRESS', 'En Progreso', 'primary'),
+    ('PACKED', 'Empacado', 'info'),
+    ('DISPATCHED', 'Despachado', 'warning'),
+    ('CLOSED', 'Cerrado', 'secondary')
+  ] %}
+  
+  {% for status, label, color in columns %}
+  <div class="kanban-column">
+    <div class="kanban-column-header kanban-header-{{ color }}">
+      <span class="kanban-title">{{ label }}</span>
+      <span class="kanban-count">{{ plans_by_status[status]|length }}</span>
+    </div>
+    <div class="kanban-cards">
+      {% if plans_by_status[status] %}
+        {% for plan in plans_by_status[status] %}
+        <div class="kanban-card" data-plan-id="{{ plan.id }}">
+          <div class="kanban-card-header">
+            <span class="kanban-folio">{{ plan.folio }}</span>
+            <span class="urgency-pill urgency-{{ plan.urgency|lower }}">{{ plan.urgency }}</span>
+          </div>
+          <div class="kanban-card-chips">
+            <span class="kanban-chip"><i class="bi bi-box-seam"></i> {{ plan.total_skus() }} SKUs</span>
+            <span class="kanban-chip"><i class="bi bi-boxes"></i> {{ plan.total_units() }} uds</span>
+            <span class="kanban-chip"><i class="bi bi-shop"></i> {{ plan.total_stores() }} tiendas</span>
+          </div>
+          <div class="kanban-card-meta">
+            {% if plan.approved_at %}
+            <small><i class="bi bi-calendar-check"></i> {{ plan.approved_at.strftime('%d/%m %H:%M') }}</small>
+            {% endif %}
+            {% if plan.assigned_to %}
+            <small><i class="bi bi-person"></i> {{ plan.assigned_to.username }}</small>
+            {% endif %}
+          </div>
+          <div class="kanban-card-actions">
+            {% if can_operate and status == 'APPROVED' %}
+            <form method="post" action="{{ url_for('planner_take', plan_id=plan.id) }}" style="display:inline;">
+              <button type="submit" class="btn btn-xs btn-success"><i class="bi bi-hand-index"></i> Tomar</button>
+            </form>
+            {% endif %}
+            {% if can_operate and status == 'IN_PROGRESS' %}
+            <form method="post" action="{{ url_for('planner_pack', plan_id=plan.id) }}" style="display:inline;">
+              <button type="submit" class="btn btn-xs btn-info"><i class="bi bi-box-seam"></i> Empacar</button>
+            </form>
+            {% endif %}
+            {% if can_operate and status == 'PACKED' %}
+            <form method="post" action="{{ url_for('planner_dispatch', plan_id=plan.id) }}" style="display:inline;">
+              <button type="submit" class="btn btn-xs btn-warning"><i class="bi bi-truck"></i> Despachar</button>
+            </form>
+            {% endif %}
+            {% if can_operate and status == 'DISPATCHED' %}
+            <form method="post" action="{{ url_for('planner_close', plan_id=plan.id) }}" style="display:inline;">
+              <button type="submit" class="btn btn-xs btn-secondary"><i class="bi bi-check-circle"></i> Cerrar</button>
+            </form>
+            {% endif %}
+            <a href="{{ url_for('planner_detail', plan_id=plan.id) }}" class="btn btn-xs btn-outline-primary"><i class="bi bi-eye"></i> Ver</a>
+            <a href="{{ url_for('planner_export_picking', plan_id=plan.id) }}" class="btn btn-xs btn-outline-success"><i class="bi bi-download"></i> Picking</a>
+          </div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="kanban-empty">
+          <i class="bi bi-inbox"></i>
+          <small>Sin planes</small>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% if not plans_by_status['APPROVED'] and not plans_by_status['IN_PROGRESS'] and not plans_by_status['PACKED'] and not plans_by_status['DISPATCHED'] and not plans_by_status['CLOSED'] %}
+<div class="empty-state mt-4">
+  <i class="bi bi-kanban" style="font-size: 3rem; color: #6c757d;"></i>
+  <h5 class="mt-3">No hay planes de distribución</h5>
+  <p class="text-muted">Los planes aprobados desde el centro de runs aparecerán aquí automáticamente.</p>
+</div>
+{% endif %}
+{% endblock %}

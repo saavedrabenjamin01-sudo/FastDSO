@@ -27,20 +27,24 @@ ROLE_PERMISSIONS = {
         'dashboard:view', 'sales:upload', 'sales_macro:upload', 'stock_store:upload', 'stock_cd:upload',
         'stock:query', 'distribution:generate', 'distribution:export',
         'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'admin:users', 'admin:reset', 'audit:view',
-        'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view'
+        'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view',
+        'planner:view', 'planner:operate'
     ],
     'Management': [
         'dashboard:view', 'stock:query', 'distribution:export',
-        'forecast_v2:view', 'runs:view', 'audit:view', 'rebalancing:view', 'slow_stock:view', 'store_health:view', 'alerts:view'
+        'forecast_v2:view', 'runs:view', 'audit:view', 'rebalancing:view', 'slow_stock:view', 'store_health:view', 'alerts:view',
+        'planner:view'
     ],
     'CategoryManager': [
         'dashboard:view', 'sales:upload', 'sales_macro:upload', 'distribution:generate', 'distribution:export',
         'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'rebalancing:view', 'rebalancing:run',
-        'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view'
+        'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view',
+        'planner:view'
     ],
     'WarehouseOps': [
         'dashboard:view', 'stock_store:upload', 'stock_cd:upload', 'stock:query',
-        'distribution:export', 'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view'
+        'distribution:export', 'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view',
+        'planner:view', 'planner:operate'
     ],
     'Viewer': [
         'dashboard:view', 'stock:query', 'alerts:view'
@@ -586,6 +590,71 @@ class SlowStockSuggestion(db.Model):
     from_store = db.relationship('Store', foreign_keys=[from_store_id])
     to_store = db.relationship('Store', foreign_keys=[to_store_id])
     run = db.relationship('SlowStockRun', backref='suggestions')
+
+
+# ------------------ FastPlanner Models ------------------
+PLAN_STATUSES = ['APPROVED', 'IN_PROGRESS', 'PACKED', 'DISPATCHED', 'CLOSED', 'BLOCKED']
+PLAN_URGENCIES = ['LOW', 'MEDIUM', 'URGENT']
+
+class DistributionPlan(db.Model):
+    """Distribution plan for warehouse execution."""
+    __tablename__ = 'distribution_plan'
+    id = db.Column(db.Integer, primary_key=True)
+    folio = db.Column(db.String(50), unique=True, nullable=False, index=True)
+    source_run_id = db.Column(db.String(36), nullable=True, index=True)
+    status = db.Column(db.String(20), nullable=False, default='APPROVED', index=True)
+    urgency = db.Column(db.String(10), nullable=False, default='MEDIUM')
+    notes_commercial = db.Column(db.Text, nullable=True)
+    notes_warehouse = db.Column(db.Text, nullable=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    approved_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    assigned_to_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    approved_at = db.Column(db.DateTime, nullable=True)
+    started_at = db.Column(db.DateTime, nullable=True)
+    closed_at = db.Column(db.DateTime, nullable=True)
+
+    created_by = db.relationship('User', foreign_keys=[created_by_user_id])
+    approved_by = db.relationship('User', foreign_keys=[approved_by_user_id])
+    assigned_to = db.relationship('User', foreign_keys=[assigned_to_user_id])
+    lines = db.relationship('DistributionPlanLine', backref='plan', lazy='dynamic', cascade='all, delete-orphan')
+    activity_logs = db.relationship('PlanActivityLog', backref='plan', lazy='dynamic', cascade='all, delete-orphan', order_by='desc(PlanActivityLog.timestamp)')
+
+    def total_skus(self):
+        return db.session.query(db.func.count(db.func.distinct(DistributionPlanLine.product_id))).filter(DistributionPlanLine.plan_id == self.id).scalar() or 0
+
+    def total_units(self):
+        return db.session.query(db.func.sum(DistributionPlanLine.qty_planned)).filter(DistributionPlanLine.plan_id == self.id).scalar() or 0
+
+    def total_stores(self):
+        return db.session.query(db.func.count(db.func.distinct(DistributionPlanLine.store_id))).filter(DistributionPlanLine.plan_id == self.id).scalar() or 0
+
+
+class DistributionPlanLine(db.Model):
+    """Line item for a distribution plan."""
+    __tablename__ = 'distribution_plan_line'
+    id = db.Column(db.Integer, primary_key=True)
+    plan_id = db.Column(db.Integer, db.ForeignKey('distribution_plan.id'), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False)
+    qty_planned = db.Column(db.Integer, nullable=False, default=0)
+    line_notes = db.Column(db.Text, nullable=True)
+
+    product = db.relationship('Product')
+    store = db.relationship('Store')
+
+
+class PlanActivityLog(db.Model):
+    """Activity log for distribution plan actions."""
+    __tablename__ = 'plan_activity_log'
+    id = db.Column(db.Integer, primary_key=True)
+    plan_id = db.Column(db.Integer, db.ForeignKey('distribution_plan.id'), nullable=False, index=True)
+    action = db.Column(db.String(50), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    comment = db.Column(db.Text, nullable=True)
+
+    user = db.relationship('User')
 
 
 # ------------------ Background Job Infrastructure ------------------
@@ -10641,6 +10710,260 @@ def alerts_page():
         kpi_broken=kpi_broken,
         count_by_severity=count_by_severity,
         count_by_type=count_by_type
+    )
+
+
+# ------------------ FastPlanner Routes ------------------
+@app.route('/planner')
+@login_required
+@require_permission('planner:view')
+def planner():
+    """FastPlanner Kanban board for warehouse execution."""
+    status_filter = request.args.get('status', '')
+    urgency_filter = request.args.get('urgency', '')
+    folio_search = request.args.get('folio', '').strip()
+
+    plans_by_status = {}
+    for status in ['APPROVED', 'IN_PROGRESS', 'PACKED', 'DISPATCHED', 'CLOSED']:
+        query = DistributionPlan.query.filter_by(status=status)
+        if urgency_filter:
+            query = query.filter_by(urgency=urgency_filter)
+        if folio_search:
+            query = query.filter(DistributionPlan.folio.ilike(f'%{folio_search}%'))
+        plans_by_status[status] = query.order_by(DistributionPlan.created_at.desc()).all()
+
+    can_operate = current_user.has_permission('planner:operate')
+
+    return render_template(
+        'planner.html',
+        plans_by_status=plans_by_status,
+        status_filter=status_filter,
+        urgency_filter=urgency_filter,
+        folio_search=folio_search,
+        can_operate=can_operate,
+        PLAN_URGENCIES=PLAN_URGENCIES
+    )
+
+
+@app.route('/planner/<int:plan_id>')
+@login_required
+@require_permission('planner:view')
+def planner_detail(plan_id):
+    """FastPlanner plan detail view."""
+    plan = DistributionPlan.query.get_or_404(plan_id)
+    
+    page = request.args.get('page', 1, type=int)
+    per_page = 10
+    
+    lines_query = plan.lines.join(Product).join(Store).order_by(Product.sku, Store.name)
+    total_lines = lines_query.count()
+    lines = lines_query.offset((page - 1) * per_page).limit(per_page).all()
+    total_pages = max(1, (total_lines + per_page - 1) // per_page)
+    
+    activities = plan.activity_logs.limit(50).all()
+    can_operate = current_user.has_permission('planner:operate')
+
+    return render_template(
+        'planner_detail.html',
+        plan=plan,
+        lines=lines,
+        activities=activities,
+        page=page,
+        total_pages=total_pages,
+        total_lines=total_lines,
+        can_operate=can_operate
+    )
+
+
+@app.route('/planner/<int:plan_id>/take', methods=['POST'])
+@login_required
+@require_permission('planner:operate')
+def planner_take(plan_id):
+    """Take a plan: move from APPROVED to IN_PROGRESS."""
+    plan = DistributionPlan.query.get_or_404(plan_id)
+    
+    if plan.status != 'APPROVED':
+        flash('Solo se pueden tomar planes en estado APROBADO', 'warning')
+        return redirect(url_for('planner'))
+    
+    plan.status = 'IN_PROGRESS'
+    plan.assigned_to_user_id = current_user.id
+    plan.started_at = datetime.utcnow()
+    
+    log = PlanActivityLog(
+        plan_id=plan.id,
+        action='TAKEN',
+        user_id=current_user.id,
+        comment=f'Plan tomado por {current_user.username}'
+    )
+    db.session.add(log)
+    db.session.commit()
+    
+    flash(f'Plan {plan.folio} tomado exitosamente', 'success')
+    return redirect(url_for('planner'))
+
+
+@app.route('/planner/<int:plan_id>/pack', methods=['POST'])
+@login_required
+@require_permission('planner:operate')
+def planner_pack(plan_id):
+    """Pack a plan: move from IN_PROGRESS to PACKED."""
+    plan = DistributionPlan.query.get_or_404(plan_id)
+    
+    if plan.status != 'IN_PROGRESS':
+        flash('Solo se pueden empacar planes en estado EN PROGRESO', 'warning')
+        return redirect(url_for('planner'))
+    
+    plan.status = 'PACKED'
+    
+    log = PlanActivityLog(
+        plan_id=plan.id,
+        action='PACKED',
+        user_id=current_user.id,
+        comment=f'Plan empacado por {current_user.username}'
+    )
+    db.session.add(log)
+    db.session.commit()
+    
+    flash(f'Plan {plan.folio} marcado como EMPACADO', 'success')
+    return redirect(url_for('planner'))
+
+
+@app.route('/planner/<int:plan_id>/dispatch', methods=['POST'])
+@login_required
+@require_permission('planner:operate')
+def planner_dispatch(plan_id):
+    """Dispatch a plan: move from PACKED to DISPATCHED."""
+    plan = DistributionPlan.query.get_or_404(plan_id)
+    
+    if plan.status != 'PACKED':
+        flash('Solo se pueden despachar planes en estado EMPACADO', 'warning')
+        return redirect(url_for('planner'))
+    
+    plan.status = 'DISPATCHED'
+    
+    log = PlanActivityLog(
+        plan_id=plan.id,
+        action='DISPATCHED',
+        user_id=current_user.id,
+        comment=f'Plan despachado por {current_user.username}'
+    )
+    db.session.add(log)
+    db.session.commit()
+    
+    flash(f'Plan {plan.folio} marcado como DESPACHADO', 'success')
+    return redirect(url_for('planner'))
+
+
+@app.route('/planner/<int:plan_id>/close', methods=['POST'])
+@login_required
+@require_permission('planner:operate')
+def planner_close(plan_id):
+    """Close a plan: move from DISPATCHED to CLOSED."""
+    plan = DistributionPlan.query.get_or_404(plan_id)
+    
+    if plan.status != 'DISPATCHED':
+        flash('Solo se pueden cerrar planes en estado DESPACHADO', 'warning')
+        return redirect(url_for('planner'))
+    
+    plan.status = 'CLOSED'
+    plan.closed_at = datetime.utcnow()
+    
+    log = PlanActivityLog(
+        plan_id=plan.id,
+        action='CLOSED',
+        user_id=current_user.id,
+        comment=f'Plan cerrado por {current_user.username}'
+    )
+    db.session.add(log)
+    db.session.commit()
+    
+    flash(f'Plan {plan.folio} cerrado exitosamente', 'success')
+    return redirect(url_for('planner'))
+
+
+@app.route('/planner/<int:plan_id>/notes', methods=['POST'])
+@login_required
+@require_permission('planner:operate')
+def planner_notes(plan_id):
+    """Update warehouse notes for a plan."""
+    plan = DistributionPlan.query.get_or_404(plan_id)
+    
+    notes = request.form.get('notes_warehouse', '').strip()
+    plan.notes_warehouse = notes
+    
+    log = PlanActivityLog(
+        plan_id=plan.id,
+        action='NOTES_UPDATED',
+        user_id=current_user.id,
+        comment='Notas de almacén actualizadas'
+    )
+    db.session.add(log)
+    db.session.commit()
+    
+    flash('Notas actualizadas', 'success')
+    return redirect(url_for('planner_detail', plan_id=plan_id))
+
+
+@app.route('/planner/<int:plan_id>/export_picking')
+@login_required
+@require_permission('planner:view')
+def planner_export_picking(plan_id):
+    """Export picking list to Excel."""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    
+    plan = DistributionPlan.query.get_or_404(plan_id)
+    lines = plan.lines.join(Product).join(Store).order_by(Product.sku, Store.name).all()
+    
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Picking List'
+    
+    header_fill = PatternFill(start_color='1E3A5F', end_color='1E3A5F', fill_type='solid')
+    header_font = Font(bold=True, color='FFFFFF')
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+    
+    headers = ['SKU', 'Producto', 'Tienda', 'Cantidad', 'Notas']
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal='center')
+        cell.border = thin_border
+    
+    for row_idx, line in enumerate(lines, 2):
+        ws.cell(row=row_idx, column=1, value=line.product.sku).border = thin_border
+        ws.cell(row=row_idx, column=2, value=line.product.name).border = thin_border
+        ws.cell(row=row_idx, column=3, value=line.store.name).border = thin_border
+        ws.cell(row=row_idx, column=4, value=line.qty_planned).border = thin_border
+        ws.cell(row=row_idx, column=5, value=line.line_notes or '').border = thin_border
+        
+        ws.cell(row=row_idx, column=1).number_format = '@'
+    
+    ws.column_dimensions['A'].width = 15
+    ws.column_dimensions['B'].width = 40
+    ws.column_dimensions['C'].width = 25
+    ws.column_dimensions['D'].width = 12
+    ws.column_dimensions['E'].width = 30
+    
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    
+    filename = f'picking_{plan.folio}_{date.today().isoformat()}.xlsx'
+    
+    return send_file(
+        output,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=filename
     )
 
 

@@ -1,0 +1,125 @@
+Implement FastPlanner as an internal module in FastDSO with a Kanban board for warehouse execution.
+
+Scope:
+- Add models (if not existing): DistributionPlan, DistributionPlanLine, PlanActivityLog
+- Add routes + templates
+- Add sidebar menu entry under Operaciones: “FastPlanner”
+- Align UI with FastDSO design (cards, pills, rounded corners, soft shadows, blue/white palette)
+- Do NOT modify distribution calculation logic.
+
+A) Models (SQLAlchemy)
+1) DistributionPlan
+- id (pk)
+- folio (unique string)
+- source_run_id (string / fk if you have runs table)
+- status (string enum-like)
+- urgency (LOW/MEDIUM/URGENT)
+- notes_commercial (text)
+- notes_warehouse (text)
+- created_by_user_id
+- approved_by_user_id
+- assigned_to_user_id (nullable)
+- created_at, approved_at, started_at, closed_at
+
+2) DistributionPlanLine
+- id (pk)
+- plan_id (fk)
+- product_id (fk)
+- store_id (fk)
+- qty_planned (int)
+- line_notes (text, nullable)
+
+3) PlanActivityLog
+- id
+- plan_id
+- action (string)
+- user_id
+- timestamp
+- comment (text)
+
+B) Kanban statuses (FastPlanner board columns)
+Create columns:
+- APPROVED
+- IN_PROGRESS
+- PACKED
+- DISPATCHED
+- CLOSED
+(Optional: BLOCKED)
+
+C) Routes
+1) GET /planner
+- Shows Kanban board
+- Filters: status, urgency, search by folio (optional)
+- Each column lists cards (plans) in that status
+
+2) POST /planner/<plan_id>/take
+- Only allowed if status=APPROVED
+- Set assigned_to=current_user
+- status -> IN_PROGRESS
+- started_at set
+- log activity: TAKEN
+
+3) POST /planner/<plan_id>/pack
+- Only allowed if status=IN_PROGRESS
+- status -> PACKED
+- log activity: PACKED
+
+4) POST /planner/<plan_id>/dispatch
+- Only allowed if status=PACKED
+- status -> DISPATCHED
+- log activity: DISPATCHED
+
+5) POST /planner/<plan_id>/close
+- Only allowed if status=DISPATCHED
+- status -> CLOSED
+- closed_at set
+- log activity: CLOSED
+
+6) GET /planner/<plan_id>
+- Plan detail view (or modal page)
+- Shows header summary + lines table (paginated 10/page)
+- Notes textarea for warehouse notes (POST /planner/<plan_id>/notes)
+
+7) GET /planner/<plan_id>/export_picking
+- Export Excel picking list:
+  sku (text), product_name, store, qty_planned
+- Preserve leading zeros
+
+D) UI Template (templates/planner.html + templates/planner_detail.html)
+1) planner.html Kanban
+- Use a 5-column responsive grid
+- Each column has:
+  title + count badge
+  list of plan cards
+- Plan cards:
+  folio (big)
+  urgency pill (color)
+  chips: SKUs, Units, Stores
+  meta: approved_at, assigned_to
+  actions:
+    - Take (only if APPROVED)
+    - View details
+    - Export picking
+- Keep consistent FastDSO styles and spacing
+
+2) planner_detail.html
+- Summary card
+- Lines table (zebra/hover/sticky header)
+- Warehouse notes
+- Activity timeline (PlanActivityLog) in a side card
+
+E) Permissions
+- Only Warehouse role (or ops permission) can take/pack/dispatch/close
+- Manager/Admin can view
+- Respect existing has_permission patterns
+
+F) Integration point (assume approval already creates plans)
+- FastPlanner should show any DistributionPlan with status APPROVED
+- If no plans exist, show empty state “No approved distributions yet”
+
+Deliverables:
+- New models (if needed), routes, templates
+- Sidebar entry
+- Kanban board fully functional
+- Export picking list works
+- Activity log works

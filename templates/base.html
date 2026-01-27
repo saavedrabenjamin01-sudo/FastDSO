@@ -135,7 +135,7 @@
     {% endif %}
 
     <!-- ===== 4) Operaciones ===== -->
-    {% if current_user.is_authenticated and (current_user.has_permission('rebalancing:view') or current_user.has_permission('store_health:view') or current_user.has_permission('alerts:view') or current_user.has_permission('runs:view')) %}
+    {% if current_user.is_authenticated and (current_user.has_permission('rebalancing:view') or current_user.has_permission('store_health:view') or current_user.has_permission('alerts:view') or current_user.has_permission('runs:view') or current_user.has_permission('planner:view')) %}
     <div class="nav-group">
       <button class="nav-group-toggle" aria-expanded="true">
         <span class="nav-icon"><i class="bi bi-diagram-3"></i></span>
@@ -144,6 +144,12 @@
       </button>
 
       <div class="sidebar-nav" style="display:flex;">
+        {% if current_user.has_permission('planner:view') %}
+        <a class="nav-link" href="{{ url_for('planner') }}">
+          <span class="nav-icon"><i class="bi bi-kanban"></i></span>
+          <span class="nav-text">FastPlanner</span>
+        </a>
+        {% endif %}
         {% if current_user.has_permission('rebalancing:view') %}
         <a class="nav-link" href="{{ url_for('rebalancing') }}">
           <span class="nav-icon"><i class="bi bi-arrow-left-right"></i></span>
