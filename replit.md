@@ -59,6 +59,14 @@ Do not make changes to the folder `Excel tipo/`.
     - **Picking Export**: Excel export with SKU, product, store, quantity preserving leading zeros
     - **Permissions**: `planner:view` for viewing, `planner:operate` for status changes (Admin/WarehouseOps only)
     - **Models**: DistributionPlan, DistributionPlanLine, PlanActivityLog
+- **Run Approval Workflow**: Multi-step authorization process for distribution runs:
+    - **Workflow Statuses**: DRAFT → PENDING_APPROVAL → APPROVED/REJECTED
+    - **Submit for Authorization**: CategoryManager can submit with urgency level (LOW/MEDIUM/URGENT) and observation note
+    - **Approval Queue**: Management sees pending runs in Runs Center with approve/reject actions
+    - **Plan Creation**: Approved runs create frozen DistributionPlan with lines copied from Prediction rows
+    - **Rejection Workflow**: Rejected runs show comment and can be resubmitted after edits
+    - **Notifications**: Sidebar badge shows pending count for managers, dashboard alert banner with link
+    - **Permissions**: `runs:submit` for Admin/CategoryManager, `runs:approve` for Admin/Management
 - **Run Management**: A "Runs Center" for managing, activating, comparing, and tracking data processing runs.
 - **User & Access Management**: Administrators can manage users and their roles, controlling feature access.
 - **Reporting & Exports**: Enables exporting predictions, forecasts, and analysis results to Excel.
