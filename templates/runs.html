@@ -24,6 +24,15 @@
         <div class="runs-kpi-label">Completadas</div>
       </div>
     </div>
+    {% if pending_count > 0 %}
+    <div class="runs-kpi runs-kpi-warning">
+      <div class="runs-kpi-icon runs-kpi-icon-orange"><i class="bi bi-hourglass-split"></i></div>
+      <div class="runs-kpi-content">
+        <div class="runs-kpi-value">{{ pending_count }}</div>
+        <div class="runs-kpi-label">Pendientes aprobación</div>
+      </div>
+    </div>
+    {% endif %}
     <div class="runs-kpi">
       <div class="runs-kpi-icon runs-kpi-icon-amber"><i class="bi bi-calendar3"></i></div>
       <div class="runs-kpi-content">
@@ -32,6 +41,52 @@
       </div>
     </div>
   </div>
+
+  {% if can_approve and pending_approvals %}
+  <div class="card mb-4 border-warning">
+    <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+      <span class="fw-semibold"><i class="bi bi-hourglass-split"></i> Pendientes de Autorización</span>
+      <span class="badge bg-dark">{{ pending_count }}</span>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Folio</th>
+              <th>Urgencia</th>
+              <th>Enviado por</th>
+              <th>Fecha envío</th>
+              <th>SKUs</th>
+              <th>Nota</th>
+              <th class="text-center">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in pending_approvals %}
+            <tr>
+              <td><strong>{{ r.folio or r.run_id[:8] }}</strong></td>
+              <td>
+                <span class="urgency-pill urgency-{{ r.urgency|lower if r.urgency else 'medium' }}">{{ r.urgency or 'MEDIUM' }}</span>
+              </td>
+              <td>{{ r.submitted_by.username if r.submitted_by else '-' }}</td>
+              <td>{{ r.submitted_at.strftime('%d/%m %H:%M') if r.submitted_at else '-' }}</td>
+              <td>{{ r.predictions_count or '-' }}</td>
+              <td class="text-muted small" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;">{{ r.submit_note or '-' }}</td>
+              <td class="text-center">
+                <form method="post" action="{{ url_for('approve_and_send', run_id=r.run_id) }}" style="display:inline;">
+                  <button type="submit" class="btn btn-xs btn-success" title="Aprobar y enviar a FastPlanner"><i class="bi bi-check-circle"></i> Aprobar</button>
+                </form>
+                <button type="button" class="btn btn-xs btn-outline-danger" data-bs-toggle="modal" data-bs-target="#rejectModal{{ r.id }}" title="Rechazar"><i class="bi bi-x-circle"></i></button>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 
   <div class="runs-filters-card">
     <form method="get" action="{{ url_for('runs') }}" class="runs-filters">
@@ -107,7 +162,7 @@
               <td>
                 {% if r.status == 'completed' or r.status == 'EXECUTED' %}
                   <span class="runs-status runs-status-success">{{ r.status }}</span>
-                {% elif r.status == 'failed' %}
+                {% elif r.status == 'failed' or r.status == 'REJECTED' %}
                   <span class="runs-status runs-status-danger">{{ r.status }}</span>
                 {% elif r.status == 'APPROVED' %}
                   <span class="runs-status runs-status-info">{{ r.status }}</span>
@@ -115,6 +170,10 @@
                   <span class="runs-status runs-status-warning">{{ r.status }}</span>
                 {% elif r.status == 'ARCHIVED' %}
                   <span class="runs-status runs-status-muted">{{ r.status }}</span>
+                {% elif r.status == 'DRAFT' %}
+                  <span class="runs-status runs-status-secondary">BORRADOR</span>
+                {% elif r.status == 'PENDING_APPROVAL' %}
+                  <span class="runs-status runs-status-pending">PENDIENTE</span>
                 {% else %}
                   <span class="runs-status">{{ r.status }}</span>
                 {% endif %}
@@ -138,6 +197,11 @@
                     <a href="{{ url_for('dashboard', run_id=r.run_id) }}" class="runs-action-btn" title="Ver en Dashboard">
                       <i class="bi bi-graph-up"></i>
                     </a>
+                    {% if can_submit and r.status in ['DRAFT', 'completed'] %}
+                    <button type="button" class="runs-action-btn runs-action-btn-warning" data-bs-toggle="modal" data-bs-target="#submitModal{{ r.id }}" title="Enviar para autorización">
+                      <i class="bi bi-send"></i>
+                    </button>
+                    {% endif %}
                     {% if current_user.role in ['Admin', 'Management'] and not r.is_active %}
                     <form method="post" action="{{ url_for('activate_run', run_id=r.run_id) }}" style="display:inline;">
                       <button type="submit" class="runs-action-btn runs-action-btn-success" title="Activar corrida">
@@ -221,6 +285,70 @@
     {% endif %}
   </div>
 </div>
+
+{% for r in runs %}
+{% if r.run_type == 'distribution' and r.status in ['DRAFT', 'completed'] %}
+<div class="modal fade" id="submitModal{{ r.id }}" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header bg-warning text-dark">
+        <h5 class="modal-title"><i class="bi bi-send"></i> Enviar para Autorización</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <form method="post" action="{{ url_for('submit_for_approval', run_id=r.run_id) }}">
+        <div class="modal-body">
+          <p class="mb-3">Corrida: <strong>{{ r.folio or r.run_id[:8] }}</strong></p>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Urgencia</label>
+            <select name="urgency" class="form-select">
+              <option value="LOW">Baja</option>
+              <option value="MEDIUM" selected>Media</option>
+              <option value="URGENT">Urgente</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Observaciones (opcional)</label>
+            <textarea name="submit_note" class="form-control" rows="3" placeholder="Notas para el aprobador..."></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-warning"><i class="bi bi-send"></i> Enviar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endfor %}
+
+{% if can_approve %}
+{% for r in pending_approvals %}
+<div class="modal fade" id="rejectModal{{ r.id }}" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title"><i class="bi bi-x-circle"></i> Rechazar Corrida</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <form method="post" action="{{ url_for('reject_run', run_id=r.run_id) }}">
+        <div class="modal-body">
+          <p class="mb-3">Corrida: <strong>{{ r.folio or r.run_id[:8] }}</strong></p>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Motivo del rechazo *</label>
+            <textarea name="reject_comment" class="form-control" rows="3" placeholder="Explica el motivo del rechazo..." required></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-danger"><i class="bi bi-x-circle"></i> Rechazar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endfor %}
+{% endif %}
 
 <script>
 function updatePerPage(value) {

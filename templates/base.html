@@ -172,6 +172,9 @@
         <a class="nav-link" href="{{ url_for('runs') }}">
           <span class="nav-icon"><i class="bi bi-clock-history"></i></span>
           <span class="nav-text">Centro de corridas</span>
+          {% if sidebar_counts.pending_approvals > 0 %}
+          <span class="sidebar-notify-badge">{{ sidebar_counts.pending_approvals }}</span>
+          {% endif %}
         </a>
         <a class="nav-link" href="{{ url_for('compare_runs') }}">
           <span class="nav-icon"><i class="bi bi-intersect"></i></span>

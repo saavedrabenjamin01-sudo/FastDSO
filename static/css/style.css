@@ -6787,3 +6787,49 @@ body{
   border-radius: 16px;
   border: 1px solid var(--border);
 }
+
+/* ==================== Run Workflow Styles ==================== */
+.runs-status-secondary { background: #e2e8f0; color: #475569; }
+.runs-status-pending { background: #fef3c7; color: #92400e; animation: pulse-pending 2s infinite; }
+@keyframes pulse-pending {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+.runs-kpi-icon-orange { background: linear-gradient(135deg, #f59e0b, #d97706); color: white; }
+.runs-action-btn-warning { color: #f59e0b !important; }
+.runs-action-btn-warning:hover { background: rgba(245, 158, 11, 0.1); }
+
+/* Sidebar notification badge */
+.sidebar-notify-badge {
+  background: #ef4444;
+  color: white;
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 10px;
+  margin-left: auto;
+  animation: pulse-notify 1.5s infinite;
+}
+@keyframes pulse-notify {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+}
+
+/* Dashboard pending alert */
+.pending-alert-banner {
+  background: linear-gradient(135deg, #fef3c7, #fde68a);
+  border: 1px solid #f59e0b;
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.pending-alert-icon {
+  font-size: 1.5rem;
+  color: #d97706;
+}
+.pending-alert-content { flex: 1; }
+.pending-alert-title { font-weight: 600; color: #92400e; }
+.pending-alert-subtitle { font-size: 0.875rem; color: #b45309; }

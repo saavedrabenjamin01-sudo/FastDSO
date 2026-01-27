@@ -26,18 +26,18 @@ ROLE_PERMISSIONS = {
     'Admin': [
         'dashboard:view', 'sales:upload', 'sales_macro:upload', 'stock_store:upload', 'stock_cd:upload',
         'stock:query', 'distribution:generate', 'distribution:export',
-        'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'admin:users', 'admin:reset', 'audit:view',
+        'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'runs:submit', 'runs:approve', 'admin:users', 'admin:reset', 'audit:view',
         'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view',
         'planner:view', 'planner:operate'
     ],
     'Management': [
         'dashboard:view', 'stock:query', 'distribution:export',
-        'forecast_v2:view', 'runs:view', 'audit:view', 'rebalancing:view', 'slow_stock:view', 'store_health:view', 'alerts:view',
+        'forecast_v2:view', 'runs:view', 'runs:approve', 'audit:view', 'rebalancing:view', 'slow_stock:view', 'store_health:view', 'alerts:view',
         'planner:view'
     ],
     'CategoryManager': [
         'dashboard:view', 'sales:upload', 'sales_macro:upload', 'distribution:generate', 'distribution:export',
-        'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'rebalancing:view', 'rebalancing:run',
+        'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'runs:submit', 'rebalancing:view', 'rebalancing:run',
         'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view',
         'planner:view'
     ],
@@ -242,6 +242,8 @@ class StockSnapshot(db.Model):
     store = db.relationship('Store')
 
 
+RUN_WORKFLOW_STATUSES = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED', 'CANCELED', 'completed']
+
 class Run(db.Model):
     __tablename__ = 'run'
     id = db.Column(db.Integer, primary_key=True)
@@ -254,13 +256,28 @@ class Run(db.Model):
     categoria = db.Column(db.String(100), nullable=True)
     store_filter = db.Column(db.String(255), nullable=True)
     notes = db.Column(db.Text, nullable=True)
-    status = db.Column(db.String(20), default='completed', nullable=False)
+    status = db.Column(db.String(20), default='DRAFT', nullable=False, index=True)
     mode = db.Column(db.String(50), nullable=True)
     rows_count = db.Column(db.Integer, nullable=True)
     predictions_count = db.Column(db.Integer, nullable=True)
     is_active = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    
+    urgency = db.Column(db.String(10), nullable=True)
+    submit_note = db.Column(db.Text, nullable=True)
+    submitted_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    submitted_at = db.Column(db.DateTime, nullable=True)
+    approved_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    approved_at = db.Column(db.DateTime, nullable=True)
+    rejected_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    rejected_at = db.Column(db.DateTime, nullable=True)
+    reject_comment = db.Column(db.Text, nullable=True)
+    planner_plan_id = db.Column(db.Integer, db.ForeignKey('distribution_plan.id'), nullable=True)
 
-    user = db.relationship('User', backref='runs')
+    user = db.relationship('User', foreign_keys=[user_id], backref='runs')
+    submitted_by = db.relationship('User', foreign_keys=[submitted_by_user_id])
+    approved_by = db.relationship('User', foreign_keys=[approved_by_user_id])
+    rejected_by = db.relationship('User', foreign_keys=[rejected_by_user_id])
+    planner_plan = db.relationship('DistributionPlan', foreign_keys=[planner_plan_id])
 
     def label(self):
         parts = []
@@ -2440,22 +2457,27 @@ def inject_sidebar_counts():
         else:
             predictions_count = 0
 
+        pending_approvals_count = 0
+        if current_user.is_authenticated and current_user.has_permission('runs:approve'):
+            pending_approvals_count = Run.query.filter_by(status='PENDING_APPROVAL').count()
+
         counts = {
-            "dashboard": sales_count,        # o lo que quieras mostrar en el badge
+            "dashboard": sales_count,
             "upload": sku_sales,
             "stock_store": store_stock_skus,
             "stock_cd": cd_stock_skus,
             "predictions": predictions_count,
+            "pending_approvals": pending_approvals_count,
         }
 
     except Exception:
-        # En caso de que algo falle (por migraciones, DB vacía, etc.)
         counts = {
             "dashboard": 0,
             "upload": 0,
             "stock_store": 0,
             "stock_cd": 0,
             "predictions": 0,
+            "pending_approvals": 0,
         }
 
     return dict(sidebar_counts=counts)
@@ -6756,13 +6778,20 @@ def runs():
     )
     pagination = Pagination(page, per_page, total, runs_list)
 
+    pending_approvals = Run.query.filter_by(status='PENDING_APPROVAL').order_by(Run.submitted_at.desc()).all() if current_user.has_permission('runs:approve') else []
+    pending_count = len(pending_approvals)
+
     return render_template(
         'runs.html',
         runs=runs_list,
         pagination=pagination,
         search=search,
         per_page=per_page,
-        run_type_filter=run_type_filter
+        run_type_filter=run_type_filter,
+        pending_approvals=pending_approvals,
+        pending_count=pending_count,
+        can_approve=current_user.has_permission('runs:approve'),
+        can_submit=current_user.has_permission('runs:submit')
     )
 
 
@@ -6877,6 +6906,164 @@ def change_run_status(run_id):
     )
     
     flash(f'Estado de corrida cambiado a {new_status}.', 'success')
+    return redirect(url_for('runs'))
+
+
+# ------------------ Run Workflow: Submit for Approval ------------------
+@app.route('/runs/<run_id>/submit_for_approval', methods=['POST'])
+@login_required
+@require_permission('runs:submit')
+def submit_for_approval(run_id):
+    """Submit a distribution run for manager approval."""
+    run = Run.query.filter_by(run_id=run_id).first_or_404()
+    
+    if run.run_type != 'distribution':
+        flash('Solo se pueden enviar a autorización corridas de distribución', 'warning')
+        return redirect(url_for('runs'))
+    
+    if run.status not in ['DRAFT', 'completed']:
+        flash('Solo se pueden enviar a autorización corridas en estado BORRADOR', 'warning')
+        return redirect(url_for('runs'))
+    
+    urgency = request.form.get('urgency', 'MEDIUM')
+    submit_note = request.form.get('submit_note', '').strip()
+    
+    if urgency not in ['LOW', 'MEDIUM', 'URGENT']:
+        urgency = 'MEDIUM'
+    
+    run.status = 'PENDING_APPROVAL'
+    run.urgency = urgency
+    run.submit_note = submit_note
+    run.submitted_by_user_id = current_user.id
+    run.submitted_at = datetime.utcnow()
+    db.session.commit()
+    
+    log_audit(
+        action='run.submit_for_approval',
+        entity_type='run',
+        entity_id=run.id,
+        run_id=run_id,
+        status='success',
+        message=f'Enviado a autorización con urgencia {urgency}'
+    )
+    
+    flash('Corrida enviada a autorización exitosamente', 'success')
+    return redirect(url_for('runs'))
+
+
+@app.route('/runs/<run_id>/approve_and_send', methods=['POST'])
+@login_required
+@require_permission('runs:approve')
+def approve_and_send(run_id):
+    """Approve a run and send it to FastPlanner."""
+    run = Run.query.filter_by(run_id=run_id).first_or_404()
+    
+    if run.run_type != 'distribution':
+        flash('Solo se pueden aprobar corridas de distribución', 'warning')
+        return redirect(url_for('runs'))
+    
+    if run.status != 'PENDING_APPROVAL':
+        flash('Solo se pueden aprobar corridas en estado PENDIENTE DE APROBACIÓN', 'warning')
+        return redirect(url_for('runs'))
+    
+    predictions_count = Prediction.query.filter_by(run_id=run.run_id).count()
+    if predictions_count == 0:
+        flash('La corrida no tiene predicciones para enviar a FastPlanner', 'warning')
+        return redirect(url_for('runs'))
+    
+    folio = run.folio or f"PLAN-{run.run_id[:8].upper()}"
+    existing = DistributionPlan.query.filter_by(folio=folio).first()
+    if existing:
+        folio = f"{folio}-{datetime.utcnow().strftime('%H%M%S')}"
+    
+    plan = DistributionPlan(
+        folio=folio,
+        source_run_id=run.run_id,
+        status='APPROVED',
+        urgency=run.urgency or 'MEDIUM',
+        notes_commercial=run.submit_note,
+        created_by_user_id=run.submitted_by_user_id,
+        approved_by_user_id=current_user.id,
+        created_at=run.submitted_at or datetime.utcnow(),
+        approved_at=datetime.utcnow()
+    )
+    db.session.add(plan)
+    db.session.flush()
+    
+    predictions = Prediction.query.filter_by(run_id=run.run_id).all()
+    for pred in predictions:
+        line = DistributionPlanLine(
+            plan_id=plan.id,
+            product_id=pred.product_id,
+            store_id=pred.store_id,
+            qty_planned=pred.quantity
+        )
+        db.session.add(line)
+    
+    activity = PlanActivityLog(
+        plan_id=plan.id,
+        action='APPROVED_AND_SENT',
+        user_id=current_user.id,
+        comment=f'Plan aprobado y enviado a FastPlanner por {current_user.username}'
+    )
+    db.session.add(activity)
+    
+    run.status = 'APPROVED'
+    run.approved_by_user_id = current_user.id
+    run.approved_at = datetime.utcnow()
+    run.planner_plan_id = plan.id
+    
+    db.session.commit()
+    
+    log_audit(
+        action='run.approved_and_sent',
+        entity_type='run',
+        entity_id=run.id,
+        run_id=run_id,
+        status='success',
+        message=f'Aprobado y enviado a FastPlanner como {plan.folio}'
+    )
+    
+    flash(f'Corrida aprobada y enviada a FastPlanner como {plan.folio}', 'success')
+    return redirect(url_for('runs'))
+
+
+@app.route('/runs/<run_id>/reject', methods=['POST'])
+@login_required
+@require_permission('runs:approve')
+def reject_run(run_id):
+    """Reject a run pending approval."""
+    run = Run.query.filter_by(run_id=run_id).first_or_404()
+    
+    if run.run_type != 'distribution':
+        flash('Solo se pueden rechazar corridas de distribución', 'warning')
+        return redirect(url_for('runs'))
+    
+    if run.status != 'PENDING_APPROVAL':
+        flash('Solo se pueden rechazar corridas en estado PENDIENTE DE APROBACIÓN', 'warning')
+        return redirect(url_for('runs'))
+    
+    reject_comment = request.form.get('reject_comment', '').strip()
+    if not reject_comment:
+        flash('Se requiere un comentario para rechazar', 'warning')
+        return redirect(url_for('runs'))
+    
+    run.status = 'REJECTED'
+    run.rejected_by_user_id = current_user.id
+    run.rejected_at = datetime.utcnow()
+    run.reject_comment = reject_comment
+    db.session.commit()
+    
+    log_audit(
+        action='run.rejected',
+        entity_type='run',
+        entity_id=run.id,
+        run_id=run_id,
+        status='success',
+        message=f'Rechazado: {reject_comment[:50]}'
+    )
+    
+    flash('Corrida rechazada', 'info')
     return redirect(url_for('runs'))
 
 

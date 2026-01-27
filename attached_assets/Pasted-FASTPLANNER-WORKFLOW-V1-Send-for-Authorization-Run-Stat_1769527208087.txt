@@ -1,0 +1,165 @@
+FASTPLANNER WORKFLOW V1 — “Send for Authorization” + Run Status + Approval Queue + Manager Notification Badge
+
+Goal:
+Implement the missing workflow between Distribution Generator (FastDSO) and FastPlanner:
+1) Every generated distribution run starts as DRAFT.
+2) Commercial users can “Send for Authorization” (urgency + note) → status becomes PENDING_APPROVAL.
+3) Managers/Admins see a notification badge (“pending approvals”) and an approval queue in Runs Center.
+4) Managers/Admins can “Approve & Send to FastPlanner” → create immutable DistributionPlan + lines and set status APPROVED/IN_PLANNER.
+5) FastPlanner Kanban shows only APPROVED plans.
+
+STRICT RULES
+- Do NOT change distribution calculation logic.
+- Do NOT automatically send every run to FastPlanner. Approval is mandatory.
+- Preserve run_id logic.
+- Keep roles/permissions: only Manager/Admin can approve; commercial can submit.
+- Keep performance: use lightweight counts for notification badges.
+
+=====================================================
+A) DATA MODEL CHANGES
+=====================================================
+
+1) Add fields to the run entity that represents a distribution output.
+Use the existing model you currently use to represent distribution runs (likely DistributionRun / Run / PredictionRun).
+Add these columns:
+
+- status (string) default "DRAFT"
+  allowed values: DRAFT, PENDING_APPROVAL, APPROVED, REJECTED, CANCELED
+- urgency (string) nullable: LOW, MEDIUM, URGENT
+- submit_note (text) nullable
+- submitted_by_user_id (fk user.id) nullable
+- submitted_at (datetime) nullable
+- approved_by_user_id (fk user.id) nullable
+- approved_at (datetime) nullable
+- planner_plan_id (fk DistributionPlan.id) nullable (links to FastPlanner plan)
+
+IMPORTANT:
+If you are using SQLite and you accept data loss, it’s OK to reset DB in dev.
+Otherwise add an auto-migration for these columns.
+
+2) Ensure FastPlanner tables exist:
+- DistributionPlan
+- DistributionPlanLine
+- PlanActivityLog
+(If already created, reuse them.)
+
+=====================================================
+B) UI: DISTRIBUTION GENERATOR — “Send for Authorization”
+=====================================================
+
+On the distribution results view (where the user sees the generated distribution for a run_id):
+1) Add a button: “Enviar para autorización”
+   Visible only when:
+   - run.status == "DRAFT"
+   - user has permission to submit (commercial/category roles)
+
+2) Clicking opens a modal popup with:
+- Urgency select: LOW / MEDIUM / URGENT (color coded)
+- Observation textarea (optional)
+- Confirm button: “Enviar”
+
+3) On confirm:
+- POST to /runs/<run_id>/submit_for_approval
+- Server updates run:
+  status="PENDING_APPROVAL"
+  urgency, submit_note
+  submitted_by=current_user
+  submitted_at=now
+- Flash: “Enviado a autorización”
+- Redirect back to run detail.
+
+=====================================================
+C) RUNS CENTER — Approval Queue + Actions
+=====================================================
+
+In Runs Center page:
+1) Add a dedicated section at top (or a tab): “Pendientes de autorización”
+- List runs where status == PENDING_APPROVAL
+- Columns: Folio, Urgency badge, Submitted by, Submitted at, Units, Stores
+- Actions (Manager/Admin only):
+  - “Aprobar y enviar a FastPlanner”
+  - “Rechazar” (requires comment)
+  - “Cancelar” (optional)
+
+2) Implement Approve action:
+POST /runs/<run_id>/approve_and_send
+- Only Manager/Admin
+- Requires run.status == PENDING_APPROVAL
+- Creates DistributionPlan (snapshot) with:
+  folio (from run metadata)
+  urgency, submit_note
+  source_run_id
+  approved_by/current_user, approved_at
+  status="APPROVED"
+- Creates DistributionPlanLine from the run’s predictions (frozen snapshot):
+  sku/product_id, store_id, qty_planned
+- Updates run:
+  status="APPROVED"
+  planner_plan_id=DistributionPlan.id
+- Logs PlanActivityLog: APPROVED_AND_SENT
+
+3) Implement Reject action:
+POST /runs/<run_id>/reject
+- Only Manager/Admin
+- Requires comment
+- Sets run.status="REJECTED"
+- Saves rejected_by, rejected_at, reject_comment
+
+=====================================================
+D) FASTPLANNER — Only show APPROVED plans
+=====================================================
+
+In /planner Kanban:
+- Column “APPROVED” shows DistributionPlan where status == APPROVED
+- When warehouse “takes” a plan:
+  status -> IN_PROGRESS (existing)
+No draft/pending runs appear here.
+
+=====================================================
+E) MANAGER NOTIFICATION “MINI BUBBLE”
+=====================================================
+
+We need a small notification bubble indicating pending approvals for Manager/Admin.
+
+Implementation:
+1) Compute a lightweight count:
+pending_approvals_count = COUNT(runs WHERE status == PENDING_APPROVAL)
+
+2) Show this bubble:
+- In sidebar next to “Centro de corridas” (or “Operaciones” group header) as a small badge.
+- Also show a small alert banner on Dashboard for Manager/Admin only:
+  “Tienes X autorizaciones pendientes” with a link to Runs Center.
+
+3) Must be lightweight:
+- Use a single aggregate query per request or cache for 30 seconds.
+- Do NOT store in session cookie.
+
+=====================================================
+F) PERMISSIONS
+=====================================================
+
+- Submit for approval: commercial/category roles with permission runs:submit
+- Approve/Reject: Manager/Admin with permission runs:approve
+- Warehouse has no approve permissions.
+
+=====================================================
+G) ACCEPTANCE TESTS
+=====================================================
+
+1) Generate distribution run → status DRAFT.
+2) Commercial clicks “Enviar para autorización” → status PENDING_APPROVAL, urgency stored.
+3) Manager sees notification badge count increment + sees run in “Pendientes de autorización”.
+4) Manager clicks “Aprobar y enviar a FastPlanner”:
+   - DistributionPlan created with frozen lines
+   - Run status becomes APPROVED
+   - Plan appears in FastPlanner APPROVED column
+5) Warehouse can take plan and move statuses.
+6) No distribution gets to FastPlanner without approval.
+
+DELIVERABLES
+- Updated models
+- New submit/approve/reject routes
+- Modal + button in distribution run detail
+- Runs Center pending queue section
+- Sidebar + dashboard notification badge for managers
+- FastPlanner shows approved plans only

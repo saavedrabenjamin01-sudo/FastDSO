@@ -36,6 +36,18 @@
 
 <div class="dashv1">
 
+  {# Pending approvals alert for managers #}
+  {% if sidebar_counts.pending_approvals > 0 and current_user.has_permission('runs:approve') %}
+  <div class="pending-alert-banner">
+    <div class="pending-alert-icon"><i class="bi bi-hourglass-split"></i></div>
+    <div class="pending-alert-content">
+      <div class="pending-alert-title">Tienes {{ sidebar_counts.pending_approvals }} autorización{% if sidebar_counts.pending_approvals > 1 %}es{% endif %} pendiente{% if sidebar_counts.pending_approvals > 1 %}s{% endif %}</div>
+      <div class="pending-alert-subtitle">Corridas de distribución esperan tu aprobación</div>
+    </div>
+    <a href="{{ url_for('runs') }}" class="btn btn-warning btn-sm"><i class="bi bi-arrow-right"></i> Ir a Centro de Corridas</a>
+  </div>
+  {% endif %}
+
   {# Simulation alerts #}
   {% if active_simulations is defined and active_simulations %}
   <div class="dashv1-alert dashv1-alert-warning">
