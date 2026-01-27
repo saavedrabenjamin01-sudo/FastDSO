@@ -236,6 +236,7 @@
                   {% set subtitle_text = predictions[0][0].model_name if predictions[0][0].model_name else '' %}
                   <span class="dashv1-subtitle dash-subtitle-truncate" title="{{ subtitle_text }}">{{ subtitle_text }}</span>
                 {% endif %}
+                <span class="badge bg-light text-muted ms-2" style="font-size:0.7rem;"><i class="bi bi-funnel"></i> Solo qty &gt; 0</span>
               </div>
               <div class="dashv1-panel-tools">
                 {% if current_user.has_permission('admin:reset') %}

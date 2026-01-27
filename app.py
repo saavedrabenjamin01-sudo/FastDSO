@@ -2615,6 +2615,9 @@ def dashboard():
     # Always filter by selected run_id
     if selected_run_id:
         pred_q = pred_q.filter(Prediction.run_id == selected_run_id)
+    
+    # Only show rows with quantity > 0 (operational filter)
+    pred_q = pred_q.filter(Prediction.quantity > 0)
 
     # Filtro tienda
     if store_filter:
@@ -2653,7 +2656,8 @@ def dashboard():
             func.count(func.distinct(Prediction.product_id)),
             func.count(func.distinct(Prediction.store_id))
         )
-        .filter(Prediction.run_id == selected_run_id) if selected_run_id else None
+        .filter(Prediction.run_id == selected_run_id)
+        .filter(Prediction.quantity > 0) if selected_run_id else None
     )
     if kpi_q and store_filter:
         kpi_q = kpi_q.join(Store, Prediction.store_id == Store.id).filter(Store.name == store_filter)
@@ -6657,6 +6661,7 @@ def export_predictions():
         .join(Product, Prediction.product_id == Product.id)
         .join(Store, Prediction.store_id == Store.id)
         .filter(Prediction.run_id == run_id)
+        .filter(Prediction.quantity > 0)
         .order_by(Product.sku.asc(), Store.name.asc())
         .all()
     )
@@ -6808,6 +6813,7 @@ def view_run(run_id):
             .join(Product, Prediction.product_id == Product.id)
             .join(Store, Prediction.store_id == Store.id)
             .filter(Prediction.run_id == run_id)
+            .filter(Prediction.quantity > 0)
             .order_by(Prediction.quantity.desc())
             .limit(100)
             .all()
@@ -6966,9 +6972,9 @@ def approve_and_send(run_id):
         flash('Solo se pueden aprobar corridas en estado PENDIENTE DE APROBACIÓN', 'warning')
         return redirect(url_for('runs'))
     
-    predictions_count = Prediction.query.filter_by(run_id=run.run_id).count()
+    predictions_count = Prediction.query.filter_by(run_id=run.run_id).filter(Prediction.quantity > 0).count()
     if predictions_count == 0:
-        flash('La corrida no tiene predicciones para enviar a FastPlanner', 'warning')
+        flash('No hay cantidades positivas para enviar a bodega', 'warning')
         return redirect(url_for('runs'))
     
     folio = run.folio or f"PLAN-{run.run_id[:8].upper()}"
@@ -6990,7 +6996,7 @@ def approve_and_send(run_id):
     db.session.add(plan)
     db.session.flush()
     
-    predictions = Prediction.query.filter_by(run_id=run.run_id).all()
+    predictions = Prediction.query.filter_by(run_id=run.run_id).filter(Prediction.quantity > 0).all()
     for pred in predictions:
         line = DistributionPlanLine(
             plan_id=plan.id,

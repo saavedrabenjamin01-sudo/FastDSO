@@ -1,0 +1,47 @@
+CRITICAL CLEANUP — Distribution folio must include ONLY lines with qty > 0 (UI + Export + FastPlanner)
+
+Problem:
+The “Distribución sugerida” view and export currently include ALL SKUs, including rows where suggested quantity = 0.
+This creates huge useless files and pollutes FastPlanner plans. Operationally, a 0-qty line should not exist.
+
+Goal:
+Filter distribution lines everywhere so only qty > 0 is displayed, exported, and sent to FastPlanner.
+
+Scope:
+- Dashboard / run detail distribution table
+- Export distribution endpoint
+- Approve-and-send-to-FastPlanner snapshot creation (DistributionPlanLine)
+
+Rules:
+- A valid distribution line is: Prediction.quantity > 0
+- Do NOT delete predictions with qty=0 from DB (keep for analytics if needed), but NEVER show them as part of a folio/plan.
+
+Tasks:
+
+A) UI (dashboard.html / run_detail.html)
+1) In the “Distribución sugerida” table query/loop, show only rows where p.quantity > 0.
+2) Pagination totals should reflect only qty > 0 rows.
+3) Add a small label like: “Mostrando solo líneas con cantidad > 0”.
+
+B) Export endpoint (export_predictions)
+1) Export ONLY rows where quantity > 0 for the selected run_id.
+2) Preserve SKU as text (leading zeros).
+3) Include columns: folio/run_id, sku, product_name, store, quantity.
+4) File size should reduce drastically.
+
+C) FastPlanner integration (approve_and_send)
+When creating DistributionPlanLine from a run’s predictions:
+- Insert ONLY predictions where quantity > 0.
+- Plan header totals (units, lines, stores) must be computed from qty > 0 lines only.
+- If a run has zero positive lines, block approval with a clear message:
+  “No hay cantidades positivas para enviar a bodega.”
+
+D) Safety checks
+- Ensure no UI or export or plan creation includes qty=0 lines.
+- Do not break existing analytics; only filter for operational artifacts.
+
+Deliverables:
+- Updated queries/filters in UI
+- Updated export query
+- Updated FastPlanner plan creation logic
+- Confirm file export and plan lines are smaller and clean

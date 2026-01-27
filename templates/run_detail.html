@@ -39,7 +39,10 @@
 
 {% if run.run_type == 'distribution' and predictions %}
 <div class="card">
-  <div class="card-header">Distribucion Sugerida (Top 100)</div>
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>Distribución Sugerida (Top 100)</span>
+    <span class="badge bg-light text-muted" style="font-size:0.7rem;"><i class="bi bi-funnel"></i> Solo qty &gt; 0</span>
+  </div>
   <div class="card-body p-0">
     <div class="table-responsive">
       <table class="table table-sm mb-0">
