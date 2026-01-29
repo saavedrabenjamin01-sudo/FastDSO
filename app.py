@@ -2551,22 +2551,12 @@ def dashboard():
     run_id_filter = (request.args.get('run_id') or '').strip()
 
     # --- Pagination params per table ---
-    sales_page = request.args.get('sales_page', 1, type=int)
-    sales_size = request.args.get('sales_size', 10, type=int)
-    sales_search = (request.args.get('sales_search') or '').strip()
-
     pred_page = request.args.get('pred_page', 1, type=int)
     pred_size = request.args.get('pred_size', 10, type=int)
     pred_search = (request.args.get('pred_search') or '').strip()
 
-    cd_page = request.args.get('cd_page', 1, type=int)
-    cd_size = request.args.get('cd_size', 10, type=int)
-    cd_search = (request.args.get('cd_search') or '').strip()
-
     # Validate page sizes
-    sales_size = sales_size if sales_size in [10, 25, 50] else 10
     pred_size = pred_size if pred_size in [10, 25, 50] else 10
-    cd_size = cd_size if cd_size in [10, 25, 50] else 10
 
     # --- Fechas / helpers ---
     today = date.today()
@@ -2673,76 +2663,32 @@ def dashboard():
         .scalar()
     )
 
-    # --- Top ventas (with pagination) ---
-    sales_q = (
-        db.session.query(
-            Product.sku.label("sku"),
-            Product.name.label("product"),
-            Store.name.label("store"),
-            func.coalesce(func.sum(DistributionRecord.quantity), 0).label("units")
+    # --- Executive KPIs (lightweight aggregates) ---
+    kpi_total_skus = Product.query.count()
+    
+    kpi_stores_with_stockout = 0
+    kpi_pct_skus_no_movement = 0.0
+    try:
+        MOVEMENT_DAYS = 30
+        cutoff_movement = today - timedelta(days=MOVEMENT_DAYS)
+        
+        skus_with_movement = (
+            db.session.query(func.count(func.distinct(SalesWeeklyAgg.product_id)))
+            .filter(SalesWeeklyAgg.week_start >= cutoff_movement)
+            .filter(SalesWeeklyAgg.units > 0)
+            .scalar() or 0
         )
-        .join(Product, DistributionRecord.product_id == Product.id)
-        .join(Store, DistributionRecord.store_id == Store.id)
-    )
-    if store_filter:
-        sales_q = sales_q.filter(Store.name == store_filter)
-
-    if sales_search:
-        sales_q = sales_q.filter(
-            or_(
-                Product.sku.ilike(f"%{sales_search}%"),
-                Product.name.ilike(f"%{sales_search}%")
-            )
+        if kpi_total_skus > 0:
+            kpi_pct_skus_no_movement = round(((kpi_total_skus - skus_with_movement) / kpi_total_skus) * 100, 1)
+        
+        kpi_stores_with_stockout = (
+            db.session.query(func.count(func.distinct(StockStore.store_id)))
+            .filter(StockStore.as_of_date == today)
+            .filter(StockStore.quantity == 0)
+            .scalar() or 0
         )
-
-    sales_q = sales_q.group_by(Product.sku, Product.name, Store.name)
-    sales_count_q = db.session.query(func.count()).select_from(sales_q.subquery())
-    sales_total = sales_count_q.scalar() or 0
-
-    top_sales = (
-        sales_q
-        .order_by(desc("units"))
-        .offset((sales_page - 1) * sales_size)
-        .limit(sales_size)
-        .all()
-    )
-    sales_pagination = Pagination(sales_page, sales_size, sales_total, top_sales)
-
-    # --- Remanente CD (with pagination) ---
-    stock_cd_filtered = []
-    cd_pagination = Pagination(1, cd_size, 0, [])
-    if selected_run_id:
-        pred_product_ids = (
-            db.session.query(Prediction.product_id)
-            .filter(Prediction.run_id == selected_run_id)
-            .distinct()
-            .subquery()
-        )
-
-        cd_q = (
-            db.session.query(StockCD, Product)
-            .join(Product, StockCD.product_id == Product.id)
-            .filter(StockCD.as_of_date == today)
-            .filter(StockCD.product_id.in_(pred_product_ids))
-        )
-
-        if cd_search:
-            cd_q = cd_q.filter(
-                or_(
-                    Product.sku.ilike(f"%{cd_search}%"),
-                    Product.name.ilike(f"%{cd_search}%")
-                )
-            )
-
-        cd_total = cd_q.count()
-        stock_cd_filtered = (
-            cd_q
-            .order_by(Product.sku.asc())
-            .offset((cd_page - 1) * cd_size)
-            .limit(cd_size)
-            .all()
-        )
-        cd_pagination = Pagination(cd_page, cd_size, cd_total, stock_cd_filtered)
+    except Exception:
+        pass
 
     # --- Lista de tiendas para el select ---
     stores = Store.query.order_by(Store.name.asc()).all()
@@ -2826,20 +2772,15 @@ def dashboard():
         pred_search=pred_search,
         pred_size=pred_size,
 
-        top_sales=top_sales,
-        sales_pagination=sales_pagination,
-        sales_search=sales_search,
-        sales_size=sales_size,
 
-        stock_cd_filtered=stock_cd_filtered,
-        cd_pagination=cd_pagination,
-        cd_search=cd_search,
-        cd_size=cd_size,
 
         kpi_units_suggested=kpi_units_suggested,
         kpi_skus_distintos=kpi_skus_distintos,
         kpi_tiendas_alcanzadas=kpi_tiendas_alcanzadas,
         kpi_stock_cd_total=int(kpi_stock_cd_total or 0),
+        kpi_total_skus=kpi_total_skus,
+        kpi_pct_skus_no_movement=kpi_pct_skus_no_movement,
+        kpi_stores_with_stockout=kpi_stores_with_stockout,
 
         cd_health_data=cd_health_data,
 
