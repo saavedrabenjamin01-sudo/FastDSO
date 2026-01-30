@@ -1,0 +1,108 @@
+FORECAST V2 IMPROVEMENT — Add Category Forecast (single + batch), refine UX, and strengthen cross-module linking
+
+Context:
+Forecast V2 works for SKU single and batch. We now need:
+1) A Category Forecast mode (not SKU-based purchase) to support management decisions.
+2) Visual/UX refinements to make output more actionable.
+3) Strong cross-links between Forecast, Alerts, Slow Stock, Category Dashboard.
+
+STRICT RULES
+- Do NOT break current SKU Forecast logic (single and batch).
+- Macro Sales (SalesWeeklyAgg) remains the source of truth.
+- Keep performance: no per-SKU N+1 queries.
+- Preserve leading zeros for SKU.
+- Reuse existing UI style (cards, pill chips, zebra tables, sticky headers).
+
+=====================================================
+A) ADD “CATEGORY FORECAST” MODE (Single view)
+=====================================================
+
+1) Add a third tab in Forecast page:
+- “Forecast SKU” (existing)
+- “Forecast masivo” (existing)
+- “Forecast por categoría” (NEW)
+
+2) Category Forecast inputs:
+- Category selector (required)
+- Horizon weeks
+- Lead time weeks
+- Safety stock %
+- Optional store filter (All stores default)
+- Run button: “Calcular forecast categoría”
+
+3) Category Forecast outputs (executive-friendly):
+- KPIs:
+  - Category weekly demand (units/week)
+  - Horizon demand (units)
+  - Total stock in CD for category (units)
+  - Total stock in stores for category (units)
+  - Estimated deficit (units) = horizon_demand - total_stock_total (>=0)
+- Decision badge:
+  - BUY NOW / REVIEW / DO NOT BUY, based on same precedence rules but at category level
+- Suggested action split:
+  - “Redistribute first” estimate (based on stores stock imbalance)
+  - “Purchase required” estimate (remaining deficit)
+
+Important:
+Category forecast should not “buy SKUs”. It forecasts category capacity:
+- how many units short at category level
+- recommended next action (redistribute vs buy)
+
+=====================================================
+B) ADD “CATEGORY FORECAST BATCH” (Batch mode)
+=====================================================
+
+Add an option inside Batch tab:
+- Toggle: “Batch by SKU” (existing) / “Batch by Category” (NEW)
+For batch by category:
+- Upload file with required column: category
+- Optional: horizon/lead time/safety global controls
+Output table:
+Category | Weekly demand | Total stock | Deficit | Decision | Reason
+
+Export supported.
+
+=====================================================
+C) ACTIONABLE EXPLAINABILITY (Improve “Why” block)
+=====================================================
+
+Enhance explainability text for all modes:
+- Must explain decisions in plain language:
+  - demand, coverage, lead time gap, alerts, slow stock blocks
+- No duplicate reasons.
+- Add “Next best action” line:
+  - “Action: Redistribute first” or “Action: Purchase now” etc.
+
+=====================================================
+D) CROSS-LINKING (must be contextual)
+=====================================================
+
+Buttons must preserve context:
+1) From SKU single forecast:
+- “View in Alerts” -> /alerts?sku=<sku>
+- “View in Slow Stock” -> /slow_stock?sku=<sku>
+- “Generate Redistribution” -> /rebalancing?sku=<sku>
+
+2) From Category forecast:
+- “View category dashboard” -> /dashboard_category?category=<category>
+- “View slow stock (category)” -> /slow_stock?category=<category>
+- “View alerts (category)” -> /alerts?category=<category> (add minimal support if missing)
+
+If alerts/slow_stock endpoints don’t support category param, add minimal filtering by Product.category (fast, paginated).
+
+=====================================================
+E) PERFORMANCE REQUIREMENTS
+=====================================================
+
+- Use aggregated queries on SalesWeeklyAgg for category metrics.
+- Use active snapshots (MAX(as_of_date)) for stock totals.
+- For batch category mode: prefetch category aggregates in one query, not per row.
+
+=====================================================
+DELIVERABLES
+=====================================================
+
+- Updated forecast template with Category Forecast tab + batch category option.
+- Backend endpoints for category forecasting (single + batch).
+- Updated explainability summary and contextual links.
+- Ensure no regressions in SKU single/batch.

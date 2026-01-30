@@ -3216,11 +3216,16 @@ def purchase_forecast_v2():
     """
     stores = Store.query.order_by(Store.name.asc()).all()
     products = Product.query.order_by(Product.sku.asc()).limit(500).all()
+    categories = db.session.query(Product.category).filter(
+        Product.category.isnot(None)
+    ).distinct().order_by(Product.category.asc()).all()
+    categories = [c[0] for c in categories if c[0]]
 
     return render_template(
         'purchase_forecast_v2.html',
         stores=stores,
         products=products,
+        categories=categories,
     )
 
 
@@ -5022,6 +5027,329 @@ def export_batch_forecast(batch_id):
     filename = f"batch_forecast_{batch_id[:8]}_{today.strftime('%Y%m%d')}.xlsx"
     return send_file(output, as_attachment=True, download_name=filename,
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+@app.route('/api/forecast/category', methods=['GET'])
+@login_required
+@require_permission('forecast_v2:view')
+def api_forecast_category():
+    """
+    Category Forecast - Aggregated demand forecast at category level.
+    Uses SalesWeeklyAgg as single source of truth.
+    Returns executive-level metrics and decision.
+    """
+    category = request.args.get('category', '').strip()
+    if not category:
+        return jsonify({"error": "Category is required"}), 400
+    
+    try:
+        horizon_weeks = int(request.args.get('horizon_weeks', 8))
+    except ValueError:
+        horizon_weeks = 8
+    try:
+        lead_time_weeks = float(request.args.get('lead_time_weeks', 4))
+    except ValueError:
+        lead_time_weeks = 4.0
+    try:
+        safety_pct = float(request.args.get('safety_pct', 0.10))
+    except ValueError:
+        safety_pct = 0.10
+    
+    store_filter = request.args.get('store', '').strip()
+    store_id = None
+    if store_filter:
+        store_obj = Store.query.filter_by(name=store_filter).first()
+        if store_obj:
+            store_id = store_obj.id
+    
+    today = date.today()
+    
+    # Calculate weekly demand from SalesWeeklyAgg (last 8 weeks)
+    lookback_start = today - timedelta(weeks=8)
+    
+    demand_q = db.session.query(
+        func.sum(SalesWeeklyAgg.units).label('total_units'),
+        func.count(func.distinct(SalesWeeklyAgg.week_start)).label('weeks_count')
+    ).filter(
+        SalesWeeklyAgg.category == category,
+        SalesWeeklyAgg.week_start >= lookback_start
+    )
+    if store_id:
+        demand_q = demand_q.filter(SalesWeeklyAgg.store_id == store_id)
+    
+    demand_result = demand_q.first()
+    total_units_sold = demand_result.total_units or 0
+    weeks_count = demand_result.weeks_count or 1
+    
+    weekly_demand = round(total_units_sold / max(weeks_count, 1), 1)
+    horizon_demand = round(weekly_demand * horizon_weeks)
+    
+    # Get current stock levels (CD and Stores)
+    cd_stock_q = db.session.query(
+        func.sum(StockCD.quantity)
+    ).join(Product, StockCD.product_id == Product.id).filter(
+        Product.category == category
+    )
+    stock_cd = cd_stock_q.scalar() or 0
+    
+    store_stock_q = db.session.query(
+        func.sum(StockSnapshot.quantity)
+    ).join(Product, StockSnapshot.product_id == Product.id).filter(
+        Product.category == category
+    )
+    if store_id:
+        store_stock_q = store_stock_q.filter(StockSnapshot.store_id == store_id)
+    stock_stores = store_stock_q.scalar() or 0
+    
+    total_stock = stock_cd + stock_stores
+    
+    # Calculate coverage and deficit
+    safety_stock = round(weekly_demand * lead_time_weeks * safety_pct)
+    lead_time_demand = round(weekly_demand * lead_time_weeks)
+    
+    # Deficit = horizon_demand + safety_stock - total_stock (if positive)
+    raw_deficit = horizon_demand + safety_stock - total_stock
+    deficit = max(0, raw_deficit)
+    
+    # Coverage in weeks
+    coverage_weeks = round(total_stock / weekly_demand, 1) if weekly_demand > 0 else 999
+    
+    # Decision logic
+    decision = "DO_NOT_BUY"
+    risk_level = "LOW"
+    reason_code = "ADEQUATE_STOCK"
+    
+    if deficit > 0:
+        if coverage_weeks < lead_time_weeks:
+            decision = "BUY_NOW"
+            risk_level = "HIGH"
+            reason_code = "COVERAGE_BELOW_LEAD_TIME"
+        elif coverage_weeks < (lead_time_weeks + horizon_weeks * 0.5):
+            decision = "REVIEW"
+            risk_level = "MEDIUM"
+            reason_code = "COVERAGE_PARTIAL"
+        else:
+            decision = "DO_NOT_BUY"
+            risk_level = "LOW"
+            reason_code = "ADEQUATE_COVERAGE"
+    
+    # Suggested action split (redistribute vs purchase)
+    redistribute_potential = 0
+    purchase_required = deficit
+    
+    if stock_stores > 0 and stock_cd < deficit:
+        # Check store imbalance - some stores may have excess
+        store_stats = db.session.query(
+            func.max(StockSnapshot.quantity).label('max_qty'),
+            func.min(StockSnapshot.quantity).label('min_qty'),
+            func.avg(StockSnapshot.quantity).label('avg_qty')
+        ).join(Product, StockSnapshot.product_id == Product.id).filter(
+            Product.category == category,
+            StockSnapshot.quantity > 0
+        ).first()
+        
+        if store_stats and store_stats.max_qty and store_stats.avg_qty:
+            imbalance = (store_stats.max_qty - store_stats.avg_qty)
+            if imbalance > 0:
+                redistribute_potential = min(int(imbalance * 0.5), deficit)
+                purchase_required = max(0, deficit - redistribute_potential)
+    
+    # Build explanation
+    explain_bullets = []
+    explain_bullets.append(f"Demanda semanal promedio (8 sem): {weekly_demand:,.0f} unidades")
+    explain_bullets.append(f"Demanda horizonte ({horizon_weeks} sem): {horizon_demand:,.0f} unidades")
+    explain_bullets.append(f"Stock actual: {total_stock:,.0f} (CD: {stock_cd:,.0f} + Tiendas: {stock_stores:,.0f})")
+    explain_bullets.append(f"Cobertura actual: {coverage_weeks:.1f} semanas")
+    explain_bullets.append(f"Stock de seguridad ({int(safety_pct*100)}%): {safety_stock:,.0f} unidades")
+    
+    if deficit > 0:
+        explain_bullets.append(f"Déficit proyectado: {deficit:,.0f} unidades")
+    else:
+        explain_bullets.append("Stock suficiente para el horizonte seleccionado")
+    
+    # Next best action
+    next_action = "Mantener inventario actual"
+    if decision == "BUY_NOW":
+        if redistribute_potential > 0:
+            next_action = f"Redistribuir primero (~{redistribute_potential:,.0f} u), luego comprar {purchase_required:,.0f} u"
+        else:
+            next_action = f"Comprar {purchase_required:,.0f} unidades"
+    elif decision == "REVIEW":
+        if redistribute_potential > 0:
+            next_action = f"Evaluar redistribución (~{redistribute_potential:,.0f} u) antes de decidir compra"
+        else:
+            next_action = f"Revisar necesidad de compra: {deficit:,.0f} u de déficit potencial"
+    
+    explain_bullets.append(f"Acción recomendada: {next_action}")
+    
+    # SKU count in category
+    sku_count = Product.query.filter_by(category=category).count()
+    
+    return jsonify({
+        'category': category,
+        'sku_count': sku_count,
+        'weekly_demand': weekly_demand,
+        'horizon_weeks': horizon_weeks,
+        'horizon_demand': horizon_demand,
+        'lead_time_weeks': lead_time_weeks,
+        'safety_pct': safety_pct,
+        'safety_stock': safety_stock,
+        'stock_cd': stock_cd,
+        'stock_stores': stock_stores,
+        'total_stock': total_stock,
+        'coverage_weeks': coverage_weeks,
+        'deficit': deficit,
+        'redistribute_potential': redistribute_potential,
+        'purchase_required': purchase_required,
+        'decision': decision,
+        'risk_level': risk_level,
+        'reason_code': reason_code,
+        'next_action': next_action,
+        'explain_bullets': explain_bullets
+    })
+
+
+@app.route('/api/forecast/category/batch', methods=['POST'])
+@login_required
+@require_permission('forecast_v2:run')
+def api_forecast_category_batch():
+    """
+    Category Batch Forecast - Run forecast for multiple categories.
+    """
+    today = date.today()
+    
+    try:
+        horizon_weeks = int(request.form.get('horizon_weeks', 8))
+    except ValueError:
+        horizon_weeks = 8
+    try:
+        lead_time_weeks = float(request.form.get('lead_time_weeks', 4))
+    except ValueError:
+        lead_time_weeks = 4.0
+    try:
+        safety_pct = float(request.form.get('safety_pct', 0.10))
+    except ValueError:
+        safety_pct = 0.10
+    
+    category_list = []
+    
+    if 'file' in request.files and request.files['file'].filename:
+        file = request.files['file']
+        try:
+            if file.filename.endswith('.csv'):
+                df = pd.read_csv(file)
+            else:
+                df = pd.read_excel(file)
+            
+            cat_col = None
+            for col in df.columns:
+                if col.lower() in ['category', 'categoria', 'categoría', 'cat']:
+                    cat_col = col
+                    break
+            if cat_col is None and len(df.columns) > 0:
+                cat_col = df.columns[0]
+            
+            if cat_col:
+                category_list = [str(c).strip() for c in df[cat_col].dropna().tolist() if str(c).strip()]
+        except Exception as e:
+            return jsonify({"error": f"Error reading file: {str(e)}"}), 400
+    
+    text_input = request.form.get('categories_text', '').strip()
+    if text_input:
+        text_cats = [c.strip() for c in text_input.replace(',', '\n').split('\n') if c.strip()]
+        category_list.extend(text_cats)
+    
+    category_list = list(dict.fromkeys(category_list))[:50]
+    
+    if not category_list:
+        return jsonify({"error": "No categories provided"}), 400
+    
+    lookback_start = today - timedelta(weeks=8)
+    
+    # Prefetch aggregates for all categories in one query
+    demand_data = db.session.query(
+        SalesWeeklyAgg.category,
+        func.sum(SalesWeeklyAgg.units).label('total_units'),
+        func.count(func.distinct(SalesWeeklyAgg.week_start)).label('weeks_count')
+    ).filter(
+        SalesWeeklyAgg.category.in_(category_list),
+        SalesWeeklyAgg.week_start >= lookback_start
+    ).group_by(SalesWeeklyAgg.category).all()
+    
+    demand_map = {d.category: {'units': d.total_units or 0, 'weeks': d.weeks_count or 1} for d in demand_data}
+    
+    cd_stock_data = db.session.query(
+        Product.category,
+        func.sum(StockCD.quantity).label('stock')
+    ).join(StockCD, Product.id == StockCD.product_id).filter(
+        Product.category.in_(category_list)
+    ).group_by(Product.category).all()
+    
+    cd_map = {d.category: d.stock or 0 for d in cd_stock_data}
+    
+    store_stock_data = db.session.query(
+        Product.category,
+        func.sum(StockSnapshot.quantity).label('stock')
+    ).join(StockSnapshot, Product.id == StockSnapshot.product_id).filter(
+        Product.category.in_(category_list)
+    ).group_by(Product.category).all()
+    
+    store_map = {d.category: d.stock or 0 for d in store_stock_data}
+    
+    results = []
+    buy_now_count = 0
+    review_count = 0
+    do_not_buy_count = 0
+    
+    for cat in category_list:
+        demand_info = demand_map.get(cat, {'units': 0, 'weeks': 1})
+        weekly_demand = round(demand_info['units'] / max(demand_info['weeks'], 1), 1)
+        horizon_demand = round(weekly_demand * horizon_weeks)
+        
+        stock_cd = cd_map.get(cat, 0)
+        stock_stores = store_map.get(cat, 0)
+        total_stock = stock_cd + stock_stores
+        
+        safety_stock = round(weekly_demand * lead_time_weeks * safety_pct)
+        raw_deficit = horizon_demand + safety_stock - total_stock
+        deficit = max(0, raw_deficit)
+        
+        coverage_weeks = round(total_stock / weekly_demand, 1) if weekly_demand > 0 else 999
+        
+        decision = "DO_NOT_BUY"
+        reason = "Stock adecuado"
+        
+        if deficit > 0:
+            if coverage_weeks < lead_time_weeks:
+                decision = "BUY_NOW"
+                reason = "Cobertura bajo lead time"
+                buy_now_count += 1
+            elif coverage_weeks < (lead_time_weeks + horizon_weeks * 0.5):
+                decision = "REVIEW"
+                reason = "Cobertura parcial"
+                review_count += 1
+            else:
+                do_not_buy_count += 1
+        else:
+            do_not_buy_count += 1
+        
+        results.append({
+            'category': cat,
+            'weekly_demand': weekly_demand,
+            'total_stock': total_stock,
+            'deficit': deficit,
+            'coverage_weeks': coverage_weeks,
+            'decision': decision,
+            'reason': reason
+        })
+    
+    return jsonify({
+        'total': len(results),
+        'buy_now_count': buy_now_count,
+        'review_count': review_count,
+        'do_not_buy_count': do_not_buy_count,
+        'results': results
+    })
 
 
 @app.route('/export_cd_remanente', methods=['GET'])
@@ -10829,6 +11157,7 @@ def compute_alerts(params=None):
                     'severity': 'HIGH',
                     'sku': product.sku,
                     'product_name': product.name,
+                    'category': product.category or '',
                     'location': store.name,
                     'location_type': 'store',
                     'woc': round(woc, 1),
@@ -10843,6 +11172,7 @@ def compute_alerts(params=None):
                     'severity': 'MEDIUM',
                     'sku': product.sku,
                     'product_name': product.name,
+                    'category': product.category or '',
                     'location': store.name,
                     'location_type': 'store',
                     'woc': round(woc, 1),
@@ -10859,6 +11189,7 @@ def compute_alerts(params=None):
                     'severity': 'HIGH',
                     'sku': product.sku,
                     'product_name': product.name,
+                    'category': product.category or '',
                     'location': store.name,
                     'location_type': 'store',
                     'woc': round(woc, 1) if woc < 9999 else None,
@@ -10873,6 +11204,7 @@ def compute_alerts(params=None):
                     'severity': 'MEDIUM',
                     'sku': product.sku,
                     'product_name': product.name,
+                    'category': product.category or '',
                     'location': store.name,
                     'location_type': 'store',
                     'woc': round(woc, 1) if woc < 9999 else None,
@@ -10894,6 +11226,7 @@ def compute_alerts(params=None):
                 'severity': severity,
                 'sku': product.sku,
                 'product_name': product.name,
+                'category': product.category or '',
                 'location': store.name,
                 'location_type': 'store',
                 'woc': round(woc, 1) if woc < 9999 else None,
@@ -10928,6 +11261,7 @@ def compute_alerts(params=None):
                 'severity': severity,
                 'sku': product.sku,
                 'product_name': product.name,
+                'category': product.category or '',
                 'location': store.name,
                 'location_type': 'store',
                 'woc': None,
@@ -10958,6 +11292,7 @@ def compute_alerts(params=None):
                     'severity': 'HIGH',
                     'sku': product.sku,
                     'product_name': product.name,
+                    'category': product.category or '',
                     'location': 'Centro Distribución',
                     'location_type': 'cd',
                     'woc': round(woc_cd, 1),
@@ -10972,6 +11307,7 @@ def compute_alerts(params=None):
                     'severity': 'MEDIUM',
                     'sku': product.sku,
                     'product_name': product.name,
+                    'category': product.category or '',
                     'location': 'Centro Distribución',
                     'location_type': 'cd',
                     'woc': round(woc_cd, 1),
@@ -10993,6 +11329,7 @@ def compute_alerts(params=None):
                 'severity': severity,
                 'sku': product.sku,
                 'product_name': product.name,
+                'category': product.category or '',
                 'location': 'Centro Distribución',
                 'location_type': 'cd',
                 'woc': round(woc_cd, 1) if woc_cd < 9999 else None,
@@ -11021,6 +11358,7 @@ def alerts_page():
     type_param = request.args.get('type', '').strip()
     store_filter = request.args.get('store', '').strip()
     sku_filter = request.args.get('sku', '').strip().lower()
+    category_filter = request.args.get('category', '').strip()
     
     selected_severities = [s.strip().upper() for s in severity_param.split(',') if s.strip()]
     selected_types = [t.strip().upper() for t in type_param.split(',') if t.strip()]
@@ -11029,6 +11367,10 @@ def alerts_page():
     per_page = 10
     
     stores = Store.query.order_by(Store.name).all()
+    categories = db.session.query(Product.category).filter(
+        Product.category.isnot(None)
+    ).distinct().order_by(Product.category).all()
+    categories = [c[0] for c in categories if c[0]]
     
     all_alerts_unfiltered = compute_alerts()
     
@@ -11051,6 +11393,8 @@ def alerts_page():
         all_alerts = [a for a in all_alerts if a['location'] == store_filter]
     if sku_filter:
         all_alerts = [a for a in all_alerts if sku_filter in a['sku'].lower() or sku_filter in a['product_name'].lower()]
+    if category_filter:
+        all_alerts = [a for a in all_alerts if a.get('category', '') == category_filter]
     
     total = len(all_alerts)
     start = (page - 1) * per_page
@@ -11071,10 +11415,12 @@ def alerts_page():
         'alerts.html',
         alerts=alerts,
         stores=stores,
+        categories=categories,
         selected_severities=selected_severities,
         selected_types=selected_types,
         store_filter=store_filter,
         sku_filter=sku_filter,
+        category_filter=category_filter,
         page=page,
         total_pages=total_pages,
         total=total,

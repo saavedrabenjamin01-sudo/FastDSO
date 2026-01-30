@@ -23,6 +23,9 @@
     <button class="fcv2-tab" data-tab="batch" id="tabBatch">
       <i class="bi bi-boxes me-1"></i>Forecast Masivo
     </button>
+    <button class="fcv2-tab" data-tab="category" id="tabCategory">
+      <i class="bi bi-folder me-1"></i>Forecast por Categoría
+    </button>
   </div>
 
   <div id="singleMode">
@@ -300,6 +303,159 @@
       <div class="fcv2-empty-hint">Sube un archivo o pega los SKUs en el campo de texto</div>
     </div>
   </div>
+
+  <div id="categoryMode" class="d-none">
+    <div class="fcv2-params-card">
+      <div class="fcv2-params-header">
+        <i class="bi bi-folder me-2"></i>Forecast por Categoría
+      </div>
+      <div class="fcv2-params-body">
+        <div class="fcv2-batch-intro">
+          <p>Proyección agregada a nivel de categoría para decisiones de compra macro.</p>
+        </div>
+        <div class="fcv2-params-grid">
+          <div class="fcv2-field fcv2-field-lg">
+            <label class="fcv2-label">Categoría</label>
+            <select id="catCategorySelect" class="form-select fcv2-input" required>
+              <option value="">Selecciona una categoría...</option>
+              {% for cat in categories %}
+              <option value="{{ cat }}">{{ cat }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="fcv2-field">
+            <label class="fcv2-label">Tienda (opcional)</label>
+            <select id="catStoreSelect" class="form-select fcv2-input">
+              <option value="">Todas las tiendas</option>
+              {% for s in stores %}
+              <option value="{{ s.name }}">{{ s.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="fcv2-field">
+            <label class="fcv2-label">Horizonte (semanas)</label>
+            <select id="catHorizon" class="form-select fcv2-input">
+              <option value="4">4 semanas</option>
+              <option value="8" selected>8 semanas</option>
+              <option value="12">12 semanas</option>
+            </select>
+          </div>
+          <div class="fcv2-field">
+            <label class="fcv2-label">Lead time (semanas)</label>
+            <select id="catLeadTime" class="form-select fcv2-input">
+              <option value="2">2 semanas</option>
+              <option value="4" selected>4 semanas</option>
+              <option value="6">6 semanas</option>
+              <option value="8">8 semanas</option>
+            </select>
+          </div>
+          <div class="fcv2-field">
+            <label class="fcv2-label">Safety %: <span id="catSafetyLabel">10%</span></label>
+            <input type="range" id="catSafetySlider" class="form-range fcv2-slider" min="0" max="30" value="10" step="1">
+          </div>
+          <div class="fcv2-field fcv2-field-btn">
+            <button type="button" id="btnRunCategoryForecast" class="btn fcv2-btn-run">
+              <i class="bi bi-play-fill me-1"></i>Calcular Forecast Categoría
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="fcv2-kpi-row fcv2-hidden" id="catKpiCards">
+      <div class="fcv2-kpi fcv2-kpi-blue">
+        <div class="fcv2-kpi-icon"><i class="bi bi-graph-up-arrow"></i></div>
+        <div class="fcv2-kpi-body">
+          <div class="fcv2-kpi-value" id="catKpiWeeklyDemand">—</div>
+          <div class="fcv2-kpi-label">Demanda semanal</div>
+          <div class="fcv2-kpi-hint">Unidades/semana</div>
+        </div>
+      </div>
+      <div class="fcv2-kpi fcv2-kpi-cyan">
+        <div class="fcv2-kpi-icon"><i class="bi bi-calendar-week"></i></div>
+        <div class="fcv2-kpi-body">
+          <div class="fcv2-kpi-value" id="catKpiHorizonDemand">—</div>
+          <div class="fcv2-kpi-label">Demanda horizonte</div>
+          <div class="fcv2-kpi-hint" id="catKpiHorizonHint">—</div>
+        </div>
+      </div>
+      <div class="fcv2-kpi fcv2-kpi-green">
+        <div class="fcv2-kpi-icon"><i class="bi bi-box-seam-fill"></i></div>
+        <div class="fcv2-kpi-body">
+          <div class="fcv2-kpi-value" id="catKpiTotalStock">—</div>
+          <div class="fcv2-kpi-label">Stock total</div>
+          <div class="fcv2-kpi-hint" id="catKpiStockHint">—</div>
+        </div>
+      </div>
+      <div class="fcv2-kpi fcv2-kpi-amber">
+        <div class="fcv2-kpi-icon"><i class="bi bi-exclamation-triangle-fill"></i></div>
+        <div class="fcv2-kpi-body">
+          <div class="fcv2-kpi-value" id="catKpiDeficit">—</div>
+          <div class="fcv2-kpi-label">Déficit proyectado</div>
+          <div class="fcv2-kpi-hint">Unidades faltantes</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="fcv2-decision-card fcv2-hidden" id="catDecisionCard">
+      <div class="fcv2-decision-header">
+        <div class="fcv2-decision-badge" id="catDecisionBadge">
+          <i class="bi bi-dash-circle me-1"></i><span id="catDecisionText">—</span>
+        </div>
+        <div class="fcv2-decision-coverage" id="catCoverageInfo">—</div>
+      </div>
+      <div class="fcv2-decision-body">
+        <div class="fcv2-action-split">
+          <div class="fcv2-action-item fcv2-action-redistribute">
+            <div class="fcv2-action-icon"><i class="bi bi-arrow-left-right"></i></div>
+            <div class="fcv2-action-body">
+              <div class="fcv2-action-label">Redistribuir primero</div>
+              <div class="fcv2-action-value" id="catRedistributePotential">—</div>
+            </div>
+          </div>
+          <div class="fcv2-action-item fcv2-action-purchase">
+            <div class="fcv2-action-icon"><i class="bi bi-cart-plus-fill"></i></div>
+            <div class="fcv2-action-body">
+              <div class="fcv2-action-label">Compra requerida</div>
+              <div class="fcv2-action-value" id="catPurchaseRequired">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="fcv2-explain-card fcv2-hidden" id="catExplainCard">
+      <div class="fcv2-explain-header">
+        <i class="bi bi-lightbulb-fill me-2"></i>¿Por qué esta recomendación?
+      </div>
+      <div class="fcv2-explain-body">
+        <ul class="fcv2-explain-list" id="catExplainList"></ul>
+      </div>
+    </div>
+
+    <div class="fcv2-actions-bar fcv2-hidden" id="catActionsBar">
+      <a href="#" class="btn fcv2-btn-outline" id="catBtnDashboard">
+        <i class="bi bi-grid me-1"></i>Ver Dashboard Categoría
+      </a>
+      <a href="#" class="btn fcv2-btn-outline" id="catBtnSlowStock">
+        <i class="bi bi-clock-history me-1"></i>Ver Stock Lento
+      </a>
+      <a href="#" class="btn fcv2-btn-outline" id="catBtnAlerts">
+        <i class="bi bi-bell me-1"></i>Ver Alertas
+      </a>
+      <a href="#" class="btn fcv2-btn-warning" id="catBtnRebalance">
+        <i class="bi bi-arrow-left-right me-1"></i>Redistribuir Categoría
+      </a>
+    </div>
+
+    <div id="catEmptyState" class="fcv2-empty-state">
+      <div class="fcv2-empty-icon">
+        <i class="bi bi-folder2-open"></i>
+      </div>
+      <div class="fcv2-empty-title">Selecciona una categoría para calcular forecast</div>
+      <div class="fcv2-empty-hint">El forecast de categoría ofrece una visión agregada para decisiones de compra macro</div>
+    </div>
+  </div>
 </div>
 
 <div class="modal fade" id="explainModal" tabindex="-1" aria-hidden="true">
@@ -393,32 +549,50 @@ document.addEventListener('DOMContentLoaded', function() {
 
   const tabSingle = document.getElementById('tabSingle');
   const tabBatch = document.getElementById('tabBatch');
+  const tabCategory = document.getElementById('tabCategory');
   const singleMode = document.getElementById('singleMode');
   const batchMode = document.getElementById('batchMode');
+  const categoryMode = document.getElementById('categoryMode');
 
   let currentSku = '';
   let currentBatchId = '';
+  let currentCategory = '';
 
   tabSingle.addEventListener('click', () => switchTab('single'));
   tabBatch.addEventListener('click', () => switchTab('batch'));
+  tabCategory.addEventListener('click', () => switchTab('category'));
 
   function switchTab(tab) {
+    tabSingle.classList.remove('active');
+    tabBatch.classList.remove('active');
+    tabCategory.classList.remove('active');
+    singleMode.classList.add('d-none');
+    batchMode.classList.add('d-none');
+    categoryMode.classList.add('d-none');
+    
     if (tab === 'single') {
       tabSingle.classList.add('active');
-      tabBatch.classList.remove('active');
       singleMode.classList.remove('d-none');
-      batchMode.classList.add('d-none');
-    } else {
-      tabSingle.classList.remove('active');
+    } else if (tab === 'batch') {
       tabBatch.classList.add('active');
-      singleMode.classList.add('d-none');
       batchMode.classList.remove('d-none');
+    } else if (tab === 'category') {
+      tabCategory.classList.add('active');
+      categoryMode.classList.remove('d-none');
     }
   }
 
   safetySlider.addEventListener('input', function() {
     safetyLabel.textContent = this.value + '%';
   });
+  
+  const catSafetySlider = document.getElementById('catSafetySlider');
+  const catSafetyLabel = document.getElementById('catSafetyLabel');
+  if (catSafetySlider) {
+    catSafetySlider.addEventListener('input', function() {
+      catSafetyLabel.textContent = this.value + '%';
+    });
+  }
 
   function clearCharts() {
     Plotly.purge(salesChartEl);
@@ -912,6 +1086,113 @@ document.addEventListener('DOMContentLoaded', function() {
   window.loadBatchPageGlobal = function(batchId, page) {
     loadBatchPage(batchId, page);
   };
+
+  // ===== CATEGORY FORECAST =====
+  const catCategorySelect = document.getElementById('catCategorySelect');
+  const catStoreSelect = document.getElementById('catStoreSelect');
+  const catHorizon = document.getElementById('catHorizon');
+  const catLeadTime = document.getElementById('catLeadTime');
+  const btnRunCat = document.getElementById('btnRunCategoryForecast');
+  
+  const catKpiCards = document.getElementById('catKpiCards');
+  const catDecisionCard = document.getElementById('catDecisionCard');
+  const catExplainCard = document.getElementById('catExplainCard');
+  const catActionsBar = document.getElementById('catActionsBar');
+  const catEmptyState = document.getElementById('catEmptyState');
+  
+  if (btnRunCat) {
+    btnRunCat.addEventListener('click', runCategoryForecast);
+  }
+  
+  function runCategoryForecast() {
+    const category = catCategorySelect.value;
+    if (!category) {
+      alert('Por favor selecciona una categoría');
+      return;
+    }
+    currentCategory = category;
+    
+    btnRunCat.disabled = true;
+    btnRunCat.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Calculando...';
+    
+    const params = new URLSearchParams({
+      category: category,
+      store: catStoreSelect.value,
+      horizon_weeks: catHorizon.value,
+      lead_time_weeks: catLeadTime.value,
+      safety_pct: (catSafetySlider.value / 100).toFixed(2)
+    });
+    
+    fetch('/api/forecast/category?' + params.toString())
+      .then(r => r.json())
+      .then(data => {
+        btnRunCat.disabled = false;
+        btnRunCat.innerHTML = '<i class="bi bi-play-fill me-1"></i>Calcular Forecast Categoría';
+        
+        if (data.error) {
+          alert(data.error);
+          return;
+        }
+        
+        // Show results
+        catEmptyState.classList.add('d-none');
+        catKpiCards.classList.remove('fcv2-hidden');
+        catDecisionCard.classList.remove('fcv2-hidden');
+        catExplainCard.classList.remove('fcv2-hidden');
+        catActionsBar.classList.remove('fcv2-hidden');
+        
+        // Update KPIs
+        document.getElementById('catKpiWeeklyDemand').textContent = data.weekly_demand.toLocaleString();
+        document.getElementById('catKpiHorizonDemand').textContent = data.horizon_demand.toLocaleString();
+        document.getElementById('catKpiHorizonHint').textContent = data.horizon_weeks + ' semanas';
+        document.getElementById('catKpiTotalStock').textContent = data.total_stock.toLocaleString();
+        document.getElementById('catKpiStockHint').textContent = 'CD: ' + data.stock_cd.toLocaleString() + ' + Tiendas: ' + data.stock_stores.toLocaleString();
+        document.getElementById('catKpiDeficit').textContent = data.deficit.toLocaleString();
+        
+        // Update decision badge
+        const decisionBadge = document.getElementById('catDecisionBadge');
+        const decisionText = document.getElementById('catDecisionText');
+        decisionBadge.className = 'fcv2-decision-badge';
+        
+        if (data.decision === 'BUY_NOW') {
+          decisionBadge.classList.add('fcv2-decision-buy');
+          decisionText.innerHTML = '<i class="bi bi-cart-check-fill me-1"></i>COMPRAR AHORA';
+        } else if (data.decision === 'REVIEW') {
+          decisionBadge.classList.add('fcv2-decision-review');
+          decisionText.innerHTML = '<i class="bi bi-exclamation-circle-fill me-1"></i>REVISAR';
+        } else {
+          decisionBadge.classList.add('fcv2-decision-nobuy');
+          decisionText.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>NO COMPRAR';
+        }
+        
+        document.getElementById('catCoverageInfo').textContent = 'Cobertura: ' + data.coverage_weeks + ' semanas';
+        
+        // Update action split
+        document.getElementById('catRedistributePotential').textContent = data.redistribute_potential.toLocaleString() + ' u';
+        document.getElementById('catPurchaseRequired').textContent = data.purchase_required.toLocaleString() + ' u';
+        
+        // Update explanation
+        const catExplainList = document.getElementById('catExplainList');
+        catExplainList.innerHTML = '';
+        data.explain_bullets.forEach(bullet => {
+          const li = document.createElement('li');
+          li.textContent = bullet;
+          catExplainList.appendChild(li);
+        });
+        
+        // Update action links
+        document.getElementById('catBtnDashboard').href = '/dashboard_category?category=' + encodeURIComponent(category);
+        document.getElementById('catBtnSlowStock').href = '/slow_stock?category=' + encodeURIComponent(category);
+        document.getElementById('catBtnAlerts').href = '/alerts?category=' + encodeURIComponent(category);
+        document.getElementById('catBtnRebalance').href = '/rebalancing?category=' + encodeURIComponent(category);
+      })
+      .catch(err => {
+        btnRunCat.disabled = false;
+        btnRunCat.innerHTML = '<i class="bi bi-play-fill me-1"></i>Calcular Forecast Categoría';
+        console.error('Error:', err);
+        alert('Error al calcular forecast: ' + err.message);
+      });
+  }
 
   showEmptyState();
 });

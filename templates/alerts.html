@@ -89,6 +89,16 @@
           </button>
         </div>
       </div>
+      
+      <div class="alerts-filter-group">
+        <span class="alerts-filter-label"><i class="bi bi-folder-fill me-1"></i>Categoría</span>
+        <select id="categoryFilter" class="form-select form-select-sm" style="width: auto; min-width: 150px;">
+          <option value="">Todas</option>
+          {% for cat in categories %}
+          <option value="{{ cat }}" {% if cat == category_filter %}selected{% endif %}>{{ cat }}</option>
+          {% endfor %}
+        </select>
+      </div>
     </div>
 
     <div class="alerts-results-summary">
@@ -188,19 +198,19 @@
       <nav>
         <ul class="pagination pagination-sm mb-0">
           <li class="page-item {% if page <= 1 %}disabled{% endif %}">
-            <a class="page-link" href="{{ url_for('alerts_page', severity=selected_severities|join(','), type=selected_types|join(','), store=store_filter, sku=sku_filter, page=page-1) }}">Ant</a>
+            <a class="page-link" href="{{ url_for('alerts_page', severity=selected_severities|join(','), type=selected_types|join(','), store=store_filter, sku=sku_filter, category=category_filter, page=page-1) }}">Ant</a>
           </li>
           {% for p in range(1, total_pages + 1) %}
             {% if p <= 3 or p > total_pages - 3 or (p >= page - 1 and p <= page + 1) %}
             <li class="page-item {% if p == page %}active{% endif %}">
-              <a class="page-link" href="{{ url_for('alerts_page', severity=selected_severities|join(','), type=selected_types|join(','), store=store_filter, sku=sku_filter, page=p) }}">{{ p }}</a>
+              <a class="page-link" href="{{ url_for('alerts_page', severity=selected_severities|join(','), type=selected_types|join(','), store=store_filter, sku=sku_filter, category=category_filter, page=p) }}">{{ p }}</a>
             </li>
             {% elif p == 4 or p == total_pages - 3 %}
             <li class="page-item disabled"><span class="page-link">...</span></li>
             {% endif %}
           {% endfor %}
           <li class="page-item {% if page >= total_pages %}disabled{% endif %}">
-            <a class="page-link" href="{{ url_for('alerts_page', severity=selected_severities|join(','), type=selected_types|join(','), store=store_filter, sku=sku_filter, page=page+1) }}">Sig</a>
+            <a class="page-link" href="{{ url_for('alerts_page', severity=selected_severities|join(','), type=selected_types|join(','), store=store_filter, sku=sku_filter, category=category_filter, page=page+1) }}">Sig</a>
           </li>
         </ul>
       </nav>
@@ -647,9 +657,11 @@
 document.addEventListener('DOMContentLoaded', function() {
   const pills = document.querySelectorAll('.alert-pill[data-filter-type]');
   const clearBtn = document.getElementById('clearFiltersBtn');
+  const categoryFilter = document.getElementById('categoryFilter');
   
   let selectedSeverities = {{ selected_severities|tojson|safe }};
   let selectedTypes = {{ selected_types|tojson|safe }};
+  let selectedCategory = '{{ category_filter|default("") }}';
   
   function updateUrl() {
     const params = new URLSearchParams();
@@ -659,8 +671,18 @@ document.addEventListener('DOMContentLoaded', function() {
     if (selectedTypes.length > 0) {
       params.set('type', selectedTypes.join(','));
     }
+    if (selectedCategory) {
+      params.set('category', selectedCategory);
+    }
     params.set('page', '1');
     window.location.href = '{{ url_for("alerts_page") }}?' + params.toString();
+  }
+  
+  if (categoryFilter) {
+    categoryFilter.addEventListener('change', function() {
+      selectedCategory = this.value;
+      updateUrl();
+    });
   }
   
   pills.forEach(function(pill) {

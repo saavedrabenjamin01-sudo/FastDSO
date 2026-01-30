@@ -47,6 +47,7 @@ Do not make changes to the folder `Excel tipo/`.
     - **Single SKU Export**: /forecast/export route generates Excel with complete SKU forecast details
     - **Batch Forecast Mode**: Two-tab interface (Single/Batch) with file upload (CSV/XLSX) or text paste, max 500 SKUs per run, stored in ForecastBatchRun and ForecastBatchItem models, with paginated results table, KPI cards (BUY_NOW/REVIEW/DO_NOT_BUY counts), explain modal, and batch export
     - **SKU-Aware Navigation**: Export, Alerts, and Slow Stock buttons pass SKU as query param for contextual filtering
+    - **Category Forecast Mode**: Third tab "Forecast por Categoría" for executive-level category purchase decisions with aggregated demand using SalesWeeklyAgg, KPI cards (weekly demand, horizon demand, total stock, deficit), decision badge (BUY_NOW/REVIEW/DO_NOT_BUY), action split showing redistribute potential vs purchase required, and contextual cross-links to dashboard_category, slow_stock, alerts, and rebalancing
 - **Inventory Optimization**:
     - **Store-to-Store Rebalancing**: A consolidated module offering auto-suggestions based on WOC and sales velocity, and an assisted manual plan where the system calculates optimal transfer amounts for user-provided SKUs.
     - **Stock-out Replenishment (BREAK_REPLENISH)**: Identifies and suggests replenishment for out-of-stock SKU-Store pairs with historical demand.
@@ -71,7 +72,7 @@ Do not make changes to the folder `Excel tipo/`.
 - **User & Access Management**: Administrators can manage users and their roles, controlling feature access.
 - **Reporting & Exports**: Enables exporting predictions, forecasts, and analysis results to Excel.
 - **Store Health Index**: A diagnostic scoring module (0-100) per store, based on weighted metrics like Fill Rate, Stockout Rate, Overstock Rate, and Sales Velocity, with status badges and configuration options.
-- **In-app Alerts Module**: Proactive alerts for conditions such as projected stockouts, overstock, silent SKUs (no sales), and broken stock, based on aggregated sales and lifecycle data.
+- **In-app Alerts Module**: Proactive alerts for conditions such as projected stockouts, overstock, silent SKUs (no sales), and broken stock, based on aggregated sales and lifecycle data. Features category filter dropdown for filtering alerts by product category with preserved pagination.
 - **Explainability Layer**: Provides transparent explanations for distribution and forecast suggestions, detailing calculations and decision logic, accessible via "Why?" buttons and debug fields.
 - **Macro Sales Layer**: Offers full catalog visibility through the `SalesWeeklyAgg` model for aggregated weekly sales, serving as a single source of truth for various modules including alerts, store health, and forecasting.
 - **SKU Lifecycle Layer**: Tracks global and store-level last sale dates (`SkuLifecycle`, `SkuStoreLifecycle`) for faster alert computation and demand analysis.
