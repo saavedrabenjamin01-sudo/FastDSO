@@ -164,10 +164,16 @@ class User(db.Model, UserMixin):
         return check_password_hash(self.password_hash, password)
 
     def has_permission(self, permission):
+        # Admin role bypasses all permission checks
+        if self.role == 'Admin':
+            return True
         permissions = ROLE_PERMISSIONS.get(self.role, [])
         return permission in permissions
 
     def get_permissions(self):
+        # Admin gets all permissions
+        if self.role == 'Admin':
+            return list(set(p for perms in ROLE_PERMISSIONS.values() for p in perms))
         return ROLE_PERMISSIONS.get(self.role, [])
 
 
@@ -11397,12 +11403,21 @@ def init_database():
         )
         db.session.add(admin)
         db.session.commit()
-        print("✅ Usuario admin creado (admin / admin)")
-    elif not admin.role or admin.role not in ROLES:
-        admin.role = 'Admin'
-        admin.is_active = True
-        db.session.commit()
-        print("✅ Usuario admin actualizado con rol Admin")
+        print("[INIT] Admin user created (admin / admin)")
+    else:
+        # Always ensure admin has correct role and is active
+        needs_update = False
+        if admin.role != 'Admin':
+            admin.role = 'Admin'
+            needs_update = True
+        if not admin.is_active:
+            admin.is_active = True
+            needs_update = True
+        if needs_update:
+            db.session.commit()
+            print("[INIT] Admin user role/status updated")
+        else:
+            print("[INIT] Admin user already exists with correct role")
 
 
 if __name__ == "__main__":
