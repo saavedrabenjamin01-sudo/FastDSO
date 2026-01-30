@@ -4107,6 +4107,358 @@ def api_forecast_v2_chart_data():
     })
 
 
+# =============================================================================
+# CENTRALIZED FORECAST DECISION ENGINE
+# =============================================================================
+# This is the single source of truth for all forecast decisions.
+# Used by: api_forecast_v2, api_forecast_batch, api_forecast_category
+# =============================================================================
+
+import logging
+forecast_logger = logging.getLogger('forecast_engine')
+
+class ForecastDecisionResult:
+    """Result from the Forecast Decision Engine."""
+    __slots__ = ['recommendation', 'reason_code', 'explanation', 'purchase_qty',
+                 'risk_level', 'decision_path', 'debug_info']
+    
+    def __init__(self, recommendation, reason_code, explanation, purchase_qty=0,
+                 risk_level='LOW', decision_path='', debug_info=None):
+        self.recommendation = recommendation  # BUY / NO_BUY / REDISTRIBUTE / BLOCKED
+        self.reason_code = reason_code        # Single deterministic code
+        self.explanation = explanation         # 1 sentence max
+        self.purchase_qty = purchase_qty
+        self.risk_level = risk_level          # HIGH / MEDIUM / LOW
+        self.decision_path = decision_path    # Internal path taken
+        self.debug_info = debug_info or {}
+    
+    def to_dict(self):
+        return {
+            'recommendation': self.recommendation,
+            'reason_code': self.reason_code,
+            'explanation': self.explanation,
+            'purchase_qty': self.purchase_qty,
+            'risk_level': self.risk_level,
+            'decision_path': self.decision_path,
+            'debug_info': self.debug_info
+        }
+
+
+def forecast_decision_engine(
+    sku: str,
+    avg_weekly_demand: float,
+    total_stock: int,
+    lead_time_weeks: float = 4.0,
+    safety_pct: float = 0.10,
+    horizon_weeks: int = 8,
+    alerts: list = None,
+    lifecycle_status: str = 'ACTIVE',
+    slow_stock_flagged: bool = False,
+    has_recent_sales: bool = True,
+    category_demand_fallback: float = None
+) -> ForecastDecisionResult:
+    """
+    Centralized Forecast Decision Pipeline.
+    
+    Decision Order (strict):
+    1) Risk Evaluation: Check alerts (breakage, projected breakage), slow stock flags, recent sales
+    2) Demand Estimation: Use SKU demand if available, fallback to category demand ONLY if no SKU sales
+    3) Coverage Calculation: Consolidate CD + store stock
+    4) Business Rules: Apply decision logic
+    
+    Returns:
+        ForecastDecisionResult with recommendation, reason_code, explanation
+    """
+    import math
+    
+    alerts = alerts or []
+    debug_info = {
+        'sku': sku,
+        'input_demand': avg_weekly_demand,
+        'total_stock': total_stock,
+        'lifecycle': lifecycle_status,
+        'slow_flagged': slow_stock_flagged,
+        'alert_types': [a.get('type') for a in alerts]
+    }
+    
+    # ==========================================================================
+    # STEP 1: RISK EVALUATION
+    # ==========================================================================
+    has_breakage = False
+    has_projected_stockout = False
+    has_overstock_alert = False
+    alert_severity = 'LOW'
+    
+    for alert in alerts:
+        atype = alert.get('type', '')
+        asev = alert.get('severity', 'LOW')
+        if atype == 'BROKEN_STOCK':
+            has_breakage = True
+            if asev == 'HIGH':
+                alert_severity = 'HIGH'
+            elif asev == 'MEDIUM' and alert_severity != 'HIGH':
+                alert_severity = 'MEDIUM'
+        elif atype == 'PROJECTED_STOCKOUT':
+            has_projected_stockout = True
+            if asev == 'HIGH':
+                alert_severity = 'HIGH'
+            elif asev == 'MEDIUM' and alert_severity != 'HIGH':
+                alert_severity = 'MEDIUM'
+        elif atype == 'OVERSTOCK':
+            has_overstock_alert = True
+    
+    debug_info['risk_eval'] = {
+        'has_breakage': has_breakage,
+        'has_projected_stockout': has_projected_stockout,
+        'has_overstock_alert': has_overstock_alert,
+        'alert_severity': alert_severity
+    }
+    
+    # ==========================================================================
+    # STEP 2: DEMAND ESTIMATION
+    # ==========================================================================
+    # Use SKU demand if available, fallback to category ONLY if SKU has no sales
+    final_demand = avg_weekly_demand
+    demand_source = 'SKU'
+    
+    if avg_weekly_demand <= 0 and category_demand_fallback is not None and category_demand_fallback > 0:
+        final_demand = category_demand_fallback
+        demand_source = 'CATEGORY_FALLBACK'
+    
+    debug_info['demand_est'] = {
+        'final_demand': final_demand,
+        'demand_source': demand_source
+    }
+    
+    # ==========================================================================
+    # STEP 3: COVERAGE CALCULATION
+    # ==========================================================================
+    weeks_of_cover = total_stock / max(final_demand, 0.01) if final_demand > 0 else 9999
+    horizon_demand = final_demand * horizon_weeks
+    lead_time_demand = final_demand * lead_time_weeks
+    safety_units = math.ceil(lead_time_demand * safety_pct)
+    required_stock = lead_time_demand + safety_units
+    raw_purchase_qty = max(0, math.ceil(required_stock - total_stock))
+    
+    debug_info['coverage'] = {
+        'weeks_of_cover': round(weeks_of_cover, 2),
+        'horizon_demand': round(horizon_demand, 1),
+        'lead_time_demand': round(lead_time_demand, 1),
+        'safety_units': safety_units,
+        'raw_purchase_qty': raw_purchase_qty
+    }
+    
+    # ==========================================================================
+    # STEP 4: BUSINESS RULES (strict order)
+    # ==========================================================================
+    MAX_WOC_THRESHOLD = 6.0  # Weeks of cover for overstock
+    
+    # Rule A: If overstock (high WOC without breakage or projected stockout) → NO_BUY
+    # Note: Breakage and projected stockout take precedence over overstock
+    if weeks_of_cover > MAX_WOC_THRESHOLD and not has_breakage and not has_projected_stockout:
+        forecast_logger.info(f"[{sku}] Path: OVERSTOCK_BLOCK | WOC={weeks_of_cover:.1f}")
+        return ForecastDecisionResult(
+            recommendation='NO_BUY',
+            reason_code='OVERSTOCK',
+            explanation=f'Stock excede {MAX_WOC_THRESHOLD} semanas de cobertura, no requiere compra.',
+            purchase_qty=0,
+            risk_level='LOW',
+            decision_path='A_OVERSTOCK_BLOCK',
+            debug_info=debug_info
+        )
+    
+    # Rule B: If slow stock flagged → BLOCKED
+    if slow_stock_flagged:
+        forecast_logger.info(f"[{sku}] Path: SLOW_STOCK_BLOCKED | flagged=True")
+        return ForecastDecisionResult(
+            recommendation='BLOCKED',
+            reason_code='SLOW_STOCK_FLAGGED',
+            explanation='SKU marcado como stock lento, compra bloqueada hasta revisión.',
+            purchase_qty=0,
+            risk_level='MEDIUM',
+            decision_path='B_SLOW_STOCK_BLOCKED',
+            debug_info=debug_info
+        )
+    
+    # Rule C: If lifecycle is DEAD → BLOCKED
+    if lifecycle_status == 'DEAD':
+        forecast_logger.info(f"[{sku}] Path: DEAD_SKU_BLOCKED | lifecycle=DEAD")
+        return ForecastDecisionResult(
+            recommendation='BLOCKED',
+            reason_code='DEAD_SKU',
+            explanation='SKU sin ventas en 90+ días, compra bloqueada.',
+            purchase_qty=0,
+            risk_level='LOW',
+            decision_path='C_DEAD_SKU_BLOCKED',
+            debug_info=debug_info
+        )
+    
+    # Rule D: If breakage + recent sales → BUY (urgent)
+    if has_breakage and has_recent_sales:
+        purchase_qty = max(raw_purchase_qty, math.ceil(lead_time_demand))
+        forecast_logger.info(f"[{sku}] Path: BREAKAGE_BUY | qty={purchase_qty}")
+        return ForecastDecisionResult(
+            recommendation='BUY',
+            reason_code='BREAKAGE_REPLENISH',
+            explanation=f'Quiebre detectado con demanda reciente, reponer {purchase_qty} unidades.',
+            purchase_qty=purchase_qty,
+            risk_level='HIGH',
+            decision_path='D_BREAKAGE_BUY',
+            debug_info=debug_info
+        )
+    
+    # Rule E: If breakage but no recent sales → REDISTRIBUTE
+    if has_breakage and not has_recent_sales:
+        forecast_logger.info(f"[{sku}] Path: BREAKAGE_REDISTRIBUTE | no recent sales")
+        return ForecastDecisionResult(
+            recommendation='REDISTRIBUTE',
+            reason_code='BREAKAGE_NO_DEMAND',
+            explanation='Quiebre detectado pero sin ventas recientes, redistribuir stock existente.',
+            purchase_qty=0,
+            risk_level='MEDIUM',
+            decision_path='E_BREAKAGE_REDISTRIBUTE',
+            debug_info=debug_info
+        )
+    
+    # Rule F: If coverage >= horizon demand → NO_BUY
+    if total_stock >= horizon_demand and weeks_of_cover >= lead_time_weeks:
+        forecast_logger.info(f"[{sku}] Path: ADEQUATE_COVERAGE | WOC={weeks_of_cover:.1f}")
+        return ForecastDecisionResult(
+            recommendation='NO_BUY',
+            reason_code='ADEQUATE_COVERAGE',
+            explanation=f'Stock cubre {weeks_of_cover:.1f} semanas, no requiere compra.',
+            purchase_qty=0,
+            risk_level='LOW',
+            decision_path='F_ADEQUATE_COVERAGE',
+            debug_info=debug_info
+        )
+    
+    # Rule G: If projected stockout or coverage below lead time → BUY (urgent)
+    if has_projected_stockout or weeks_of_cover < lead_time_weeks:
+        forecast_logger.info(f"[{sku}] Path: URGENT_BUY | qty={raw_purchase_qty}")
+        return ForecastDecisionResult(
+            recommendation='BUY',
+            reason_code='PROJECTED_STOCKOUT' if has_projected_stockout else 'LOW_COVERAGE',
+            explanation=f'Cobertura insuficiente ({weeks_of_cover:.1f} sem), comprar {raw_purchase_qty} unidades.',
+            purchase_qty=raw_purchase_qty,
+            risk_level='HIGH',
+            decision_path='G_URGENT_BUY',
+            debug_info=debug_info
+        )
+    
+    # Rule H: If raw_purchase_qty > 0 → BUY (normal)
+    if raw_purchase_qty > 0:
+        risk = 'MEDIUM' if weeks_of_cover < (lead_time_weeks * 1.5) else 'LOW'
+        forecast_logger.info(f"[{sku}] Path: STANDARD_BUY | qty={raw_purchase_qty}")
+        return ForecastDecisionResult(
+            recommendation='BUY',
+            reason_code='DEMAND_EXCEEDS_STOCK',
+            explanation=f'Demanda proyectada excede stock, comprar {raw_purchase_qty} unidades.',
+            purchase_qty=raw_purchase_qty,
+            risk_level=risk,
+            decision_path='H_STANDARD_BUY',
+            debug_info=debug_info
+        )
+    
+    # Rule I: Default → NO_BUY
+    forecast_logger.info(f"[{sku}] Path: DEFAULT_NO_BUY")
+    return ForecastDecisionResult(
+        recommendation='NO_BUY',
+        reason_code='SUFFICIENT_STOCK',
+        explanation='Stock suficiente para período proyectado.',
+        purchase_qty=0,
+        risk_level='LOW',
+        decision_path='I_DEFAULT_NO_BUY',
+        debug_info=debug_info
+    )
+
+
+def get_sku_forecast_data(product_id, store_id=None, history_weeks=12):
+    """
+    Fetch aggregated forecast data for a SKU using SalesWeeklyAgg.
+    Returns dict with weekly_demand, total_stock, alerts, lifecycle, etc.
+    """
+    today = date.today()
+    history_cutoff = today - timedelta(days=history_weeks * 7)
+    
+    # Get weekly demand from SalesWeeklyAgg
+    sales_q = db.session.query(
+        func.sum(SalesWeeklyAgg.units).label('total_units'),
+        func.count(func.distinct(SalesWeeklyAgg.week_start)).label('weeks_count')
+    ).filter(
+        SalesWeeklyAgg.product_id == product_id,
+        SalesWeeklyAgg.week_start >= history_cutoff
+    )
+    if store_id:
+        sales_q = sales_q.filter(SalesWeeklyAgg.store_id == store_id)
+    
+    sales_result = sales_q.first()
+    total_units = sales_result.total_units or 0
+    weeks_count = max(sales_result.weeks_count or 1, 1)
+    avg_weekly_demand = total_units / weeks_count
+    
+    # Get stock levels
+    latest_cd_date = db.session.query(func.max(StockCD.as_of_date)).scalar() or today
+    cd_stock = db.session.query(func.sum(StockCD.quantity)).filter(
+        StockCD.product_id == product_id,
+        StockCD.as_of_date == latest_cd_date
+    ).scalar() or 0
+    
+    latest_store_date = db.session.query(func.max(StockSnapshot.as_of_date)).scalar() or today
+    store_stock_q = db.session.query(func.sum(StockSnapshot.quantity)).filter(
+        StockSnapshot.product_id == product_id,
+        StockSnapshot.as_of_date == latest_store_date
+    )
+    if store_id:
+        store_stock_q = store_stock_q.filter(StockSnapshot.store_id == store_id)
+    store_stock = store_stock_q.scalar() or 0
+    
+    total_stock = int(cd_stock) + int(store_stock)
+    
+    # Check for recent sales (last 30 days)
+    recent_cutoff = today - timedelta(days=30)
+    recent_sales_q = db.session.query(func.sum(SalesWeeklyAgg.units)).filter(
+        SalesWeeklyAgg.product_id == product_id,
+        SalesWeeklyAgg.week_start >= recent_cutoff
+    )
+    if store_id:
+        recent_sales_q = recent_sales_q.filter(SalesWeeklyAgg.store_id == store_id)
+    recent_sales = recent_sales_q.scalar() or 0
+    has_recent_sales = recent_sales > 0
+    
+    return {
+        'avg_weekly_demand': avg_weekly_demand,
+        'total_stock': total_stock,
+        'cd_stock': int(cd_stock),
+        'store_stock': int(store_stock),
+        'has_recent_sales': has_recent_sales,
+        'weeks_with_sales': weeks_count
+    }
+
+
+def get_category_avg_demand(category, store_id=None, history_weeks=8):
+    """Get average weekly demand for a category (for cold start fallback)."""
+    today = date.today()
+    cutoff = today - timedelta(weeks=history_weeks)
+    
+    q = db.session.query(
+        func.sum(SalesWeeklyAgg.units).label('total'),
+        func.count(func.distinct(SalesWeeklyAgg.product_id)).label('sku_count')
+    ).filter(
+        SalesWeeklyAgg.category == category,
+        SalesWeeklyAgg.week_start >= cutoff
+    )
+    if store_id:
+        q = q.filter(SalesWeeklyAgg.store_id == store_id)
+    
+    result = q.first()
+    total = result.total or 0
+    sku_count = max(result.sku_count or 1, 1)
+    
+    # Return per-SKU average demand
+    return (total / history_weeks) / sku_count if sku_count > 0 else 0
+
+
 @app.route('/api/forecast_v2', methods=['GET'])
 @login_required
 @require_permission('forecast_v2:view')
@@ -4282,6 +4634,7 @@ def api_forecast_v2():
         "weeks_of_cover": weeks_of_cover
     }
 
+    # Get lifecycle status
     store_id_filter = None
     if store_param:
         store_obj = Store.query.filter_by(name=store_param).first()
@@ -4292,93 +4645,69 @@ def api_forecast_v2():
     lifecycle_map = classify_sku_lifecycle(sales_30d_map, sales_90d_map, sales_ever_map, {product.id})
     lifecycle_status = lifecycle_map.get(product.id, 'UNKNOWN')
     
+    # Get alerts for this SKU
     all_alerts = compute_alerts()
     sku_alerts = [a for a in all_alerts if a.get('sku', '').lower() == sku_param.lower()]
     
+    # Check slow stock flag
     slow_stock_flagged = not product.eligible_for_distribution if hasattr(product, 'eligible_for_distribution') else False
     
-    # Use SET for deduplicated reason codes
-    reason_codes_set = set()
-    risk_level = 'LOW'
+    # Check for recent sales (last 30 days)
+    recent_cutoff = today - timedelta(days=30)
+    recent_sales_q = db.session.query(func.sum(SalesWeeklyAgg.units)).filter(
+        SalesWeeklyAgg.product_id == product.id,
+        SalesWeeklyAgg.week_start >= recent_cutoff
+    )
+    if store_id_filter:
+        recent_sales_q = recent_sales_q.filter(SalesWeeklyAgg.store_id == store_id_filter)
+    recent_sales = recent_sales_q.scalar() or 0
+    has_recent_sales = recent_sales > 0
     
-    # Detect broken_stock_flag from alerts
-    broken_stock_flag = False
-    for alert in sku_alerts:
-        alert_type = alert.get('type', '')
-        alert_severity = alert.get('severity', 'LOW')
-        if alert_type == 'PROJECTED_STOCKOUT':
-            risk_level = 'HIGH' if alert_severity == 'HIGH' else 'MEDIUM'
-            reason_codes_set.add('PROJECTED_STOCKOUT')
-        elif alert_type == 'BROKEN_STOCK':
-            broken_stock_flag = True
-            if alert_severity == 'HIGH':
-                risk_level = 'HIGH'
-            reason_codes_set.add('BROKEN_STOCK')
-        elif alert_type == 'OVERSTOCK':
-            reason_codes_set.add('OVERSTOCK')
-        elif alert_type == 'SILENT_SKU':
-            reason_codes_set.add('SILENT_SKU')
+    # Get category demand fallback for new SKUs
+    category_demand_fallback = None
+    if lifecycle_status == 'NEW' and product.category:
+        category_demand_fallback = get_category_avg_demand(product.category, store_id_filter)
     
-    if slow_stock_flagged:
-        reason_codes_set.add('SLOW_STOCK_FLAG')
-        if risk_level == 'LOW':
-            risk_level = 'MEDIUM'
+    # =========================================================================
+    # USE CENTRALIZED FORECAST DECISION ENGINE
+    # =========================================================================
+    decision_result = forecast_decision_engine(
+        sku=sku_param,
+        avg_weekly_demand=avg_last4,
+        total_stock=stock_total,
+        lead_time_weeks=lead_time_weeks,
+        safety_pct=safety_pct,
+        horizon_weeks=horizon_weeks,
+        alerts=sku_alerts,
+        lifecycle_status=lifecycle_status,
+        slow_stock_flagged=slow_stock_flagged,
+        has_recent_sales=has_recent_sales,
+        category_demand_fallback=category_demand_fallback
+    )
     
-    if lifecycle_status == 'DEAD':
-        reason_codes_set.add('DEAD_SKU')
-    elif lifecycle_status == 'SLOW':
-        reason_codes_set.add('SLOW_SKU')
-    
-    # Decision engine with proper precedence (per spec)
-    MAX_WOC = 6.0  # Max weeks of cover threshold for overstock
-    
-    # Redefine overstock_flag to avoid contradiction: only if NOT broken stock
-    overstock_flag = (weeks_of_cover > MAX_WOC) and (not broken_stock_flag)
-    
-    # Decision precedence policy:
-    # A) If overstock_flag == True -> DO_NOT_BUY
-    # B) Else if broken_stock_flag and raw_purchase_qty == 0 -> REVIEW (redistribute first)
-    # C) Else if raw_purchase_qty > 0 -> BUY_NOW or REVIEW based on coverage
-    # D) Else -> DO_NOT_BUY based on lifecycle/other rules
-    
-    if overstock_flag:
+    # Map engine output to API response format
+    recommendation = decision_result.recommendation
+    # Map new format to legacy decision format for backward compatibility
+    if recommendation == 'BUY':
+        decision = 'BUY_NOW'
+    elif recommendation == 'NO_BUY':
         decision = 'DO_NOT_BUY'
-        final_purchase_qty = 0
-        reason_codes_set.add('OVERSTOCK_BLOCK')
-    elif lifecycle_status == 'DEAD':
-        decision = 'DO_NOT_BUY'
-        final_purchase_qty = 0
-    elif broken_stock_flag and raw_purchase_qty == 0:
-        # Stores have stockouts but total stock covers demand -> redistribute
+    elif recommendation == 'REDISTRIBUTE':
         decision = 'REVIEW'
-        final_purchase_qty = 0
-        reason_codes_set.add('BROKEN_STOCK_REBALANCE')
-    elif raw_purchase_qty > 0:
-        # Need to purchase
-        if broken_stock_flag:
-            reason_codes_set.add('BROKEN_STOCK')
-        reason_codes_set.add('DEMAND_EXCEEDS_STOCK')
-        if weeks_of_cover < lead_time_weeks:
-            decision = 'BUY_NOW'
-        else:
-            decision = 'BUY_NOW' if risk_level == 'HIGH' else 'REVIEW'
-        final_purchase_qty = raw_purchase_qty
+    elif recommendation == 'BLOCKED':
+        decision = 'DO_NOT_BUY'
     else:
-        decision = 'DO_NOT_BUY'
-        final_purchase_qty = 0
-    
-    # Consistency guards
-    if decision == 'DO_NOT_BUY':
-        final_purchase_qty = 0
-    elif final_purchase_qty > 0 and decision == 'DO_NOT_BUY':
-        # Force REVIEW if we have units to buy
         decision = 'REVIEW'
     
-    # Convert set to list for output
-    reason_codes = list(reason_codes_set)
-    buy_now = (decision == 'BUY_NOW')
+    final_purchase_qty = decision_result.purchase_qty
+    risk_level = decision_result.risk_level
+    reason_code = decision_result.reason_code
+    
+    # Detect broken_stock_flag from alerts for backward compatibility
+    broken_stock_flag = any(a.get('type') == 'BROKEN_STOCK' for a in sku_alerts)
     
     kpis['suggested_purchase'] = final_purchase_qty
+    weeks_of_cover = round(stock_total / max(avg_last4, 0.01), 1) if avg_last4 > 0 else 9999
     
     model_used = 'SMA4'
     if lifecycle_status == 'SLOW':
@@ -4402,14 +4731,15 @@ def api_forecast_v2():
     log_audit(
         action='forecast_v2.run',
         status='success',
-        message=f"Forecast for SKU {sku_param}",
+        message=f"Forecast for SKU {sku_param} | Path: {decision_result.decision_path}",
         metadata={
             'sku': sku_param,
             'store': store_param or 'ALL',
             'horizon_weeks': horizon_weeks,
             'lead_time_weeks': lead_time_weeks,
             'safety_pct': safety_pct,
-            'kpis': kpis
+            'kpis': kpis,
+            'decision_path': decision_result.decision_path
         }
     )
 
@@ -4427,15 +4757,18 @@ def api_forecast_v2():
         "kpis": kpis,
         "lifecycle_status": lifecycle_status,
         "model_used": model_used,
-        "buy_now": buy_now,
+        "buy_now": (decision == 'BUY_NOW'),
         "risk_level": risk_level,
         "decision": decision,
-        "reason_code": '; '.join(reason_codes) if reason_codes else 'STANDARD',
-        "reasons": reason_codes,
+        "recommendation": recommendation,
+        "reason_code": reason_code,
+        "explanation": decision_result.explanation,
+        "reasons": [reason_code],
         "alerts": [{"type": a.get('type'), "severity": a.get('severity')} for a in sku_alerts],
         "slow_stock_flagged": slow_stock_flagged,
         "broken_stock_flag": broken_stock_flag,
-        "explain_bullets": explain_bullets
+        "explain_bullets": explain_bullets,
+        "decision_path": decision_result.decision_path
     })
 
 
@@ -4731,11 +5064,33 @@ def api_forecast_batch():
     )
     store_stock_map = {r.product_id: int(r.qty) for r in store_rows}
     
+    # Pre-fetch recent sales data (last 30 days) for has_recent_sales check
+    recent_cutoff = today - timedelta(days=30)
+    recent_sales_rows = (
+        db.session.query(
+            SalesWeeklyAgg.product_id,
+            db.func.sum(SalesWeeklyAgg.units).label('units')
+        )
+        .filter(SalesWeeklyAgg.product_id.in_(all_product_ids))
+        .filter(SalesWeeklyAgg.week_start >= recent_cutoff)
+        .group_by(SalesWeeklyAgg.product_id)
+        .all()
+    )
+    recent_sales_map = {r.product_id: r.units for r in recent_sales_rows}
+    
+    # Pre-fetch category average demands for cold start fallback
+    categories = set(p.category for p in products if p.category)
+    category_demand_map = {}
+    for cat in categories:
+        category_demand_map[cat] = get_category_avg_demand(cat)
+    
     batch_id = str(uuid.uuid4())
     results = []
     buy_now_count = 0
     review_count = 0
     do_not_buy_count = 0
+    blocked_count = 0
+    redistribute_count = 0
     broken_stock_count = 0
     
     for sku in sku_list:
@@ -4753,102 +5108,58 @@ def api_forecast_batch():
         lifecycle_status = lifecycle_map.get(pid, 'UNKNOWN')
         sku_alerts = alerts_by_sku.get(sku, [])
         slow_stock_flagged = not product.eligible_for_distribution if hasattr(product, 'eligible_for_distribution') else False
+        has_recent_sales = recent_sales_map.get(pid, 0) > 0
         
-        # Use SET for deduplicated reason codes
-        reasons_set = set()
-        risk_level = 'LOW'
+        # Get category demand fallback for new SKUs
+        category_demand_fallback = None
+        if lifecycle_status == 'NEW' and product.category:
+            category_demand_fallback = category_demand_map.get(product.category, 0)
         
-        # Detect broken_stock_flag from alerts
-        broken_stock_flag = False
-        for alert in sku_alerts:
-            alert_type = alert.get('type', '')
-            alert_severity = alert.get('severity', 'LOW')
-            if alert_type == 'PROJECTED_STOCKOUT':
-                risk_level = 'HIGH' if alert_severity == 'HIGH' else 'MEDIUM'
-                reasons_set.add('PROJECTED_STOCKOUT')
-            elif alert_type == 'BROKEN_STOCK':
-                broken_stock_flag = True
-                if alert_severity == 'HIGH':
-                    risk_level = 'HIGH'
-                reasons_set.add('BROKEN_STOCK')
-            elif alert_type == 'OVERSTOCK':
-                reasons_set.add('OVERSTOCK')
+        # =====================================================================
+        # USE CENTRALIZED FORECAST DECISION ENGINE
+        # =====================================================================
+        decision_result = forecast_decision_engine(
+            sku=sku,
+            avg_weekly_demand=avg_weekly,
+            total_stock=total_stock,
+            lead_time_weeks=lead_time_weeks,
+            safety_pct=safety_pct,
+            horizon_weeks=horizon_weeks,
+            alerts=sku_alerts,
+            lifecycle_status=lifecycle_status,
+            slow_stock_flagged=slow_stock_flagged,
+            has_recent_sales=has_recent_sales,
+            category_demand_fallback=category_demand_fallback
+        )
         
-        if slow_stock_flagged:
-            reasons_set.add('SLOW_STOCK')
-            if risk_level == 'LOW':
-                risk_level = 'MEDIUM'
-        
-        if lifecycle_status == 'DEAD':
-            reasons_set.add('DEAD')
-        elif lifecycle_status == 'SLOW':
-            reasons_set.add('SLOW')
-        
-        weeks_of_cover = total_stock / max(avg_weekly, 0.1)
-        demand_lead_time = avg_weekly * lead_time_weeks
-        safety_units = math.ceil(demand_lead_time * safety_pct)
-        raw_purchase_qty = max(0, math.ceil(demand_lead_time + safety_units - total_stock))
-        
-        # Decision engine with proper precedence (per spec)
-        MAX_WOC = 6.0  # Max weeks of cover threshold for overstock
-        
-        # Redefine overstock_flag to avoid contradiction: only if NOT broken stock
-        overstock_flag = (weeks_of_cover > MAX_WOC) and (not broken_stock_flag)
-        
-        # Decision precedence policy:
-        # A) If overstock_flag == True -> DO_NOT_BUY
-        # B) Else if broken_stock_flag and raw_purchase_qty == 0 -> REVIEW (redistribute first)
-        # C) Else if raw_purchase_qty > 0 -> BUY_NOW or REVIEW based on coverage
-        # D) Else -> DO_NOT_BUY based on lifecycle/other rules
-        
-        if overstock_flag:
+        # Map engine output to legacy format
+        recommendation = decision_result.recommendation
+        if recommendation == 'BUY':
+            decision = 'BUY_NOW'
+            buy_now_count += 1
+        elif recommendation == 'NO_BUY':
             decision = 'DO_NOT_BUY'
-            final_purchase_qty = 0
-            reasons_set.add('OVERSTOCK_BLOCK')
             do_not_buy_count += 1
-        elif lifecycle_status == 'DEAD':
-            decision = 'DO_NOT_BUY'
-            final_purchase_qty = 0
-            do_not_buy_count += 1
-        elif broken_stock_flag and raw_purchase_qty == 0:
-            # Stores have stockouts but total stock covers demand -> redistribute
+        elif recommendation == 'REDISTRIBUTE':
             decision = 'REVIEW'
-            final_purchase_qty = 0
-            reasons_set.add('BROKEN_STOCK_REBALANCE')
-            review_count += 1
-        elif raw_purchase_qty > 0:
-            # Need to purchase
-            if broken_stock_flag:
-                reasons_set.add('BROKEN_STOCK')
-            reasons_set.add('DEMAND_EXCEEDS_STOCK')
-            if weeks_of_cover < lead_time_weeks:
-                decision = 'BUY_NOW'
-                buy_now_count += 1
-            else:
-                decision = 'BUY_NOW' if risk_level == 'HIGH' else 'REVIEW'
-                if decision == 'BUY_NOW':
-                    buy_now_count += 1
-                else:
-                    review_count += 1
-            final_purchase_qty = raw_purchase_qty
+            redistribute_count += 1
+        elif recommendation == 'BLOCKED':
+            decision = 'DO_NOT_BUY'
+            blocked_count += 1
         else:
-            decision = 'DO_NOT_BUY'
-            final_purchase_qty = 0
-            do_not_buy_count += 1
-        
-        # Consistency guards
-        if decision == 'DO_NOT_BUY':
-            final_purchase_qty = 0
-        elif final_purchase_qty > 0 and decision == 'DO_NOT_BUY':
-            # Force REVIEW if we have units to buy
             decision = 'REVIEW'
+            review_count += 1
         
-        # Convert set to list
-        reasons = list(reasons_set)
+        final_purchase_qty = decision_result.purchase_qty
+        risk_level = decision_result.risk_level
+        reason_code = decision_result.reason_code
         
-        # Track broken stock count
+        # Detect broken_stock_flag for backward compatibility
+        broken_stock_flag = any(a.get('type') == 'BROKEN_STOCK' for a in sku_alerts)
         if broken_stock_flag:
             broken_stock_count += 1
+        
+        weeks_of_cover = total_stock / max(avg_weekly, 0.01) if avg_weekly > 0 else 9999
         
         model_used = 'SMA4'
         if lifecycle_status == 'SLOW':
@@ -4882,7 +5193,7 @@ def api_forecast_batch():
             suggested_purchase=final_purchase_qty,
             decision=decision,
             risk_level=risk_level,
-            reason_summary='; '.join(reasons[:3]) if reasons else 'STANDARD',
+            reason_summary=reason_code,
             explain_json=json.dumps(explain_bullets)
         )
         db.session.add(item)
@@ -4897,9 +5208,11 @@ def api_forecast_batch():
             'total_stock': total_stock,
             'suggested_purchase': final_purchase_qty,
             'decision': decision,
+            'recommendation': recommendation,
             'risk_level': risk_level,
-            'reason_summary': '; '.join(reasons) if reasons else 'STANDARD',
-            'reasons': reasons,
+            'reason_code': reason_code,
+            'explanation': decision_result.explanation,
+            'decision_path': decision_result.decision_path,
             'broken_stock_flag': broken_stock_flag,
             'explain_bullets': explain_bullets
         })
@@ -4928,8 +5241,10 @@ def api_forecast_batch():
         metadata={
             'total_skus': len(results),
             'buy_now': buy_now_count,
-            'review': review_count,
-            'do_not_buy': do_not_buy_count
+            'review': review_count + redistribute_count,
+            'do_not_buy': do_not_buy_count + blocked_count,
+            'blocked': blocked_count,
+            'redistribute': redistribute_count
         }
     )
     
@@ -4937,9 +5252,11 @@ def api_forecast_batch():
         'batch_id': batch_id,
         'total_skus': len(results),
         'buy_now_count': buy_now_count,
-        'review_count': review_count,
-        'do_not_buy_count': do_not_buy_count,
+        'review_count': review_count + redistribute_count,
+        'do_not_buy_count': do_not_buy_count + blocked_count,
         'broken_stock_count': broken_stock_count,
+        'blocked_count': blocked_count,
+        'redistribute_count': redistribute_count,
         'not_found': len(sku_list) - len(results),
         'results': results
     })
@@ -5114,24 +5431,48 @@ def api_forecast_category():
     # Coverage in weeks
     coverage_weeks = round(total_stock / weekly_demand, 1) if weekly_demand > 0 else 999
     
-    # Decision logic
-    decision = "DO_NOT_BUY"
-    risk_level = "LOW"
-    reason_code = "ADEQUATE_STOCK"
+    # =========================================================================
+    # USE CENTRALIZED FORECAST DECISION ENGINE FOR CATEGORY
+    # Category uses aggregated demand - no fallback needed (it IS the category)
+    # =========================================================================
+    # Check for recent category sales (last 30 days)
+    recent_cutoff = today - timedelta(days=30)
+    recent_cat_sales = db.session.query(func.sum(SalesWeeklyAgg.units)).filter(
+        SalesWeeklyAgg.category == category,
+        SalesWeeklyAgg.week_start >= recent_cutoff
+    ).scalar() or 0
+    has_recent_sales = recent_cat_sales > 0
     
-    if deficit > 0:
-        if coverage_weeks < lead_time_weeks:
-            decision = "BUY_NOW"
-            risk_level = "HIGH"
-            reason_code = "COVERAGE_BELOW_LEAD_TIME"
-        elif coverage_weeks < (lead_time_weeks + horizon_weeks * 0.5):
-            decision = "REVIEW"
-            risk_level = "MEDIUM"
-            reason_code = "COVERAGE_PARTIAL"
-        else:
-            decision = "DO_NOT_BUY"
-            risk_level = "LOW"
-            reason_code = "ADEQUATE_COVERAGE"
+    # Note: Category forecast uses aggregate demand directly (not as fallback)
+    # Category-level alerts are not directly applicable, so we pass empty list
+    decision_result = forecast_decision_engine(
+        sku=f"CAT:{category}",
+        avg_weekly_demand=weekly_demand,
+        total_stock=int(total_stock),
+        lead_time_weeks=lead_time_weeks,
+        safety_pct=safety_pct,
+        horizon_weeks=horizon_weeks,
+        alerts=[],  # No SKU-level alerts for category aggregate
+        lifecycle_status='ACTIVE',  # Categories are always considered active
+        slow_stock_flagged=False,
+        has_recent_sales=has_recent_sales,
+        category_demand_fallback=None  # Already using category demand
+    )
+    
+    # Map engine output to category response format
+    recommendation = decision_result.recommendation
+    if recommendation == 'BUY':
+        decision = 'BUY_NOW'
+    elif recommendation == 'NO_BUY':
+        decision = 'DO_NOT_BUY'
+    elif recommendation == 'REDISTRIBUTE':
+        decision = 'REVIEW'
+    else:
+        decision = 'REVIEW'
+    
+    risk_level = decision_result.risk_level
+    reason_code = decision_result.reason_code
+    explanation = decision_result.explanation
     
     # Suggested action split (redistribute vs purchase)
     redistribute_potential = 0
@@ -5185,6 +5526,9 @@ def api_forecast_category():
     # SKU count in category
     sku_count = Product.query.filter_by(category=category).count()
     
+    # Log decision path for category forecast
+    forecast_logger.info(f"[CAT:{category}] Path: {decision_result.decision_path} | Decision: {decision}")
+    
     return jsonify({
         'category': category,
         'sku_count': sku_count,
@@ -5196,14 +5540,17 @@ def api_forecast_category():
         'safety_stock': safety_stock,
         'stock_cd': stock_cd,
         'stock_stores': stock_stores,
-        'total_stock': total_stock,
+        'total_stock': int(total_stock),
         'coverage_weeks': coverage_weeks,
         'deficit': deficit,
         'redistribute_potential': redistribute_potential,
         'purchase_required': purchase_required,
         'decision': decision,
+        'recommendation': recommendation,
         'risk_level': risk_level,
         'reason_code': reason_code,
+        'explanation': explanation,
+        'decision_path': decision_result.decision_path,
         'next_action': next_action,
         'explain_bullets': explain_bullets
     })
@@ -5316,31 +5663,47 @@ def api_forecast_category_batch():
         
         coverage_weeks = round(total_stock / weekly_demand, 1) if weekly_demand > 0 else 999
         
-        decision = "DO_NOT_BUY"
-        reason = "Stock adecuado"
+        # Use centralized forecast decision engine
+        decision_result = forecast_decision_engine(
+            sku=f"CAT:{cat}",
+            avg_weekly_demand=weekly_demand,
+            total_stock=int(total_stock),
+            lead_time_weeks=lead_time_weeks,
+            safety_pct=safety_pct,
+            horizon_weeks=horizon_weeks,
+            alerts=[],
+            lifecycle_status='ACTIVE',
+            slow_stock_flagged=False,
+            has_recent_sales=weekly_demand > 0,
+            category_demand_fallback=None
+        )
         
-        if deficit > 0:
-            if coverage_weeks < lead_time_weeks:
-                decision = "BUY_NOW"
-                reason = "Cobertura bajo lead time"
-                buy_now_count += 1
-            elif coverage_weeks < (lead_time_weeks + horizon_weeks * 0.5):
-                decision = "REVIEW"
-                reason = "Cobertura parcial"
-                review_count += 1
-            else:
-                do_not_buy_count += 1
-        else:
+        recommendation = decision_result.recommendation
+        if recommendation == 'BUY':
+            decision = 'BUY_NOW'
+            buy_now_count += 1
+        elif recommendation == 'NO_BUY':
+            decision = 'DO_NOT_BUY'
             do_not_buy_count += 1
+        elif recommendation == 'REDISTRIBUTE':
+            decision = 'REVIEW'
+            review_count += 1
+        else:
+            decision = 'REVIEW'
+            review_count += 1
         
         results.append({
             'category': cat,
             'weekly_demand': weekly_demand,
-            'total_stock': total_stock,
+            'total_stock': int(total_stock),
             'deficit': deficit,
             'coverage_weeks': coverage_weeks,
             'decision': decision,
-            'reason': reason
+            'recommendation': recommendation,
+            'reason_code': decision_result.reason_code,
+            'explanation': decision_result.explanation,
+            'decision_path': decision_result.decision_path,
+            'risk_level': decision_result.risk_level
         })
     
     return jsonify({
