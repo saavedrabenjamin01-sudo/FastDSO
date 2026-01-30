@@ -39,11 +39,14 @@ Do not make changes to the folder `Excel tipo/`.
 - **Distribution Predictions**: Generates product distribution suggestions based on moving averages and historical data.
     - **Stockout-Aware Backoff**: For all SMA modes (SMA1/SMA2/SMA3), if a store has 0 sales in the primary window AND is currently stocked out (stock=0), the system falls back to a 12-week window rate if proven demand exists. This prevents high-selling stores from receiving 0 units just because they were stocked out during the primary window. Reason code: BACKOFF_STOCKOUT.
 - **Advanced Forecasting (Forecast Compra V2)**: Lifecycle-aware purchase forecasting using SalesWeeklyAgg as single source of truth:
+    - **Centralized Decision Engine**: `forecast_decision_engine()` with 4-step pipeline: Risk Evaluation → Demand Estimation → Coverage Calculation → Business Rules
+    - **Decision Paths (A-I)**: Deterministic decision outcomes - A: Overstock Block, B: Slow Stock Blocked, C: Dead SKU Blocked, D: Breakage BUY, E: Breakage Redistribute, F: Adequate Coverage, G: Projected Stockout BUY, H: Deficit BUY, I: Review
+    - **Precedence Rules**: Breakage and projected stockout alerts take precedence over overstock blocks
     - **Lifecycle Classification**: SKUs classified as ACTIVE (30d sales), SLOW (31-90d), DEAD (90d+), or NEW (no history)
     - **Model Selection**: ACTIVE uses user-selected SMA, SLOW uses 12-week SMA with 0.5 penalty, DEAD blocks purchases, NEW uses category cold start
-    - **Alerts Integration**: PROJECTED_STOCKOUT/BROKEN_STOCK force buy_now=true, OVERSTOCK blocks purchase
+    - **Alerts Integration**: PROJECTED_STOCKOUT/BROKEN_STOCK force buy_now=true, OVERSTOCK blocks purchase (unless breakage exists)
     - **Slow Stock Integration**: Reduces purchase qty by 50% for flagged SKUs
-    - **Explainability**: Each result includes buy_now, risk_level (HIGH/MEDIUM/LOW), reason_code, model_used, lifecycle_status; generate_forecast_explanation() produces 6 business-readable bullets
+    - **Explainability**: Each result includes recommendation (BUY/NO_BUY/REDISTRIBUTE/BLOCKED), reason_code, explanation (1 sentence), decision_path for internal logging
     - **Single SKU Export**: /forecast/export route generates Excel with complete SKU forecast details
     - **Batch Forecast Mode**: Two-tab interface (Single/Batch) with file upload (CSV/XLSX) or text paste, max 500 SKUs per run, stored in ForecastBatchRun and ForecastBatchItem models, with paginated results table, KPI cards (BUY_NOW/REVIEW/DO_NOT_BUY counts), explain modal, and batch export
     - **SKU-Aware Navigation**: Export, Alerts, and Slow Stock buttons pass SKU as query param for contextual filtering
