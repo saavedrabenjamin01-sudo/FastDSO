@@ -11403,9 +11403,9 @@ def init_database():
         )
         db.session.add(admin)
         db.session.commit()
-        print("[INIT] Admin user created (admin / admin)")
+        print("[INIT] Admin created")
     else:
-        # Always ensure admin has correct role and is active
+        # Always ensure admin has correct role and is active (do NOT touch password)
         needs_update = False
         if admin.role != 'Admin':
             admin.role = 'Admin'
@@ -11415,9 +11415,9 @@ def init_database():
             needs_update = True
         if needs_update:
             db.session.commit()
-            print("[INIT] Admin user role/status updated")
+            print("[INIT] Admin promoted to admin role")
         else:
-            print("[INIT] Admin user already exists with correct role")
+            print("[INIT] Admin OK")
 
 
 if __name__ == "__main__":
