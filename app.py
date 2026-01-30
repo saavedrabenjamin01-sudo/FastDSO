@@ -9596,7 +9596,183 @@ def flag_slow_stock_bulk():
             message=str(e)
         )
     
-    return redirect(request.referrer or url_for('slow_stock'))
+    return_url = request.form.get('return_url')
+    return redirect(return_url or request.referrer or url_for('slow_stock'))
+
+
+@app.route('/dashboard_category/no_movement/flag_all', methods=['POST'])
+@login_required
+@require_permission('slow_stock:run')
+def flag_slow_stock_all_no_movement():
+    """
+    Bulk flag ALL no-movement SKUs for the given category/window/store filters.
+    Processes in batches for performance.
+    """
+    category = request.form.get('category', '')
+    window_days = int(request.form.get('window_days', 30))
+    store_name = request.form.get('store', '')
+    return_url = request.form.get('return_url')
+    
+    if not category:
+        flash('Debe seleccionar una categoría.', 'warning')
+        return redirect(return_url or url_for('dashboard_category'))
+    
+    today = date.today()
+    window_start = today - timedelta(days=window_days)
+    
+    store_id_filter = None
+    if store_name:
+        store_obj = Store.query.filter_by(name=store_name).first()
+        if store_obj:
+            store_id_filter = store_obj.id
+    
+    # Build the same query as category_no_movement but get all product IDs
+    sales_subq = db.session.query(
+        SalesWeeklyAgg.product_id,
+        func.sum(SalesWeeklyAgg.units).label('total_sales')
+    ).filter(
+        SalesWeeklyAgg.category == category,
+        SalesWeeklyAgg.week_start >= window_start
+    )
+    if store_id_filter:
+        sales_subq = sales_subq.filter(SalesWeeklyAgg.store_id == store_id_filter)
+    sales_subq = sales_subq.group_by(SalesWeeklyAgg.product_id).subquery()
+    
+    cd_stock_subq = db.session.query(
+        StockCD.product_id,
+        func.sum(StockCD.quantity).label('stock_cd')
+    ).join(Product, StockCD.product_id == Product.id).filter(
+        Product.category == category
+    ).group_by(StockCD.product_id).subquery()
+    
+    store_stock_subq = db.session.query(
+        StockSnapshot.product_id,
+        func.sum(StockSnapshot.quantity).label('stock_stores')
+    ).join(Product, StockSnapshot.product_id == Product.id).filter(
+        Product.category == category
+    )
+    if store_id_filter:
+        store_stock_subq = store_stock_subq.filter(StockSnapshot.store_id == store_id_filter)
+    store_stock_subq = store_stock_subq.group_by(StockSnapshot.product_id).subquery()
+    
+    # Get all product IDs matching no-movement criteria
+    product_ids = db.session.query(Product.id).outerjoin(
+        sales_subq, Product.id == sales_subq.c.product_id
+    ).outerjoin(
+        cd_stock_subq, Product.id == cd_stock_subq.c.product_id
+    ).outerjoin(
+        store_stock_subq, Product.id == store_stock_subq.c.product_id
+    ).filter(
+        Product.category == category,
+        Product.eligible_for_distribution == True,
+        func.coalesce(sales_subq.c.total_sales, 0) == 0,
+        (func.coalesce(cd_stock_subq.c.stock_cd, 0) + func.coalesce(store_stock_subq.c.stock_stores, 0)) > 0
+    ).all()
+    
+    product_ids = [pid[0] for pid in product_ids]
+    
+    if not product_ids:
+        flash('No se encontraron SKUs sin movimiento para marcar.', 'info')
+        return redirect(return_url or url_for('dashboard_category', category=category, window=window_days, store=store_name))
+    
+    # Process in batches
+    flagged = 0
+    batch_size = 100
+    
+    for i in range(0, len(product_ids), batch_size):
+        batch = product_ids[i:i + batch_size]
+        products = Product.query.filter(Product.id.in_(batch)).all()
+        
+        for product in products:
+            risk_score, risk_reason = compute_risk_score(product.id)
+            product.eligible_for_distribution = False
+            product.risk_score = risk_score
+            product.risk_reason = risk_reason
+            flagged += 1
+    
+    try:
+        db.session.commit()
+        
+        log_audit(
+            action='slow_stock.flag_all_no_movement',
+            status='success',
+            message=f'Bulk flagged {flagged} no-movement products for category {category}',
+            metadata={
+                'count': flagged,
+                'category': category,
+                'window_days': window_days,
+                'store': store_name
+            }
+        )
+        
+        flash(f'{flagged} SKUs sin movimiento marcados para gestión de stock lento.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error al marcar productos: {str(e)}', 'danger')
+        log_audit(
+            action='slow_stock.flag_all_no_movement',
+            status='fail',
+            message=str(e)
+        )
+    
+    return redirect(return_url or url_for('category_no_movement', category=category, window_days=window_days, store=store_name))
+
+
+@app.route('/dashboard_category/no_movement/export_selected', methods=['POST'])
+@login_required
+@require_permission('dashboard:view')
+def category_no_movement_export_selected():
+    """Export selected no-movement SKUs to Excel."""
+    product_ids_raw = request.form.get('product_ids', '')
+    category = request.form.get('category', 'export')
+    
+    product_ids = []
+    if product_ids_raw:
+        product_ids = [pid.strip() for pid in product_ids_raw.split(',') if pid.strip()]
+    
+    if not product_ids:
+        flash('No se seleccionaron productos para exportar.', 'warning')
+        return redirect(request.referrer or url_for('dashboard_category'))
+    
+    # Fetch products with stock info
+    products = Product.query.filter(Product.id.in_([int(pid) for pid in product_ids])).all()
+    
+    rows = []
+    for p in products:
+        stock_cd = db.session.query(func.coalesce(func.sum(StockCD.quantity), 0)).filter(
+            StockCD.product_id == p.id
+        ).scalar() or 0
+        
+        stock_stores = db.session.query(func.coalesce(func.sum(StockSnapshot.quantity), 0)).filter(
+            StockSnapshot.product_id == p.id
+        ).scalar() or 0
+        
+        rows.append({
+            'SKU': p.sku,
+            'Producto': p.name,
+            'Categoría': p.category,
+            'Stock CD': stock_cd,
+            'Stock Tiendas': stock_stores,
+            'Stock Total': stock_cd + stock_stores,
+            'Marcado Stock Lento': 'Sí' if not p.eligible_for_distribution else 'No',
+            'Riesgo': p.risk_score if p.risk_score else ''
+        })
+    
+    df = pd.DataFrame(rows)
+    
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Seleccionados')
+    output.seek(0)
+    
+    filename = f"sin_movimiento_seleccionados_{category}.xlsx"
+    
+    return send_file(
+        output,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=filename
+    )
 
 
 @app.route('/slow_stock/unflag', methods=['POST'])

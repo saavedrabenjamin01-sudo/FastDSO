@@ -32,12 +32,15 @@
       </div>
     </div>
     <div class="nomovement-actions">
-      <a href="{{ url_for('category_no_movement_export', category=category, window_days=window_days, store=store_name) }}" class="btn btn-success">
+      <a href="{{ url_for('category_no_movement_export', category=category, window_days=window_days, store=store_name) }}" class="btn btn-success btn-sm">
         <i class="bi bi-file-earmark-excel me-1"></i>Exportar Excel
       </a>
-      <a href="{{ url_for('slow_stock', flagged=1, category=category) }}" class="btn btn-outline-warning ms-2">
+      <a href="{{ url_for('slow_stock', flagged=1, category=category) }}" class="btn btn-outline-warning btn-sm ms-2">
         <i class="bi bi-eye me-1"></i>Ver en Stock Lento
       </a>
+      <button type="button" class="btn btn-danger btn-sm ms-2" data-bs-toggle="modal" data-bs-target="#sendAllModal">
+        <i class="bi bi-flag-fill me-1"></i>Enviar TODO a Stock Lento
+      </button>
     </div>
   </div>
 
@@ -45,10 +48,21 @@
   <div class="nomovement-bulk-actions mb-3">
     <form id="bulk-flag-form" method="POST" action="{{ url_for('flag_slow_stock_bulk') }}" class="d-inline">
       <input type="hidden" name="product_ids" id="bulk-product-ids" value="">
+      <input type="hidden" name="return_url" value="{{ url_for('category_no_movement', category=category, window_days=window_days, store=store_name, page=page) }}">
       <button type="submit" class="btn btn-warning btn-sm" id="bulk-flag-btn" disabled>
-        <i class="bi bi-flag me-1"></i>Enviar seleccionados a Stock Lento
+        <i class="bi bi-flag me-1"></i>Enviar seleccionados
       </button>
     </form>
+    <form id="bulk-export-form" method="POST" action="{{ url_for('category_no_movement_export_selected') }}" class="d-inline ms-2">
+      <input type="hidden" name="product_ids" id="export-product-ids" value="">
+      <input type="hidden" name="category" value="{{ category }}">
+      <button type="submit" class="btn btn-outline-success btn-sm" id="bulk-export-btn" disabled>
+        <i class="bi bi-download me-1"></i>Exportar seleccionados
+      </button>
+    </form>
+    <button type="button" class="btn btn-outline-secondary btn-sm ms-2" id="clear-selection-btn" disabled>
+      <i class="bi bi-x-circle me-1"></i>Limpiar selección
+    </button>
     <span class="nomovement-selection-info ms-2">(<span id="selected-count">0</span> seleccionados)</span>
   </div>
   
@@ -66,8 +80,9 @@
             <th class="text-end">Stock Tiendas</th>
             <th class="text-end">Stock Total</th>
             <th>Última venta</th>
+            <th>Sugerencia</th>
             <th class="text-center">Estado</th>
-            <th class="text-center">Acción</th>
+            <th class="text-center">Acciones</th>
           </tr>
         </thead>
         <tbody>
@@ -84,6 +99,21 @@
             <td class="text-end">{{ "{:,}".format(item.stock_stores) }}</td>
             <td class="text-end fw-semibold">{{ "{:,}".format(item.total_stock) }}</td>
             <td class="text-muted">{{ item.last_sale or 'Sin registro' }}</td>
+            <td>
+              {% if item.stock_cd > item.stock_stores %}
+              <span class="suggestion-pill suggestion-redistrib" data-bs-toggle="tooltip" title="Alto stock en CD, bajo en tiendas. Considerar redistribución o evitar compras.">
+                <i class="bi bi-arrow-left-right me-1"></i>Redistribuir
+              </span>
+              {% elif item.stock_stores > 0 %}
+              <span class="suggestion-pill suggestion-liquidate" data-bs-toggle="tooltip" title="Stock en tiendas sin ventas. Candidato para liquidación o stock lento.">
+                <i class="bi bi-percent me-1"></i>Liquidar
+              </span>
+              {% else %}
+              <span class="suggestion-pill suggestion-flag" data-bs-toggle="tooltip" title="Marcar para gestión de stock lento.">
+                <i class="bi bi-flag me-1"></i>Marcar
+              </span>
+              {% endif %}
+            </td>
             <td class="text-center">
               {% if item.flagged %}
                 <span class="badge bg-warning text-dark">
@@ -91,11 +121,11 @@
                 </span>
                 {% if item.risk_score is not none %}
                   {% if item.risk_band == 'HIGH' %}
-                  <span class="badge bg-danger ms-1">Alto {{ item.risk_score }}</span>
+                  <span class="badge bg-danger ms-1">{{ item.risk_score }}</span>
                   {% elif item.risk_band == 'MEDIUM' %}
-                  <span class="badge bg-warning text-dark ms-1">Medio {{ item.risk_score }}</span>
+                  <span class="badge bg-warning text-dark ms-1">{{ item.risk_score }}</span>
                   {% else %}
-                  <span class="badge bg-success ms-1">Bajo {{ item.risk_score }}</span>
+                  <span class="badge bg-success ms-1">{{ item.risk_score }}</span>
                   {% endif %}
                 {% endif %}
               {% else %}
@@ -103,19 +133,27 @@
               {% endif %}
             </td>
             <td class="text-center">
-              {% if item.flagged %}
-              <button type="button" class="btn btn-outline-success btn-sm action-btn" 
-                      data-action="unflag" data-product-id="{{ item.id }}" 
-                      title="Rehabilitar para distribución">
-                <i class="bi bi-arrow-counterclockwise"></i>
-              </button>
-              {% else %}
-              <button type="button" class="btn btn-warning btn-sm action-btn" 
-                      data-action="flag" data-product-id="{{ item.id }}" 
-                      title="Enviar a Stock Lento">
-                <i class="bi bi-flag"></i>
-              </button>
-              {% endif %}
+              <div class="btn-group btn-group-sm">
+                {% if item.flagged %}
+                <button type="button" class="btn btn-outline-success action-btn" 
+                        data-action="unflag" data-product-id="{{ item.id }}" 
+                        title="Rehabilitar">
+                  <i class="bi bi-arrow-counterclockwise"></i>
+                </button>
+                {% else %}
+                <button type="button" class="btn btn-warning action-btn" 
+                        data-action="flag" data-product-id="{{ item.id }}" 
+                        title="Enviar a Stock Lento">
+                  <i class="bi bi-flag"></i>
+                </button>
+                {% endif %}
+                <a href="{{ url_for('stock_query') }}?sku={{ item.sku }}" class="btn btn-outline-secondary" title="Ver en Stock Query">
+                  <i class="bi bi-search"></i>
+                </a>
+                <a href="{{ url_for('alerts_page') }}?sku={{ item.sku }}" class="btn btn-outline-primary" title="Ver Alertas">
+                  <i class="bi bi-bell"></i>
+                </a>
+              </div>
             </td>
           </tr>
           {% endfor %}
@@ -169,6 +207,39 @@
 <form id="action-form" method="POST" style="display:none;">
   <input type="hidden" name="product_id" id="action-product-id" value="">
 </form>
+
+{# Send All Modal #}
+<div class="modal fade" id="sendAllModal" tabindex="-1" aria-labelledby="sendAllModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header border-0 pb-0">
+        <h5 class="modal-title" id="sendAllModalLabel">
+          <i class="bi bi-exclamation-triangle-fill text-danger me-2"></i>Confirmar acción masiva
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-2">Esta acción marcará <strong>{{ total_count }} SKUs</strong> como stock lento.</p>
+        <p class="text-muted small mb-0">Esto evitará que estos productos se incluyan en sugerencias de compra y distribución automática.</p>
+        <div class="alert alert-warning mt-3 mb-0">
+          <i class="bi bi-info-circle me-1"></i>Filtros activos: <strong>{{ category }}</strong> / {{ window_days }} días{% if store_name %} / {{ store_name }}{% endif %}
+        </div>
+      </div>
+      <div class="modal-footer border-0 pt-0">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <form method="POST" action="{{ url_for('flag_slow_stock_all_no_movement') }}" class="d-inline">
+          <input type="hidden" name="category" value="{{ category }}">
+          <input type="hidden" name="window_days" value="{{ window_days }}">
+          <input type="hidden" name="store" value="{{ store_name }}">
+          <input type="hidden" name="return_url" value="{{ url_for('category_no_movement', category=category, window_days=window_days, store=store_name) }}">
+          <button type="submit" class="btn btn-danger">
+            <i class="bi bi-flag-fill me-1"></i>Confirmar y enviar todos
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
 
 <style>
 .nomovement-header {
@@ -323,15 +394,52 @@
 .table-warning {
   background-color: #fefce8 !important;
 }
+
+/* Suggestion pills */
+.suggestion-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: help;
+}
+.suggestion-redistrib {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+.suggestion-liquidate {
+  background: #fce7f3;
+  color: #be185d;
+}
+.suggestion-flag {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+/* Action buttons group */
+.nomovement-table .btn-group-sm .btn {
+  padding: 0.2rem 0.4rem;
+  font-size: 0.75rem;
+}
 </style>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+  // Initialize Bootstrap tooltips
+  var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+  tooltipTriggerList.map(function (el) { return new bootstrap.Tooltip(el); });
+  
   const selectAll = document.getElementById('select-all');
   const rowCheckboxes = document.querySelectorAll('.row-checkbox');
   const bulkBtn = document.getElementById('bulk-flag-btn');
+  const bulkExportBtn = document.getElementById('bulk-export-btn');
+  const clearSelectionBtn = document.getElementById('clear-selection-btn');
   const selectedCount = document.getElementById('selected-count');
   const bulkProductIds = document.getElementById('bulk-product-ids');
+  const exportProductIds = document.getElementById('export-product-ids');
   const actionForm = document.getElementById('action-form');
   const actionProductId = document.getElementById('action-product-id');
   
@@ -339,10 +447,16 @@ document.addEventListener('DOMContentLoaded', function() {
     const checkedBoxes = document.querySelectorAll('.row-checkbox:checked');
     const count = checkedBoxes.length;
     selectedCount.textContent = count;
-    bulkBtn.disabled = count === 0;
+    
+    const hasSelection = count > 0;
+    bulkBtn.disabled = !hasSelection;
+    bulkExportBtn.disabled = !hasSelection;
+    clearSelectionBtn.disabled = !hasSelection;
     
     const ids = Array.from(checkedBoxes).map(cb => cb.dataset.productId);
-    bulkProductIds.value = ids.join(',');
+    const idsStr = ids.join(',');
+    bulkProductIds.value = idsStr;
+    exportProductIds.value = idsStr;
   }
   
   if (selectAll) {
@@ -355,6 +469,14 @@ document.addEventListener('DOMContentLoaded', function() {
   rowCheckboxes.forEach(cb => {
     cb.addEventListener('change', updateSelection);
   });
+  
+  if (clearSelectionBtn) {
+    clearSelectionBtn.addEventListener('click', function() {
+      rowCheckboxes.forEach(cb => cb.checked = false);
+      if (selectAll) selectAll.checked = false;
+      updateSelection();
+    });
+  }
   
   document.querySelectorAll('.action-btn').forEach(btn => {
     btn.addEventListener('click', function() {

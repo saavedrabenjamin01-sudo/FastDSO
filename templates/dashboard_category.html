@@ -89,48 +89,92 @@
     </div>
   </div>
 
-  {# D) Health summary (graphic only) #}
+  {# D) Health summary with Suggested Actions panel #}
   {% set total_health = health_data.healthy + health_data.dead_slow %}
   {% if total_health > 0 %}
   {% set healthy_pct = (health_data.healthy / total_health * 100)|round|int %}
   {% set dead_pct = (health_data.dead_slow / total_health * 100)|round|int %}
-  <div class="dashcat-health">
-    <div class="dashcat-health-header">
-      <span class="dashcat-health-title"><i class="bi bi-heart-pulse me-2"></i>Estado de SKUs</span>
-      <a href="{{ url_for('slow_stock') }}?category={{ selected_category }}" class="btn btn-sm btn-outline-secondary">Ver stock lento</a>
+  <div class="dashcat-health-grid">
+    {# Left: Status breakdown #}
+    <div class="dashcat-health">
+      <div class="dashcat-health-header">
+        <span class="dashcat-health-title"><i class="bi bi-heart-pulse me-2"></i>Estado de SKUs</span>
+        <a href="{{ url_for('slow_stock') }}?category={{ selected_category }}" class="btn btn-sm btn-outline-secondary">Ver stock lento</a>
+      </div>
+      <div class="dashcat-health-content">
+        <div class="dashcat-health-chips">
+          <div class="health-chip health-chip-ok">
+            <span class="health-chip-pct">{{ healthy_pct }}%</span>
+            <span class="health-chip-label">Activos</span>
+          </div>
+          <div class="health-chip health-chip-warn">
+            <span class="health-chip-pct">{{ dead_pct }}%</span>
+            <span class="health-chip-label">Sin movimiento <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="SKUs con stock (CD o tiendas) pero sin ventas en la ventana seleccionada."></i></span>
+          </div>
+        </div>
+        {% if health_data.dead_slow > 0 %}
+        <div class="dashcat-nomovement-action">
+          <a href="{{ url_for('category_no_movement', category=selected_category, window_days=window_days, store=selected_store or '') }}" class="btn btn-sm btn-outline-warning">
+            <i class="bi bi-eye me-1"></i>Ver SKUs sin movimiento ({{ health_data.dead_slow }})
+          </a>
+        </div>
+        {% endif %}
+        <div class="dashcat-health-bar-wrap">
+          <div class="dashcat-health-bar">
+            {% if healthy_pct > 0 %}
+            <div class="health-bar-seg health-bar-ok" style="width: {{ healthy_pct }}%;"></div>
+            {% endif %}
+            {% if dead_pct > 0 %}
+            <div class="health-bar-seg health-bar-warn" style="width: {{ dead_pct }}%;"></div>
+            {% endif %}
+          </div>
+        </div>
+        <div class="dashcat-health-footer">
+          <span class="text-muted">{{ total_health }} SKUs en categoría</span>
+        </div>
+      </div>
     </div>
-    <div class="dashcat-health-content">
-      <div class="dashcat-health-chips">
-        <div class="health-chip health-chip-ok">
-          <span class="health-chip-pct">{{ healthy_pct }}%</span>
-          <span class="health-chip-label">Activos</span>
-        </div>
-        <div class="health-chip health-chip-warn">
-          <span class="health-chip-pct">{{ dead_pct }}%</span>
-          <span class="health-chip-label">Sin movimiento <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="SKUs con stock (CD o tiendas) pero sin ventas en la ventana seleccionada."></i></span>
-        </div>
+    
+    {# Right: Suggested Actions panel #}
+    {% if health_data.dead_slow > 0 %}
+    <div class="dashcat-actions-card">
+      <div class="dashcat-actions-header">
+        <span class="dashcat-actions-title"><i class="bi bi-lightning-charge me-2"></i>Acciones sugeridas</span>
       </div>
-      {% if health_data.dead_slow > 0 %}
-      <div class="dashcat-nomovement-action">
-        <a href="{{ url_for('category_no_movement', category=selected_category, window_days=window_days, store=selected_store or '') }}" class="btn btn-sm btn-outline-warning">
-          <i class="bi bi-eye me-1"></i>Ver SKUs sin movimiento ({{ health_data.dead_slow }})
-        </a>
-      </div>
-      {% endif %}
-      <div class="dashcat-health-bar-wrap">
-        <div class="dashcat-health-bar">
-          {% if healthy_pct > 0 %}
-          <div class="health-bar-seg health-bar-ok" style="width: {{ healthy_pct }}%;"></div>
-          {% endif %}
-          {% if dead_pct > 0 %}
-          <div class="health-bar-seg health-bar-warn" style="width: {{ dead_pct }}%;"></div>
-          {% endif %}
+      <div class="dashcat-actions-body">
+        <div class="suggested-action-item">
+          <div class="suggested-action-icon suggested-action-icon-flag"><i class="bi bi-flag"></i></div>
+          <div class="suggested-action-content">
+            <div class="suggested-action-label">Gestionar stock lento</div>
+            <div class="suggested-action-hint">Marca SKUs sin movimiento para evitar compras innecesarias</div>
+          </div>
+          <a href="{{ url_for('category_no_movement', category=selected_category, window_days=window_days, store=selected_store or '') }}" class="btn btn-sm btn-warning suggested-action-btn">
+            <i class="bi bi-arrow-right"></i>
+          </a>
         </div>
-      </div>
-      <div class="dashcat-health-footer">
-        <span class="text-muted">{{ total_health }} SKUs en categoría</span>
+        <div class="suggested-action-item">
+          <div class="suggested-action-icon suggested-action-icon-alert"><i class="bi bi-bell"></i></div>
+          <div class="suggested-action-content">
+            <div class="suggested-action-label">Revisar alertas</div>
+            <div class="suggested-action-hint">Ver alertas de stock excedente o sin rotación</div>
+          </div>
+          <a href="{{ url_for('alerts_page') }}?category={{ selected_category }}" class="btn btn-sm btn-outline-primary suggested-action-btn">
+            <i class="bi bi-arrow-right"></i>
+          </a>
+        </div>
+        <div class="suggested-action-item">
+          <div class="suggested-action-icon suggested-action-icon-balance"><i class="bi bi-arrow-left-right"></i></div>
+          <div class="suggested-action-content">
+            <div class="suggested-action-label">Redistribuir stock</div>
+            <div class="suggested-action-hint">Balancea inventario entre tiendas con exceso y faltante</div>
+          </div>
+          <a href="{{ url_for('redistribution_main') }}" class="btn btn-sm btn-outline-success suggested-action-btn">
+            <i class="bi bi-arrow-right"></i>
+          </a>
+        </div>
       </div>
     </div>
+    {% endif %}
   </div>
   {% endif %}
 
@@ -339,14 +383,72 @@ function buildCharts() {
 .dashcat-kpi-value { font-size: 1.5rem; font-weight: 700; color: #1e293b; line-height: 1.2; }
 .dashcat-kpi-sub { font-size: 0.75rem; color: #94a3b8; }
 
-/* Health summary */
+/* Health summary grid */
+.dashcat-health-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+@media (max-width: 992px) {
+  .dashcat-health-grid { grid-template-columns: 1fr; }
+}
 .dashcat-health {
   background: #fff;
   border-radius: 12px;
   padding: 16px;
   border: 1px solid #e2e8f0;
-  margin-bottom: 20px;
 }
+
+/* Suggested Actions card */
+.dashcat-actions-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+}
+.dashcat-actions-header {
+  margin-bottom: 12px;
+}
+.dashcat-actions-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #475569;
+}
+.dashcat-actions-title i { color: #f59e0b; }
+.dashcat-actions-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.suggested-action-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  transition: border-color 0.15s;
+}
+.suggested-action-item:hover { border-color: #cbd5e1; }
+.suggested-action-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  flex-shrink: 0;
+}
+.suggested-action-icon-flag { background: #fef3c7; color: #d97706; }
+.suggested-action-icon-alert { background: #dbeafe; color: #2563eb; }
+.suggested-action-icon-balance { background: #d1fae5; color: #059669; }
+.suggested-action-content { flex: 1; min-width: 0; }
+.suggested-action-label { font-size: 0.8rem; font-weight: 600; color: #1e293b; }
+.suggested-action-hint { font-size: 0.7rem; color: #64748b; margin-top: 2px; }
+.suggested-action-btn { flex-shrink: 0; }
 .dashcat-health-header {
   display: flex;
   justify-content: space-between;

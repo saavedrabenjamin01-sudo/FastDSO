@@ -1,0 +1,70 @@
+CATEGORY DASHBOARD UPGRADE — Improve visual + add “Suggested Actions” for No-Movement SKUs (fast & actionable)
+
+Context:
+We have a Category Dashboard that shows:
+- category KPIs
+- a status breakdown (active vs no movement)
+- a “No movement” list/drilldown
+Management requested that the “No movement” section becomes actionable, with suggested actions and quick workflows.
+
+STRICT RULES
+- Do NOT change core data logic or calculations.
+- Keep Macro Sales as the source of truth.
+- Keep page fast: no large tables loaded by default.
+- Actions must work via lightweight links or POSTs; no heavy UI frameworks.
+
+REQUIREMENTS
+
+A) Visual cleanup (light)
+1) Make the “SKU status” section clearer:
+- Add a small “Suggested actions” card next to the status bar.
+- Use FastDSO pill/badge style consistent with Alerts page.
+2) Ensure spacing and typography match FastDSO Dashboard.
+
+B) Suggested actions for “No movement”
+For SKUs classified as “No movement” (stock > 0 and no sales in window):
+1) Add per-row actions (small buttons/icons):
+- “Send to Slow Stock” (flags eligible_for_distribution=false + computes risk score)
+- “View in Stock Query” (opens stock_query filtered by SKU)
+- “View in Alerts” (opens alerts filtered by SKU)
+2) Add group actions (bulk):
+- Add checkbox selection for rows in the “No movement” list page.
+- Add a top action bar:
+  - “Send selected to Slow Stock”
+  - “Export selected”
+  - “Clear selection”
+3) Add one prominent action for management:
+- “Send ALL no-movement SKUs to Slow Stock” (with confirm modal)
+This must:
+- run server-side
+- process only the filtered dataset (category + window + optional store filter)
+- show a success summary (count flagged)
+
+C) Suggested action text (business friendly)
+Add a small “Suggestion” label for each no-movement SKU:
+Use simple rules:
+- If CD stock high and stores stock low: “Consider redistribution / avoid purchase”
+- If store stock high and sales = 0: “Candidate for liquidation / slow stock”
+This is only UI guidance; no new business logic needed.
+
+D) Maintain performance
+- The main category dashboard must NOT render the full no-movement list.
+- Keep the no-movement list as a drilldown page (already exists).
+- Bulk operations must be batched (no per-row DB commits).
+- Use pagination (10/page) and keep exports separate.
+
+E) Integration correctness
+- “Send to Slow Stock” must:
+  - set Product.eligible_for_distribution = false
+  - set risk_score and risk_reason
+  - write audit log entry
+- Links must preserve SKU text leading zeros.
+
+DELIVERABLES
+- Updated dashboard_category template (visual improvements + action panel)
+- Updated no_movement list page with:
+  - row actions
+  - bulk select actions
+  - “Send all” action
+- Minimal backend endpoints for bulk actions if missing
+- No regressions and fast load time
