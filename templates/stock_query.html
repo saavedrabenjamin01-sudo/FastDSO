@@ -56,7 +56,29 @@
         {% if result.scope == 'cd' and result.as_of_date %}
           <span class="query-strip-date">{{ result.as_of_date }}</span>
         {% endif %}
+        {% if result.is_on_hold %}
+          <span class="badge bg-danger ms-2"><i class="bi bi-exclamation-octagon me-1"></i>EN HOLD</span>
+        {% endif %}
       </div>
+      
+      {% if result.is_on_hold %}
+      <div class="alert alert-danger mt-3 d-flex align-items-start gap-3" style="font-size: 0.9rem;">
+        <i class="bi bi-shield-exclamation fs-4"></i>
+        <div class="flex-grow-1">
+          <strong>SKU bloqueado para distribución</strong>
+          <div class="mt-1">
+            <strong>Motivo:</strong> {{ result.hold_info.reason or 'Sin especificar' }}<br>
+            <strong>Origen:</strong> {{ result.hold_info.source or 'Manual' }}
+            {% if result.hold_info.created_at %}<br><strong>Fecha:</strong> {{ result.hold_info.created_at }}{% endif %}
+          </div>
+          {% if current_user.role == 'Admin' %}
+          <button type="button" class="btn btn-sm btn-outline-light mt-2" data-bs-toggle="modal" data-bs-target="#clearHoldModal">
+            <i class="bi bi-unlock me-1"></i>Liberar Hold
+          </button>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
 
       {% if result.scope == 'cd' %}
         <div class="d-flex gap-3 flex-wrap">
@@ -123,5 +145,32 @@
     {% endif %}
   {% endif %}
 </div>
+
+{% if result and result.is_on_hold and current_user.role == 'Admin' %}
+<div class="modal fade" id="clearHoldModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-unlock me-2"></i>Liberar Hold de SKU</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="post" action="{{ url_for('clear_product_hold', product_id=result.product_id) }}">
+        <div class="modal-body">
+          <p>Está por liberar el hold del SKU <strong>{{ result.sku }}</strong>.</p>
+          <p class="text-muted small">El SKU volverá a ser elegible para distribución y redistribución.</p>
+          <div class="mb-3">
+            <label class="form-label">Motivo de liberación <span class="text-danger">*</span></label>
+            <textarea class="form-control" name="clear_reason" rows="2" required placeholder="Ej: Stock verificado y OK para distribución"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-success"><i class="bi bi-check-lg me-1"></i>Confirmar Liberación</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
 
 {% endblock %}

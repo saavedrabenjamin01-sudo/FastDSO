@@ -186,6 +186,10 @@ class Product(db.Model):
     risk_score = db.Column(db.Integer, nullable=True)
     risk_reason = db.Column(db.Text, nullable=True)
     lifecycle_status = db.Column(db.String(20), nullable=True, index=True)
+    is_on_hold = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    hold_reason = db.Column(db.Text, nullable=True)
+    hold_source = db.Column(db.String(50), nullable=True)
+    hold_created_at = db.Column(db.DateTime, nullable=True)
 
 
 class Store(db.Model):
@@ -7913,6 +7917,14 @@ def stock_query():
         product = Product.query.filter_by(sku=sku).first()
 
         if product:
+            hold_info = None
+            if product.is_on_hold:
+                hold_info = {
+                    "reason": product.hold_reason,
+                    "source": product.hold_source,
+                    "created_at": product.hold_created_at.strftime('%Y-%m-%d %H:%M') if product.hold_created_at else None
+                }
+            
             if scope == "cd":
                 latest_date = db.session.query(db.func.max(StockCD.as_of_date)).filter_by(product_id=product.id).scalar()
                 
@@ -7933,7 +7945,10 @@ def stock_query():
                     "as_of_date": latest_date,
                     "quantity": qty_ok,
                     "quantity_ok": qty_ok,
-                    "quantity_problem": qty_problem
+                    "quantity_problem": qty_problem,
+                    "is_on_hold": product.is_on_hold,
+                    "hold_info": hold_info,
+                    "product_id": product.id
                 }
 
             else:
@@ -7961,7 +7976,10 @@ def stock_query():
                     "sku": product.sku,
                     "product": product.name,
                     "scope": "tiendas",
-                    "stores": list(latest_by_store.values())
+                    "stores": list(latest_by_store.values()),
+                    "is_on_hold": product.is_on_hold,
+                    "hold_info": hold_info,
+                    "product_id": product.id
                 }
 
         else:
@@ -7975,6 +7993,53 @@ def stock_query():
         sku=sku,
         result=result
     )
+
+
+@app.route('/product/<int:product_id>/clear_hold', methods=['POST'])
+@login_required
+def clear_product_hold(product_id):
+    """Admin action to clear a product hold."""
+    if current_user.role != 'Admin':
+        flash('Solo administradores pueden liberar holds de SKU', 'danger')
+        return redirect(url_for('stock_query'))
+    
+    product = Product.query.get_or_404(product_id)
+    
+    if not product.is_on_hold:
+        flash(f'SKU {product.sku} no está en hold', 'warning')
+        return redirect(url_for('stock_query', sku=product.sku))
+    
+    clear_reason = request.form.get('clear_reason', '').strip()
+    if not clear_reason:
+        flash('Debe proporcionar un motivo para liberar el hold', 'danger')
+        return redirect(url_for('stock_query', sku=product.sku))
+    
+    old_reason = product.hold_reason
+    old_source = product.hold_source
+    
+    product.is_on_hold = False
+    product.hold_reason = None
+    product.hold_source = None
+    product.hold_created_at = None
+    
+    log_audit(
+        action='product.hold_cleared',
+        status='success',
+        message=f'Hold liberado para SKU {product.sku}. Motivo anterior: {old_reason}. Motivo liberación: {clear_reason}',
+        entity_type='Product',
+        entity_id=product.id,
+        metadata={
+            'sku': product.sku,
+            'previous_hold_reason': old_reason,
+            'previous_hold_source': old_source,
+            'clear_reason': clear_reason
+        }
+    )
+    
+    db.session.commit()
+    flash(f'Hold liberado exitosamente para SKU {product.sku}', 'success')
+    return redirect(url_for('stock_query', sku=product.sku))
+
 
 @app.route('/export_predictions', methods=['GET'])
 @login_required
@@ -13623,6 +13688,9 @@ def planner_close(plan_id):
             
             latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar() or date.today()
             
+            has_observation_col = 'observation' in df.columns or 'observacion' in df.columns or 'reason' in df.columns
+            obs_col = 'observation' if 'observation' in df.columns else ('observacion' if 'observacion' in df.columns else 'reason')
+            
             for _, row in df.iterrows():
                 sku = str(row['sku']).strip()
                 try:
@@ -13632,12 +13700,23 @@ def planner_close(plan_id):
                 if qty <= 0:
                     continue
                 
+                hold_reason = f'Cierre folio {plan.folio}'
+                if has_observation_col and pd.notna(row.get(obs_col)):
+                    obs_text = str(row[obs_col]).strip()
+                    if obs_text:
+                        hold_reason = f'{obs_text} (Folio {plan.folio})'
+                
                 product = Product.query.filter_by(sku=sku).first()
                 if not product:
                     prod_name = str(row.get('product_name', sku)).strip() if 'product_name' in df.columns else sku
                     product = Product(sku=sku, name=prod_name, category=None, eligible_for_distribution=False)
                     db.session.add(product)
                     db.session.flush()
+                
+                product.is_on_hold = True
+                product.hold_reason = hold_reason
+                product.hold_source = 'fastplanner'
+                product.hold_created_at = datetime.utcnow()
                 
                 existing = StockCD.query.filter_by(
                     as_of_date=latest_cd_date,
@@ -13647,14 +13726,14 @@ def planner_close(plan_id):
                 
                 if existing:
                     existing.quantity += qty
-                    existing.problem_reason = f'Cierre folio {plan.folio}'
+                    existing.problem_reason = hold_reason
                 else:
                     new_stock = StockCD(
                         as_of_date=latest_cd_date,
                         product_id=product.id,
                         quantity=qty,
                         quality_status='PROBLEM',
-                        problem_reason=f'Cierre folio {plan.folio}'
+                        problem_reason=hold_reason
                     )
                     db.session.add(new_stock)
                 
