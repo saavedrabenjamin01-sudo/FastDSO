@@ -30,7 +30,8 @@ Do not make changes to the folder `Excel tipo/`.
 ### UI/UX Decisions
 - **Dashboard**: Card-based layout with KPIs, tables, and global search.
 - **Responsive Design**: Professional and intuitive templates with pagination, search, filters, and improved exports.
-- **Unified Processing Modal**: Features animated SVG icons and real-time progress bars for background operations.
+- **Unified Processing Modal**: Features animated SVG icons, real-time progress bars, and success/error result states for background operations. After job completion, shows result summary with "Continue" and "Load Another" action buttons.
+- **Upload Result Feedback**: Processing modal transforms into success (green checkmark with bounce animation) or error (red X with shake animation) state, displaying job-specific result messages (e.g., record counts, weeks processed).
 - **Branding**: Login page incorporates corporate branding.
 - **Interactive Visualizations**: Plotly charts are used for advanced forecasting.
 
