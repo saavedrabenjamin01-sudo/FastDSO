@@ -1,0 +1,197 @@
+Task: Upgrade “Store Health” module (visual + functionality) with category-aware analysis and actionable suggestions, keeping FastDSO visual language and not breaking current routes/permissions.
+
+Goals
+1) Make Store Health faster and more visual (less dense text).
+2) Add category filters + “Store Health by Category” view.
+3) Produce clear “Suggested Actions” per store (redistribute / replenish / review slow/dead stock).
+4) Use Macro Sales as the primary sales signal source.
+
+========================================================
+A) UX / UI (FastDSO style)
+
+1) Page layout (store_health.html)
+- Top header: “Salud de Tiendas”
+- Compact summary row:
+  - Total stores
+  - % Critical / Attention / Healthy
+  - Avg Fill Rate (weighted)
+  - Avg Break Rate
+- Replace heavy alert paragraphs with:
+  - Severity chips (Critical / Attention / Healthy) with counts
+  - Small “insight cards” (max 3 lines each)
+
+2) Controls bar (sticky)
+- Filters:
+  - Category dropdown (All categories default)
+  - Store dropdown (All stores default)
+  - Time window selector (default 8 weeks): 4 / 8 / 12 / 26
+  - “Active SKUs only” toggle (default ON)
+  - “Exclude non-distributable SKUs” toggle (default ON if we have eligible_for_distribution)
+- Actions:
+  - Export CSV/Excel button (store health summary)
+  - “Open suggestions” button (scroll to suggested actions section)
+
+3) Visuals
+- Add a stacked bar per store:
+  - Fill rate, Break rate, Overstock rate (normalized)
+- Add a “Health score” gauge/pill per store:
+  - Score 0–100 mapped to Critical/Attention/Healthy
+- Each store row is a card (like dashboard tables styling):
+  - Left: store name + status pill
+  - Middle: 3 metrics with mini-bars
+  - Right: primary suggested action buttons
+
+4) Drill-down panel
+- Clicking a store opens a collapsible detail:
+  - Top 10 “Break risk” SKUs (by category filter)
+  - Top 10 “Overstock” SKUs
+  - Top 10 “No movement” SKUs
+  - Each row has quick actions:
+    - “Send to Stock Lento”
+    - “Open Forecast”
+    - “Suggest Redistribution”
+
+Pagination:
+- Default 10 stores per page. Same paginator component as Dashboard.
+
+========================================================
+B) Metrics definitions (keep but improve fidelity)
+
+Use Macro Sales weekly aggregates + latest store stock snapshot.
+
+For a chosen window W weeks ending at latest week_start in SalesWeeklyAgg:
+
+Per (store, sku):
+- demand_weekly = SUM(units) / W
+- stock_store = latest StoreStockSnapshot qty
+- woc = stock_store / max(demand_weekly, eps)
+
+Define:
+1) Fill Rate (weighted)
+- Goal: how well the store is “covered” vs target WOC (default target_woc=1.0)
+- For each sku:
+  coverage = clamp(woc / target_woc, 0, 1)
+- Weighted fill_rate_store = weighted average by demand_weekly (so high movers matter more)
+
+2) Break Rate
+- A sku is “break” if stock_store == 0 AND demand_weekly > 0
+- break_rate_store = (# break skus weighted by demand_weekly) / (total demand_weekly across skus)
+
+3) Overstock Rate
+- A sku is “overstock” if woc > max_woc (default 3.0)
+- overstock_rate_store = weighted share of demand in overstocked SKUs
+
+4) Sales Velocity
+- velocity_store = SUM(units) / W (units/week)
+- Optional: also show unique_skus_sold in window
+
+Health Score (0–100)
+- score = 100
+  - 45 * break_rate
+  - 25 * (1 - fill_rate)
+  - 20 * overstock_rate
+  - 10 * (no_movement_rate)
+Clamp 0..100
+Severity:
+- Critical < 45
+- Attention 45–70
+- Healthy > 70
+
+No-movement (optional but useful)
+- A sku is “no movement” if units in last W weeks == 0 AND stock_store > 0
+- no_movement_rate_store = share of stock tied in no-movement SKUs (or count)
+
+========================================================
+C) Category-aware analysis (NEW)
+
+Add “Category scope”:
+- If Category = All:
+  - Compute metrics using all eligible SKUs.
+- If Category selected:
+  - Restrict SKUs to Product.category = selected category.
+  - Compute store health metrics within that category.
+  - Also compute “category contribution”:
+    category_sales_share_store = store_units_in_category / total_units_in_category
+
+Add a secondary view:
+- “Dashboard por categoría” exists, but Store Health should provide:
+  - Top stores in category
+  - Bottom stores in category
+  - Suggested actions for bottom stores.
+
+========================================================
+D) Suggested Actions (actionable outputs)
+
+For each store (and optional category):
+Generate 2–3 suggestions max, ranked.
+
+Rules (examples):
+1) If break_rate high OR many break SKUs:
+   Suggest: “Replenish / Distribute”
+   - Provide top 5 break SKUs with:
+     - demand_weekly
+     - store stock = 0
+     - CD stock (if available)
+   Action buttons:
+   - “Open Forecast (pre-filtered to store/category)”
+   - “Generate Distribution Request (category or sku list)”
+
+2) If overstock_rate high:
+   Suggest: “Redistribute out”
+   - Provide top 5 overstock SKUs with woc and stock
+   Action:
+   - “Open Redistribution (store as donor)”
+
+3) If no-movement stock high:
+   Suggest: “Send to Stock Lento”
+   - Provide top 10 SKUs by stock with 0 sales in window
+   Action:
+   - “Move to Stock Lento” (bulk)
+
+Important: All action buttons must deep-link and prefilter the target module:
+- Forecast: /forecast?sku=... or /forecast?category=...&store=...
+- Stock Lento: /stock_lento?store=...&category=...
+- Redistribution: /rebalancing?mode=...&store=...
+
+If these endpoints don’t support filters yet, implement query param support minimally.
+
+========================================================
+E) Performance / SQL optimization (must do)
+
+Current module is slow; fix by:
+1) Pre-aggregate Macro Sales into a temp dict:
+   - Query SalesWeeklyAgg only once for window+category filter:
+     GROUP BY store_id, product_id
+     SUM(units) as units_window
+2) Load latest store stock snapshot in one query:
+   - Subquery max(snapshot_date) per store_id/product_id or store-wide latest snapshot date.
+3) Use joins by ids (no name joins).
+4) Avoid per-store loops that query DB.
+
+Implement caching per request (local dicts).
+Add indexes if missing:
+- sales_weekly_agg(store_id, product_id, week_start)
+- store_stock_snapshot(store_id, product_id, snapshot_date)
+- product(category)
+
+========================================================
+F) Templates + CSS updates
+
+- Update store_health template to use:
+  - same card style as dashboard
+  - pills for severity + metric chips
+  - mini progress bars
+- Ensure tables headers have proper contrast (fix “moral header black text” issue if reused).
+- Add responsive layout for iPad/laptop.
+
+========================================================
+G) Tests / acceptance criteria
+1) Page loads under 2s with 1 year macro sales (local) for 27 stores.
+2) Filters work:
+   - category filter changes scores and lists
+   - store filter drills into one store
+3) Suggested actions appear and link correctly.
+4) No text-heavy sections; insights are compact.
+5) Pagination works for stores list.
+
+Implement now, do not break permissions and sidebar links. Commit changes.

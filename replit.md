@@ -91,7 +91,21 @@ Do not make changes to the folder `Excel tipo/`.
 - **Run Management**: A "Runs Center" for managing, activating, comparing, and tracking data processing runs.
 - **User & Access Management**: Administrators can manage users and their roles, controlling feature access.
 - **Reporting & Exports**: Enables exporting predictions, forecasts, and analysis results to Excel.
-- **Store Health Index**: A diagnostic scoring module (0-100) per store, based on weighted metrics like Fill Rate, Stockout Rate, Overstock Rate, and Sales Velocity, with status badges and configuration options.
+- **Store Health Index**: A diagnostic scoring module (0-100) per store using demand-weighted metrics and SalesWeeklyAgg as single source of truth:
+    - **Demand-Weighted Metrics**: Metrics calculated based on demand volume rather than simple SKU counts for business-accurate scoring:
+        - Fill Rate: % of demand covered by current stock vs. target coverage
+        - Break Rate: % of demand lost due to stockouts (stock=0 with active demand)
+        - Overstock Rate: % of demand in SKUs with WoC > max threshold
+        - No Movement Rate: % of stock value in SKUs without recent sales
+    - **New Health Formula**: `Score = 100 - 45*break_rate - 25*(1-fill_rate) - 20*overstock_rate - 10*no_movement_rate`
+    - **Revised Thresholds**: HEALTHY ≥70, WARNING 45-69, CRITICAL <45
+    - **Category Filter**: Filter analysis by product category for category-level health
+    - **Time Window Selector**: Choose analysis period (4/8/12/26 weeks)
+    - **Store Filter**: Focus on individual store for detailed analysis
+    - **Suggested Actions Engine**: Auto-generates prioritized recommendations (REPLENISH, REDISTRIBUTE, SLOW_STOCK) with deep-links to relevant modules
+    - **Drill-Down Panel**: Collapsible per-store details showing top break/overstock/no-movement SKUs with action links
+    - **Mini Progress Bars**: Visual indicator bars with color-coding for each metric
+    - **Status Badges & KPI Cards**: Updated to reflect new thresholds with percentage breakdowns
 - **In-app Alerts Module**: Proactive alerts for conditions such as projected stockouts, overstock, silent SKUs (no sales), and broken stock, based on aggregated sales and lifecycle data. Features category filter dropdown for filtering alerts by product category with preserved pagination.
 - **Explainability Layer**: Provides transparent explanations for distribution and forecast suggestions, detailing calculations and decision logic, accessible via "Why?" buttons and debug fields.
 - **Macro Sales Layer**: Offers full catalog visibility through the `SalesWeeklyAgg` model for aggregated weekly sales, serving as a single source of truth for various modules including alerts, store health, and forecasting.

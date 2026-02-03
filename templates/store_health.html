@@ -42,9 +42,25 @@
 
 {% macro score_bar(score) %}
 <div class="health-score-bar">
-  <div class="health-score-fill {% if score >= 80 %}fill-green{% elif score >= 50 %}fill-yellow{% else %}fill-red{% endif %}" style="width: {{ score }}%"></div>
+  <div class="health-score-fill {% if score >= 70 %}fill-green{% elif score >= 45 %}fill-yellow{% else %}fill-red{% endif %}" style="width: {{ score }}%"></div>
   <span class="health-score-value">{{ score }}</span>
 </div>
+{% endmacro %}
+
+{% macro mini_bar(value, max_val, color_class) %}
+<div class="mini-bar-wrap">
+  <div class="mini-bar {% if color_class %}{{ color_class }}{% else %}mini-bar-blue{% endif %}" style="width: {% if max_val > 0 %}{{ (value / max_val * 100)|round(1) }}%{% else %}0{% endif %}"></div>
+  <span class="mini-bar-val">{{ value }}%</span>
+</div>
+{% endmacro %}
+
+{% macro suggestion_pill(suggestion) %}
+<a href="{{ suggestion.action_url }}" class="suggestion-pill suggestion-{{ suggestion.type|lower }}" title="{{ suggestion.description }}">
+  {% if suggestion.type == 'REPLENISH' %}<i class="bi bi-box-arrow-in-down me-1"></i>
+  {% elif suggestion.type == 'REDISTRIBUTE' %}<i class="bi bi-arrow-left-right me-1"></i>
+  {% else %}<i class="bi bi-clock-history me-1"></i>{% endif %}
+  {{ suggestion.title }}
+</a>
 {% endmacro %}
 
 {% block content %}
@@ -52,6 +68,39 @@
   <div class="health-header">
     <h1 class="health-title">Índice de Salud de Tiendas</h1>
     <p class="health-subtitle">Diagnóstico integral por tienda para priorizar acciones de gestión</p>
+  </div>
+
+  <div class="health-filter-bar">
+    <div class="health-filter-group">
+      <label class="health-filter-label"><i class="bi bi-tag me-1"></i>Categoría</label>
+      <select class="form-select form-select-sm health-filter-select" id="categoryFilter" onchange="updateParam('category', this.value)">
+        <option value="">Todas las categorías</option>
+        {% for cat in categories %}
+        <option value="{{ cat }}" {% if category_filter == cat %}selected{% endif %}>{{ cat }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="health-filter-group">
+      <label class="health-filter-label"><i class="bi bi-calendar3 me-1"></i>Ventana</label>
+      <select class="form-select form-select-sm health-filter-select" id="windowFilter" onchange="updateParam('window', this.value)">
+        <option value="4" {% if time_window == 4 %}selected{% endif %}>4 semanas</option>
+        <option value="8" {% if time_window == 8 %}selected{% endif %}>8 semanas</option>
+        <option value="12" {% if time_window == 12 %}selected{% endif %}>12 semanas</option>
+        <option value="26" {% if time_window == 26 %}selected{% endif %}>26 semanas</option>
+      </select>
+    </div>
+    <div class="health-filter-group">
+      <label class="health-filter-label"><i class="bi bi-shop me-1"></i>Tienda</label>
+      <select class="form-select form-select-sm health-filter-select" id="storeFilter" onchange="updateParam('store', this.value)">
+        <option value="">Todas las tiendas</option>
+        {% for st in all_stores %}
+        <option value="{{ st.name }}" {% if store_filter == st.name %}selected{% endif %}>{{ st.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% if category_filter or store_filter %}
+    <a href="{{ url_for('store_health') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-x-circle me-1"></i>Limpiar filtros</a>
+    {% endif %}
   </div>
 
   {% if results and results.summary %}
@@ -77,7 +126,8 @@
       </div>
       <div class="health-kpi-content">
         <div class="health-kpi-value">{{ results.summary.healthy_count }}</div>
-        <div class="health-kpi-label">Saludables (≥80)</div>
+        <div class="health-kpi-label">Saludables (≥70)</div>
+        <div class="health-kpi-pct">{{ results.summary.healthy_pct }}%</div>
       </div>
     </div>
     <div class="health-kpi-card health-kpi-yellow">
@@ -86,7 +136,8 @@
       </div>
       <div class="health-kpi-content">
         <div class="health-kpi-value">{{ results.summary.warning_count }}</div>
-        <div class="health-kpi-label">Atención (50-79)</div>
+        <div class="health-kpi-label">Atención (45-69)</div>
+        <div class="health-kpi-pct">{{ results.summary.warning_pct }}%</div>
       </div>
     </div>
     <div class="health-kpi-card health-kpi-red">
@@ -95,7 +146,8 @@
       </div>
       <div class="health-kpi-content">
         <div class="health-kpi-value">{{ results.summary.critical_count }}</div>
-        <div class="health-kpi-label">Críticos (&lt;50)</div>
+        <div class="health-kpi-label">Críticos (&lt;45)</div>
+        <div class="health-kpi-pct">{{ results.summary.critical_pct }}%</div>
       </div>
     </div>
     <div class="health-kpi-card health-kpi-purple">
@@ -215,6 +267,7 @@
     <div class="health-table-header">
       <div class="health-table-title">
         <i class="bi bi-bar-chart-line me-2"></i>Ranking de Tiendas
+        {% if category_filter %}<span class="badge bg-info ms-2">{{ category_filter }}</span>{% endif %}
       </div>
       <div class="health-sort-controls">
         <label class="health-sort-label">Ordenar por:</label>
@@ -222,7 +275,7 @@
           <option value="score" {% if sort_by == 'score' %}selected{% endif %}>Puntaje</option>
           <option value="name" {% if sort_by == 'name' %}selected{% endif %}>Nombre</option>
           <option value="fill" {% if sort_by == 'fill' %}selected{% endif %}>Fill Rate</option>
-          <option value="stockout" {% if sort_by == 'stockout' %}selected{% endif %}>Quiebres</option>
+          <option value="break" {% if sort_by == 'break' %}selected{% endif %}>Quiebres</option>
         </select>
         <button type="button" class="btn btn-sm health-btn-sort" onclick="toggleOrder()">
           <i class="bi bi-sort-{% if sort_order == 'desc' %}down{% else %}up{% endif %}"></i>
@@ -233,30 +286,97 @@
       <table class="health-table">
         <thead>
           <tr>
+            <th></th>
             <th>Tienda</th>
             <th class="text-center">Puntaje</th>
             <th class="text-center">Estado</th>
-            <th class="text-end">Fill Rate</th>
-            <th class="text-end">Quiebres</th>
-            <th class="text-end">Sobrestock</th>
-            <th class="text-end">Venta/Sem</th>
-            <th class="text-end">Redist.</th>
-            <th>Alertas</th>
+            <th class="text-center">Fill Rate</th>
+            <th class="text-center">Quiebres</th>
+            <th class="text-center">Sobrestock</th>
+            <th class="text-center">Sin Mov.</th>
+            <th>Acciones Sugeridas</th>
           </tr>
         </thead>
         <tbody>
           {% if pag and pag.items %}
           {% for store in pag.items %}
-          <tr class="{% if store.status == 'CRITICAL' %}row-critical{% elif store.status == 'WARNING' %}row-warning{% endif %}">
+          <tr class="health-row {% if store.status == 'CRITICAL' %}row-critical{% elif store.status == 'WARNING' %}row-warning{% endif %}" data-store="{{ store.store_id }}">
+            <td class="text-center">
+              <button type="button" class="btn btn-sm btn-link p-0 health-expand-btn" onclick="toggleDrilldown('{{ store.store_id }}')">
+                <i class="bi bi-chevron-down" id="expand-icon-{{ store.store_id }}"></i>
+              </button>
+            </td>
             <td class="fw-medium">{{ store.store_name }}</td>
             <td class="text-center">{{ score_bar(store.health_score) }}</td>
             <td class="text-center">{{ status_badge(store.status) }}</td>
-            <td class="text-end">{{ store.fill_rate }}%</td>
-            <td class="text-end {% if store.stockout_rate > 30 %}text-danger fw-bold{% endif %}">{{ store.stockout_rate }}%</td>
-            <td class="text-end {% if store.overstock_rate > 25 %}text-warning fw-bold{% endif %}">{{ store.overstock_rate }}%</td>
-            <td class="text-end">{{ store.avg_weekly_sales }}</td>
-            <td class="text-end">{{ store.redist_dependency }}</td>
-            <td class="health-alerts">{{ store.alerts }}</td>
+            <td class="text-center">{{ mini_bar(store.fill_rate, 100, 'mini-bar-green' if store.fill_rate >= 80 else 'mini-bar-yellow' if store.fill_rate >= 60 else 'mini-bar-red') }}</td>
+            <td class="text-center">{{ mini_bar(store.break_rate, 50, 'mini-bar-red' if store.break_rate > 15 else 'mini-bar-yellow' if store.break_rate > 5 else 'mini-bar-green') }}</td>
+            <td class="text-center">{{ mini_bar(store.overstock_rate, 50, 'mini-bar-yellow' if store.overstock_rate > 15 else 'mini-bar-green') }}</td>
+            <td class="text-center">{{ mini_bar(store.no_movement_rate, 50, 'mini-bar-gray' if store.no_movement_rate > 20 else 'mini-bar-green') }}</td>
+            <td>
+              {% if store.suggestions %}
+              <div class="suggestion-pills">
+                {% for sug in store.suggestions %}{{ suggestion_pill(sug) }}{% endfor %}
+              </div>
+              {% else %}
+              <span class="text-muted small">Sin acciones urgentes</span>
+              {% endif %}
+            </td>
+          </tr>
+          <tr class="health-drilldown" id="drilldown-{{ store.store_id }}" style="display: none;">
+            <td colspan="9">
+              <div class="drilldown-panel">
+                <div class="drilldown-grid">
+                  {% if store.break_skus %}
+                  <div class="drilldown-section drilldown-section-danger">
+                    <div class="drilldown-section-title"><i class="bi bi-exclamation-triangle me-1"></i>SKUs con Quiebre ({{ store.break_count }})</div>
+                    <table class="drilldown-table">
+                      <thead><tr><th>SKU</th><th>Producto</th><th>Demanda/Sem</th></tr></thead>
+                      <tbody>
+                        {% for sku in store.break_skus[:5] %}
+                        <tr><td><code>{{ sku.sku }}</code></td><td class="text-truncate-cell" title="{{ sku.name }}">{{ sku.name }}</td><td class="text-end">{{ sku.demand_weekly }}</td></tr>
+                        {% endfor %}
+                      </tbody>
+                    </table>
+                    {% if store.break_count > 5 %}<div class="drilldown-more"><a href="{{ url_for('alerts') }}?store={{ store.store_id }}&type=BREAKAGE">Ver todos</a></div>{% endif %}
+                  </div>
+                  {% endif %}
+                  {% if store.overstock_skus %}
+                  <div class="drilldown-section drilldown-section-warning">
+                    <div class="drilldown-section-title"><i class="bi bi-box-seam me-1"></i>SKUs con Sobrestock ({{ store.overstock_count }})</div>
+                    <table class="drilldown-table">
+                      <thead><tr><th>SKU</th><th>Stock</th><th>WoC</th></tr></thead>
+                      <tbody>
+                        {% for sku in store.overstock_skus[:5] %}
+                        <tr><td><code>{{ sku.sku }}</code></td><td class="text-end">{{ sku.stock }}</td><td class="text-end">{{ sku.woc }}</td></tr>
+                        {% endfor %}
+                      </tbody>
+                    </table>
+                    {% if store.overstock_count > 5 %}<div class="drilldown-more"><a href="{{ url_for('rebalancing') }}?from_store={{ store.store_id }}">Ver todos</a></div>{% endif %}
+                  </div>
+                  {% endif %}
+                  {% if store.no_movement_skus %}
+                  <div class="drilldown-section drilldown-section-muted">
+                    <div class="drilldown-section-title"><i class="bi bi-clock-history me-1"></i>SKUs Sin Movimiento ({{ store.no_movement_count }})</div>
+                    <table class="drilldown-table">
+                      <thead><tr><th>SKU</th><th>Producto</th><th>Stock</th></tr></thead>
+                      <tbody>
+                        {% for sku in store.no_movement_skus[:5] %}
+                        <tr><td><code>{{ sku.sku }}</code></td><td class="text-truncate-cell" title="{{ sku.name }}">{{ sku.name }}</td><td class="text-end">{{ sku.stock }}</td></tr>
+                        {% endfor %}
+                      </tbody>
+                    </table>
+                    {% if store.no_movement_count > 5 %}<div class="drilldown-more"><a href="{{ url_for('slow_stock') }}?store={{ store.store_id }}">Ver todos</a></div>{% endif %}
+                  </div>
+                  {% endif %}
+                </div>
+                <div class="drilldown-stats">
+                  <span class="drilldown-stat"><strong>Demanda semanal:</strong> {{ store.total_demand }} u.</span>
+                  <span class="drilldown-stat"><strong>Velocidad:</strong> {{ store.velocity_score }}% vs cadena</span>
+                  <span class="drilldown-stat"><strong>Redistrib.:</strong> {{ store.redist_dependency }} SKUs</span>
+                </div>
+              </div>
+            </td>
           </tr>
           {% endfor %}
           {% else %}
@@ -288,21 +408,27 @@
 
   <div class="health-legend-card">
     <div class="health-legend-title">
-      <i class="bi bi-info-circle me-2"></i>Fórmula de Cálculo
+      <i class="bi bi-info-circle me-2"></i>Fórmula de Cálculo (Ponderada por Demanda)
     </div>
     <div class="health-legend-content">
       <div class="health-formula">
         <strong>Puntaje = </strong>
-        <span class="formula-term">Fill Rate × {{ (default_weights.FILL_RATE * 100)|int }}%</span> +
-        <span class="formula-term">(100 - Quiebres) × {{ (default_weights.STOCKOUT_RATE * 100)|int }}%</span> +
-        <span class="formula-term">(100 - Sobrestock) × {{ (default_weights.OVERSTOCK_RATE * 100)|int }}%</span> +
-        <span class="formula-term">Velocidad Venta × {{ (default_weights.SALES_VELOCITY * 100)|int }}%</span>
+        <span class="formula-term">100</span> −
+        <span class="formula-term formula-danger">45 × Tasa Quiebre</span> −
+        <span class="formula-term formula-warning">25 × (1 − Fill Rate)</span> −
+        <span class="formula-term formula-info">20 × Tasa Sobrestock</span> −
+        <span class="formula-term formula-muted">10 × Tasa Sin Mov.</span>
       </div>
       <div class="health-metrics-desc">
-        <div><strong>Fill Rate:</strong> % de SKUs con stock > 0</div>
-        <div><strong>Quiebres:</strong> % de SKUs sin stock</div>
-        <div><strong>Sobrestock:</strong> % de SKUs con cobertura > {{ default_weights.MAX_WOC }} semanas</div>
-        <div><strong>Velocidad Venta:</strong> Ventas semanales relativas al máximo de la cadena</div>
+        <div><strong>Fill Rate (demanda):</strong> % de demanda cubierta según stock vs cobertura objetivo</div>
+        <div><strong>Tasa Quiebre:</strong> % de demanda perdida por SKUs sin stock</div>
+        <div><strong>Tasa Sobrestock:</strong> % de demanda en SKUs con WoC > {{ default_weights.MAX_WOC }}</div>
+        <div><strong>Tasa Sin Mov.:</strong> % de stock en unidades sin demanda reciente</div>
+      </div>
+      <div class="health-thresholds mt-2">
+        <span class="health-threshold health-threshold-green"><i class="bi bi-check-circle me-1"></i>Saludable ≥ 70</span>
+        <span class="health-threshold health-threshold-yellow"><i class="bi bi-exclamation-triangle me-1"></i>Atención 45–69</span>
+        <span class="health-threshold health-threshold-red"><i class="bi bi-x-octagon me-1"></i>Crítico &lt; 45</span>
       </div>
     </div>
   </div>
@@ -312,6 +438,7 @@
 function updateParam(param, value) {
   const url = new URL(window.location.href);
   url.searchParams.set(param, value);
+  if (param !== 'page') url.searchParams.delete('page');
   window.location.href = url.toString();
 }
 
@@ -322,8 +449,22 @@ function applySort() {
 
 function toggleOrder() {
   const url = new URL(window.location.href);
-  const current = url.searchParams.get('order') || 'desc';
+  const current = url.searchParams.get('order') || 'asc';
   updateParam('order', current === 'desc' ? 'asc' : 'desc');
+}
+
+function toggleDrilldown(storeId) {
+  const row = document.getElementById('drilldown-' + storeId);
+  const icon = document.getElementById('expand-icon-' + storeId);
+  if (row.style.display === 'none') {
+    row.style.display = 'table-row';
+    icon.classList.remove('bi-chevron-down');
+    icon.classList.add('bi-chevron-up');
+  } else {
+    row.style.display = 'none';
+    icon.classList.remove('bi-chevron-up');
+    icon.classList.add('bi-chevron-down');
+  }
 }
 </script>
 {% endblock %}

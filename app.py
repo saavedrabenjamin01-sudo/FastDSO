@@ -11616,34 +11616,40 @@ STORE_HEALTH_WEIGHTS = {
 }
 
 
-def compute_store_health_index(weights=None, sku_scope='core'):
+def compute_store_health_index(weights=None, sku_scope='core', category_filter=None, time_window=8, active_only=True):
     """
-    Compute a health score (0-100) for each store based on:
-    - Fill rate (% SKUs with stock > 0)
-    - Stockout rate (% SKUs with stock = 0)
-    - Overstock rate (% SKUs over MAX_WOC)
-    - Sales velocity (average weekly sales)
-    - Redistribution dependency (SKUs received via transfers)
+    Compute a health score (0-100) for each store based on weighted metrics.
     
-    sku_scope: 'core' (default), 'runs', or 'full'
-    - core: SKUs with global sales in last 90 days OR in recent dist runs OR has stock in stores
-    - runs: SKUs that appeared in last 5 distribution runs
-    - full: All SKUs in catalog
+    New parameters:
+    - category_filter: Restrict SKUs to a specific category (None = all categories)
+    - time_window: Weeks to analyze (default 8)
+    - active_only: Only include SKUs with sales in window (default True)
+    
+    Metrics (demand-weighted for accuracy):
+    - Fill Rate: Weighted coverage vs target WOC
+    - Break Rate: Weighted share of demand in stockout SKUs
+    - Overstock Rate: Weighted share of demand in overstocked SKUs
+    - No-Movement Rate: Share of stock in zero-sales SKUs
+    
+    Health Score = 100 - 45*break_rate - 25*(1-fill_rate) - 20*overstock_rate - 10*no_movement_rate
+    
+    Generates suggested actions per store:
+    - Replenish/Distribute for high break rate
+    - Redistribute out for high overstock
+    - Send to Stock Lento for no-movement
     """
     if weights is None:
         weights = STORE_HEALTH_WEIGHTS.copy()
     
-    # Normalize weights to ensure they sum to 1.0
-    weight_sum = (weights.get('FILL_RATE', 0.30) + weights.get('STOCKOUT_RATE', 0.30) +
-                  weights.get('OVERSTOCK_RATE', 0.20) + weights.get('SALES_VELOCITY', 0.20))
-    if weight_sum > 0:
-        weights['FILL_RATE'] = weights.get('FILL_RATE', 0.30) / weight_sum
-        weights['STOCKOUT_RATE'] = weights.get('STOCKOUT_RATE', 0.30) / weight_sum
-        weights['OVERSTOCK_RATE'] = weights.get('OVERSTOCK_RATE', 0.20) / weight_sum
-        weights['SALES_VELOCITY'] = weights.get('SALES_VELOCITY', 0.20) / weight_sum
+    target_woc = weights.get('TARGET_WOC', 1.0)
+    max_woc = weights.get('MAX_WOC', 8.0)
     
     stores = {s.id: s for s in Store.query.all()}
-    all_products = {p.id: p for p in Product.query.all()}
+    
+    product_query = Product.query
+    if category_filter:
+        product_query = product_query.filter(Product.category == category_filter)
+    all_products = {p.id: p for p in product_query.all()}
     
     # Get flagged products (excluded from distribution) - exclude from health metrics
     flagged_product_ids = {p.id for p in Product.query.filter(Product.eligible_for_distribution == False).all()}
@@ -11776,30 +11782,39 @@ def compute_store_health_index(weights=None, sku_scope='core'):
         store_stock[ss.store_id][ss.product_id] = ss.quantity
     
     today = date.today()
-    recent_window = 4
-    cutoff_week = today - timedelta(weeks=recent_window)
+    cutoff_week = today - timedelta(weeks=time_window)
     cutoff_week = cutoff_week - timedelta(days=cutoff_week.weekday())
     
-    sales_query = db.session.query(
+    sales_base_query = db.session.query(
         SalesWeeklyAgg.store_id,
         SalesWeeklyAgg.product_id,
         db.func.sum(SalesWeeklyAgg.units).label('total_units')
     ).filter(
         SalesWeeklyAgg.week_start >= cutoff_week
-    ).group_by(
+    )
+    if category_filter:
+        sales_base_query = sales_base_query.filter(SalesWeeklyAgg.category == category_filter)
+    
+    sales_query = sales_base_query.group_by(
         SalesWeeklyAgg.store_id,
         SalesWeeklyAgg.product_id
     ).all()
     
     sales_rate = {}
     store_total_sales = {}
+    active_product_ids = set()
     for row in sales_query:
-        weekly_rate = row.total_units / recent_window if recent_window > 0 else 0
+        weekly_rate = row.total_units / time_window if time_window > 0 else 0
+        active_product_ids.add(row.product_id)
         if row.store_id not in sales_rate:
             sales_rate[row.store_id] = {}
             store_total_sales[row.store_id] = 0
         sales_rate[row.store_id][row.product_id] = weekly_rate
         store_total_sales[row.store_id] += weekly_rate
+    
+    if active_only and active_product_ids:
+        products = {pid: p for pid, p in products.items() if pid in active_product_ids}
+        total_skus = len(products)
     
     redistribution_count = {}
     try:
@@ -11820,75 +11835,115 @@ def compute_store_health_index(weights=None, sku_scope='core'):
         stock_data = store_stock.get(sid, {})
         store_sales = sales_rate.get(sid, {})
         
-        skus_with_stock = sum(1 for qty in stock_data.values() if qty > 0)
-        skus_in_stockout = sum(1 for pid in products.keys() if stock_data.get(pid, 0) <= 0)
+        total_demand = 0
+        covered_demand = 0
+        break_demand = 0
+        overstock_demand = 0
+        no_movement_stock = 0
+        total_stock_value = 0
         
-        skus_overstocked = 0
-        for pid, qty in stock_data.items():
-            if qty > 0:
-                rate = store_sales.get(pid, 0)
-                if rate > 0:
-                    woc = qty / rate
-                    if woc > max_woc:
-                        skus_overstocked += 1
-                elif qty > 0:
-                    skus_overstocked += 1
+        break_skus = []
+        overstock_skus = []
+        no_movement_skus = []
         
-        fill_rate = (skus_with_stock / total_skus * 100) if total_skus > 0 else 0
-        stockout_rate = (skus_in_stockout / total_skus * 100) if total_skus > 0 else 0
-        overstock_rate = (skus_overstocked / total_skus * 100) if total_skus > 0 else 0
+        for pid in products.keys():
+            demand = store_sales.get(pid, 0)
+            stock = stock_data.get(pid, 0)
+            product = products[pid]
+            total_demand += demand
+            total_stock_value += stock
+            
+            if demand > 0:
+                woc = stock / demand if stock > 0 else 0
+                coverage = min(woc / target_woc, 1.0) if target_woc > 0 else (1 if stock > 0 else 0)
+                covered_demand += demand * coverage
+                
+                if stock == 0:
+                    break_demand += demand
+                    break_skus.append({
+                        'product_id': pid,
+                        'sku': product.sku,
+                        'name': product.name[:40],
+                        'category': product.category,
+                        'demand_weekly': round(demand, 2),
+                        'stock': 0
+                    })
+                elif woc > max_woc:
+                    overstock_demand += demand
+                    overstock_skus.append({
+                        'product_id': pid,
+                        'sku': product.sku,
+                        'name': product.name[:40],
+                        'category': product.category,
+                        'stock': stock,
+                        'woc': round(woc, 1),
+                        'demand_weekly': round(demand, 2)
+                    })
+            elif stock > 0:
+                no_movement_stock += stock
+                no_movement_skus.append({
+                    'product_id': pid,
+                    'sku': product.sku,
+                    'name': product.name[:40],
+                    'category': product.category,
+                    'stock': stock,
+                    'demand_weekly': 0
+                })
+        
+        fill_rate = (covered_demand / total_demand * 100) if total_demand > 0 else 100
+        break_rate = (break_demand / total_demand * 100) if total_demand > 0 else 0
+        overstock_rate = (overstock_demand / total_demand * 100) if total_demand > 0 else 0
+        no_movement_rate = (no_movement_stock / total_stock_value * 100) if total_stock_value > 0 else 0
         
         avg_weekly_sales = store_total_sales.get(sid, 0)
-        # Normalize velocity against chain maximum; use 0 if no comparison baseline available
-        if max_sales > 0 and avg_weekly_sales > 0:
-            sales_velocity_score = min((avg_weekly_sales / max_sales * 100), 100)
-        else:
-            sales_velocity_score = 0
+        velocity_score = min((avg_weekly_sales / max_sales * 100), 100) if max_sales > 0 else 0
         
         redist_skus = len(redistribution_count.get(sid, set()))
         
-        fill_score = fill_rate
-        stockout_score = 100 - stockout_rate
-        overstock_score = 100 - overstock_rate
-        velocity_score = sales_velocity_score
-        
-        # If no sales data available chain-wide, redistribute velocity weight to other metrics
-        if has_sales_data:
-            health_score = (
-                fill_score * weights.get('FILL_RATE', 0.30) +
-                stockout_score * weights.get('STOCKOUT_RATE', 0.30) +
-                overstock_score * weights.get('OVERSTOCK_RATE', 0.20) +
-                velocity_score * weights.get('SALES_VELOCITY', 0.20)
-            )
-        else:
-            # Redistribute weights to 3 available metrics when no sales data
-            adj_total = weights.get('FILL_RATE', 0.30) + weights.get('STOCKOUT_RATE', 0.30) + weights.get('OVERSTOCK_RATE', 0.20)
-            health_score = (
-                fill_score * (weights.get('FILL_RATE', 0.30) / adj_total) +
-                stockout_score * (weights.get('STOCKOUT_RATE', 0.30) / adj_total) +
-                overstock_score * (weights.get('OVERSTOCK_RATE', 0.20) / adj_total)
-            ) if adj_total > 0 else 0
-        
+        health_score = 100 - 45 * (break_rate / 100) - 25 * (1 - fill_rate / 100) - 20 * (overstock_rate / 100) - 10 * (no_movement_rate / 100)
         health_score = max(0, min(100, round(health_score, 1)))
         
-        if health_score >= 80:
+        if health_score >= 70:
             status = 'HEALTHY'
-        elif health_score >= 50:
+        elif health_score >= 45:
             status = 'WARNING'
         else:
             status = 'CRITICAL'
         
-        alerts = []
-        if stockout_rate > 30:
-            alerts.append(f'{round(stockout_rate)}% quiebres')
-        if overstock_rate > 25:
-            alerts.append(f'{round(overstock_rate)}% sobrestock')
-        if fill_rate < 50:
-            alerts.append('Surtido bajo')
-        if redist_skus > 5:
-            alerts.append(f'{redist_skus} SKUs redistribuidos')
-        if avg_weekly_sales == 0:
-            alerts.append('Sin ventas recientes')
+        break_skus.sort(key=lambda x: x['demand_weekly'], reverse=True)
+        overstock_skus.sort(key=lambda x: x['woc'], reverse=True)
+        no_movement_skus.sort(key=lambda x: x['stock'], reverse=True)
+        
+        suggestions = []
+        if break_rate > 10 or len(break_skus) >= 3:
+            suggestions.append({
+                'type': 'REPLENISH',
+                'priority': 1,
+                'title': 'Reabastecer / Distribuir',
+                'description': f'{len(break_skus)} SKUs sin stock con demanda activa',
+                'skus': break_skus[:5],
+                'action_url': f'/forecast?store={sid}' + (f'&category={category_filter}' if category_filter else '')
+            })
+        if overstock_rate > 15 or len(overstock_skus) >= 5:
+            suggestions.append({
+                'type': 'REDISTRIBUTE',
+                'priority': 2,
+                'title': 'Redistribuir (tienda donante)',
+                'description': f'{len(overstock_skus)} SKUs con sobrestock',
+                'skus': overstock_skus[:5],
+                'action_url': f'/rebalancing?from_store={sid}' + (f'&category={category_filter}' if category_filter else '')
+            })
+        if no_movement_rate > 20 or len(no_movement_skus) >= 10:
+            suggestions.append({
+                'type': 'SLOW_STOCK',
+                'priority': 3,
+                'title': 'Revisar stock sin movimiento',
+                'description': f'{len(no_movement_skus)} SKUs con stock pero sin ventas',
+                'skus': no_movement_skus[:10],
+                'action_url': f'/slow_stock?store={sid}' + (f'&category={category_filter}' if category_filter else '')
+            })
+        
+        suggestions.sort(key=lambda x: x['priority'])
         
         store_results.append({
             'store_id': sid,
@@ -11896,11 +11951,21 @@ def compute_store_health_index(weights=None, sku_scope='core'):
             'health_score': health_score,
             'status': status,
             'fill_rate': round(fill_rate, 1),
-            'stockout_rate': round(stockout_rate, 1),
+            'break_rate': round(break_rate, 1),
+            'stockout_rate': round(break_rate, 1),
             'overstock_rate': round(overstock_rate, 1),
+            'no_movement_rate': round(no_movement_rate, 1),
             'avg_weekly_sales': round(avg_weekly_sales, 1),
+            'velocity_score': round(velocity_score, 1),
             'redist_dependency': redist_skus,
-            'alerts': ', '.join(alerts) if alerts else 'Sin alertas'
+            'break_skus': break_skus[:10],
+            'overstock_skus': overstock_skus[:10],
+            'no_movement_skus': no_movement_skus[:10],
+            'suggestions': suggestions[:3],
+            'total_demand': round(total_demand, 1),
+            'break_count': len(break_skus),
+            'overstock_count': len(overstock_skus),
+            'no_movement_count': len(no_movement_skus)
         })
     
     store_results.sort(key=lambda x: x['health_score'], reverse=True)
@@ -11910,6 +11975,9 @@ def compute_store_health_index(weights=None, sku_scope='core'):
     critical_count = sum(1 for s in store_results if s['status'] == 'CRITICAL')
     avg_score = round(sum(s['health_score'] for s in store_results) / len(store_results), 1) if store_results else 0
     
+    avg_fill = round(sum(s['fill_rate'] for s in store_results) / len(store_results), 1) if store_results else 0
+    avg_break = round(sum(s['break_rate'] for s in store_results) / len(store_results), 1) if store_results else 0
+    
     return {
         'stores': store_results,
         'summary': {
@@ -11917,11 +11985,18 @@ def compute_store_health_index(weights=None, sku_scope='core'):
             'healthy_count': healthy_count,
             'warning_count': warning_count,
             'critical_count': critical_count,
+            'healthy_pct': round(healthy_count / len(store_results) * 100, 1) if store_results else 0,
+            'warning_pct': round(warning_count / len(store_results) * 100, 1) if store_results else 0,
+            'critical_pct': round(critical_count / len(store_results) * 100, 1) if store_results else 0,
             'avg_score': avg_score,
+            'avg_fill_rate': avg_fill,
+            'avg_break_rate': avg_break,
             'has_sales_data': has_sales_data
         },
         'weights': weights,
-        'scope_info': scope_info
+        'scope_info': scope_info,
+        'category_filter': category_filter,
+        'time_window': time_window
     }
 
 
@@ -11929,8 +12004,16 @@ def compute_store_health_index(weights=None, sku_scope='core'):
 @login_required
 @require_permission('store_health:view')
 def store_health():
-    """Store Health Index diagnostic module."""
+    """Store Health Index diagnostic module with category-aware analysis."""
     weights = STORE_HEALTH_WEIGHTS.copy()
+    
+    category_filter = request.args.get('category', '').strip() or None
+    time_window = request.args.get('window', 8, type=int)
+    if time_window not in (4, 8, 12, 26):
+        time_window = 8
+    active_only = request.args.get('active', '1') != '0'
+    
+    categories = get_category_list()
     
     w_fill = request.args.get('w_fill', type=float)
     w_stockout = request.args.get('w_stockout', type=float)
@@ -11950,17 +12033,30 @@ def store_health():
     if sku_scope not in ('core', 'runs', 'full'):
         sku_scope = 'core'
     
-    results = compute_store_health_index(weights, sku_scope=sku_scope)
+    store_filter = request.args.get('store', '').strip() or None
+    
+    results = compute_store_health_index(
+        weights=weights,
+        sku_scope=sku_scope,
+        category_filter=category_filter,
+        time_window=time_window,
+        active_only=active_only
+    )
     
     sort_by = request.args.get('sort', 'score')
-    sort_order = request.args.get('order', 'desc')
+    sort_order = request.args.get('order', 'asc')
     
     stores_data = results.get('stores', [])
+    
+    if store_filter:
+        stores_data = [s for s in stores_data if s['store_name'] == store_filter]
     
     if sort_by == 'name':
         stores_data.sort(key=lambda x: x['store_name'], reverse=(sort_order == 'desc'))
     elif sort_by == 'fill':
         stores_data.sort(key=lambda x: x['fill_rate'], reverse=(sort_order == 'desc'))
+    elif sort_by == 'break':
+        stores_data.sort(key=lambda x: x['break_rate'], reverse=(sort_order == 'desc'))
     elif sort_by == 'stockout':
         stores_data.sort(key=lambda x: x['stockout_rate'], reverse=(sort_order == 'desc'))
     else:
@@ -11968,6 +12064,8 @@ def store_health():
     
     page = request.args.get('page', 1, type=int)
     pag = paginate_list(stores_data, page, 10)
+    
+    all_stores = Store.query.order_by(Store.name.asc()).all()
     
     return render_template('store_health.html',
                            results=results,
@@ -11977,7 +12075,13 @@ def store_health():
                            sort_order=sort_order,
                            weights=weights,
                            default_weights=STORE_HEALTH_WEIGHTS,
-                           sku_scope=sku_scope)
+                           sku_scope=sku_scope,
+                           category_filter=category_filter,
+                           categories=categories,
+                           time_window=time_window,
+                           active_only=active_only,
+                           store_filter=store_filter,
+                           all_stores=all_stores)
 
 
 @app.route('/export_store_health')
