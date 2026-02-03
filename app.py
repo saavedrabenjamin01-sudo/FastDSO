@@ -4108,13 +4108,251 @@ def api_forecast_v2_chart_data():
 
 
 # =============================================================================
+# OPERATIONAL ALERTS DECISION LAYER
+# =============================================================================
+# Normalized alert system that serves as decision input for Forecast,
+# Slow Stock, and Redistribution modules.
+# =============================================================================
+
+import logging
+alerts_logger = logging.getLogger('alerts_layer')
+
+class AlertRecord:
+    """
+    Normalized alert record with standardized fields for operational decisions.
+    
+    Attributes:
+        alert_type: BREAKAGE, PROJECTED_BREAKAGE, OVERSTOCK, NO_MOVEMENT
+        severity: HIGH, MEDIUM, LOW
+        sku_id: Product SKU identifier
+        store_id: Store ID (nullable for CD-level alerts)
+        action_hint: BUY, REDISTRIBUTE, BLOCK, NONE
+    """
+    __slots__ = ['alert_type', 'severity', 'sku_id', 'product_id', 'store_id', 
+                 'action_hint', 'woc', 'stock', 'rate', 'days_since_sale',
+                 'location_name', 'location_type', 'reason', 'category']
+    
+    VALID_TYPES = {'BREAKAGE', 'PROJECTED_BREAKAGE', 'OVERSTOCK', 'NO_MOVEMENT'}
+    VALID_SEVERITIES = {'HIGH', 'MEDIUM', 'LOW'}
+    VALID_ACTIONS = {'BUY', 'REDISTRIBUTE', 'BLOCK', 'NONE'}
+    
+    def __init__(self, alert_type, severity, sku_id, product_id=None, store_id=None,
+                 action_hint='NONE', woc=None, stock=0, rate=0.0, days_since_sale=None,
+                 location_name='', location_type='store', reason='', category=''):
+        self.alert_type = alert_type
+        self.severity = severity
+        self.sku_id = sku_id
+        self.product_id = product_id
+        self.store_id = store_id
+        self.action_hint = action_hint
+        self.woc = woc
+        self.stock = stock
+        self.rate = rate
+        self.days_since_sale = days_since_sale
+        self.location_name = location_name
+        self.location_type = location_type
+        self.reason = reason
+        self.category = category
+    
+    def to_dict(self):
+        """Convert to dictionary for JSON serialization and backward compatibility."""
+        return {
+            'type': self.alert_type,
+            'alert_type': self.alert_type,
+            'severity': self.severity,
+            'sku': self.sku_id,
+            'sku_id': self.sku_id,
+            'product_id': self.product_id,
+            'store_id': self.store_id,
+            'action_hint': self.action_hint,
+            'woc': self.woc,
+            'stock': self.stock,
+            'rate': self.rate,
+            'days_since_sale': self.days_since_sale,
+            'location': self.location_name,
+            'location_type': self.location_type,
+            'reason': self.reason,
+            'category': self.category,
+            'product_name': '',  # Populated by consumer if needed
+            'action': self._get_action_text()
+        }
+    
+    def _get_action_text(self):
+        """Get Spanish action text for UI display."""
+        action_map = {
+            'BUY': 'Reponer',
+            'REDISTRIBUTE': 'Redistribuir',
+            'BLOCK': 'Bloquear compra',
+            'NONE': 'Revisar'
+        }
+        return action_map.get(self.action_hint, 'Revisar')
+    
+    @property
+    def is_breakage(self):
+        return self.alert_type == 'BREAKAGE'
+    
+    @property
+    def is_projected_breakage(self):
+        return self.alert_type == 'PROJECTED_BREAKAGE'
+    
+    @property
+    def is_overstock(self):
+        return self.alert_type == 'OVERSTOCK'
+    
+    @property
+    def is_no_movement(self):
+        return self.alert_type == 'NO_MOVEMENT'
+    
+    @property
+    def forces_buy(self):
+        """Returns True if this alert should force a BUY decision."""
+        return self.alert_type == 'BREAKAGE' and self.severity == 'HIGH'
+    
+    @property
+    def forces_no_buy(self):
+        """Returns True if this alert should force a NO_BUY decision."""
+        return self.alert_type == 'OVERSTOCK' and self.severity in ('HIGH', 'MEDIUM')
+    
+    @property
+    def forces_block(self):
+        """Returns True if this alert should force a BLOCK decision."""
+        return self.alert_type == 'NO_MOVEMENT' and self.severity in ('HIGH', 'MEDIUM')
+    
+    @property
+    def is_slow_stock_eligible(self):
+        """Returns True if this alert makes the SKU eligible for slow stock analysis."""
+        return self.alert_type == 'NO_MOVEMENT'
+    
+    @property
+    def is_redistribution_source(self):
+        """Returns True if this alert marks the SKU as a redistribution source."""
+        return self.alert_type == 'OVERSTOCK'
+    
+    @property
+    def is_redistribution_destination(self):
+        """Returns True if this alert marks the store as a redistribution priority destination."""
+        return self.alert_type == 'BREAKAGE'
+
+
+def get_sku_alerts(sku: str, alerts_list: list = None) -> list:
+    """
+    Get all alerts for a specific SKU.
+    
+    Args:
+        sku: The SKU identifier to filter by
+        alerts_list: Optional pre-computed alerts list. If None, computes fresh alerts.
+    
+    Returns:
+        List of AlertRecord objects for the SKU
+    """
+    if alerts_list is None:
+        alerts_list = compute_alerts_normalized()
+    
+    sku_lower = sku.lower()
+    return [a for a in alerts_list if a.sku_id.lower() == sku_lower]
+
+
+def get_sku_alert_flags(sku: str, alerts_list: list = None) -> dict:
+    """
+    Get alert flags for a specific SKU for use in forecast decisions.
+    
+    Returns:
+        dict with keys: has_breakage, has_projected_breakage, has_overstock,
+                       has_no_movement, forces_buy, forces_no_buy, forces_block,
+                       is_slow_stock_eligible, highest_severity
+    """
+    sku_alerts = get_sku_alerts(sku, alerts_list)
+    
+    if not sku_alerts:
+        return {
+            'has_breakage': False,
+            'has_projected_breakage': False,
+            'has_overstock': False,
+            'has_no_movement': False,
+            'forces_buy': False,
+            'forces_no_buy': False,
+            'forces_block': False,
+            'is_slow_stock_eligible': False,
+            'highest_severity': None,
+            'alerts': []
+        }
+    
+    severity_order = {'HIGH': 0, 'MEDIUM': 1, 'LOW': 2}
+    highest = min(sku_alerts, key=lambda a: severity_order.get(a.severity, 99))
+    
+    return {
+        'has_breakage': any(a.is_breakage for a in sku_alerts),
+        'has_projected_breakage': any(a.is_projected_breakage for a in sku_alerts),
+        'has_overstock': any(a.is_overstock for a in sku_alerts),
+        'has_no_movement': any(a.is_no_movement for a in sku_alerts),
+        'forces_buy': any(a.forces_buy for a in sku_alerts),
+        'forces_no_buy': any(a.forces_no_buy for a in sku_alerts),
+        'forces_block': any(a.forces_block for a in sku_alerts),
+        'is_slow_stock_eligible': any(a.is_slow_stock_eligible for a in sku_alerts),
+        'highest_severity': highest.severity,
+        'alerts': sku_alerts
+    }
+
+
+def get_redistribution_candidates(alerts_list: list = None) -> dict:
+    """
+    Get redistribution candidates and destinations from alerts.
+    
+    Returns:
+        dict with keys:
+            - sources: List of (sku, store_id, stock) tuples for OVERSTOCK alerts
+            - destinations: List of (sku, store_id, rate) tuples for BREAKAGE alerts
+    """
+    if alerts_list is None:
+        alerts_list = compute_alerts_normalized()
+    
+    sources = []
+    destinations = []
+    
+    for alert in alerts_list:
+        if alert.is_redistribution_source and alert.store_id:
+            sources.append({
+                'sku': alert.sku_id,
+                'product_id': alert.product_id,
+                'store_id': alert.store_id,
+                'stock': alert.stock,
+                'woc': alert.woc,
+                'severity': alert.severity
+            })
+        
+        if alert.is_redistribution_destination and alert.store_id:
+            destinations.append({
+                'sku': alert.sku_id,
+                'product_id': alert.product_id,
+                'store_id': alert.store_id,
+                'rate': alert.rate,
+                'days_since_sale': alert.days_since_sale,
+                'severity': alert.severity
+            })
+    
+    return {'sources': sources, 'destinations': destinations}
+
+
+def get_slow_stock_eligible_skus(alerts_list: list = None) -> set:
+    """
+    Get set of SKUs that are eligible for slow stock analysis based on NO_MOVEMENT alerts.
+    
+    Returns:
+        Set of SKU identifiers
+    """
+    if alerts_list is None:
+        alerts_list = compute_alerts_normalized()
+    
+    return {a.sku_id for a in alerts_list if a.is_slow_stock_eligible}
+
+
+# =============================================================================
 # CENTRALIZED FORECAST DECISION ENGINE
 # =============================================================================
 # This is the single source of truth for all forecast decisions.
 # Used by: api_forecast_v2, api_forecast_batch, api_forecast_category
 # =============================================================================
 
-import logging
 forecast_logger = logging.getLogger('forecast_engine')
 
 class ForecastDecisionResult:
@@ -11704,6 +11942,312 @@ def compute_alerts(params=None):
             })
     
     alerts.sort(key=lambda x: (severity_order.get(x['severity'], 99), x['sku']))
+    
+    return alerts
+
+
+def compute_alerts_normalized(params=None):
+    """
+    Compute normalized AlertRecord objects for operational decision layer.
+    
+    This function generates alerts using the same logic as compute_alerts but
+    returns AlertRecord objects with standardized fields for integration with
+    Forecast, Slow Stock, and Redistribution modules.
+    
+    Alert Type Mapping:
+        - BROKEN_STOCK → BREAKAGE
+        - PROJECTED_STOCKOUT → PROJECTED_BREAKAGE
+        - OVERSTOCK → OVERSTOCK
+        - SILENT_SKU → NO_MOVEMENT
+    
+    Action Hint Rules:
+        - BREAKAGE (HIGH) → BUY
+        - PROJECTED_BREAKAGE → BUY
+        - OVERSTOCK → REDISTRIBUTE
+        - NO_MOVEMENT (MEDIUM/HIGH) → BLOCK
+        - NO_MOVEMENT (LOW) → NONE
+    """
+    if params is None:
+        params = ALERT_PARAMS.copy()
+    
+    today = date.today()
+    alerts = []
+    severity_order = {'HIGH': 0, 'MEDIUM': 1, 'LOW': 2}
+    
+    latest_store_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
+    latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar()
+    
+    if not latest_store_date:
+        return alerts
+    
+    products = {p.id: p for p in Product.query.all()}
+    stores = {s.id: s for s in Store.query.all()}
+    
+    store_stock = {}
+    for ss in StockSnapshot.query.filter(StockSnapshot.as_of_date == latest_store_date).all():
+        store_stock[(ss.product_id, ss.store_id)] = ss.quantity
+    
+    cd_stock = {}
+    if latest_cd_date:
+        for cd in StockCD.query.filter(StockCD.as_of_date == latest_cd_date).all():
+            cd_stock[cd.product_id] = cd.quantity
+    
+    recent_window = params.get('RECENT_WINDOW_WEEKS', 4)
+    cutoff_week = today - timedelta(weeks=recent_window)
+    cutoff_week = cutoff_week - timedelta(days=cutoff_week.weekday())
+    
+    sales_query = db.session.query(
+        SalesWeeklyAgg.product_id,
+        SalesWeeklyAgg.store_id,
+        db.func.sum(SalesWeeklyAgg.units).label('total_units')
+    ).filter(
+        SalesWeeklyAgg.week_start >= cutoff_week
+    ).group_by(
+        SalesWeeklyAgg.product_id,
+        SalesWeeklyAgg.store_id
+    ).all()
+    
+    sales_rate = {}
+    for row in sales_query:
+        weekly_rate = row.total_units / recent_window if recent_window > 0 else 0
+        sales_rate[(row.product_id, row.store_id)] = weekly_rate
+    
+    last_sale_store = {}
+    for lc in SkuStoreLifecycle.query.all():
+        if lc.last_sale_date_store:
+            last_sale_store[(lc.product_id, lc.store_id)] = lc.last_sale_date_store
+    
+    last_sale_global = {}
+    for lc in SkuLifecycle.query.all():
+        if lc.last_sale_date_global:
+            last_sale_global[lc.product_id] = lc.last_sale_date_global
+    
+    min_woc = params.get('MIN_WOC', 1.5)
+    max_woc = params.get('MAX_WOC', 6.0)
+    dead_days_store = params.get('DEAD_DAYS_STORE', 60)
+    dead_days_global = params.get('DEAD_DAYS_GLOBAL', 90)
+    broken_stock_days = params.get('BROKEN_STOCK_DAYS', 45)
+    
+    for (pid, sid), qty in store_stock.items():
+        if qty <= 0:
+            continue
+        
+        product = products.get(pid)
+        store = stores.get(sid)
+        if not product or not store:
+            continue
+        
+        rate = sales_rate.get((pid, sid), 0)
+        woc = qty / rate if rate > 0 else 9999
+        last_sale = last_sale_store.get((pid, sid))
+        days_since = (today - last_sale).days if last_sale else 9999
+        
+        if rate > 0:
+            if woc < 0.5:
+                alerts.append(AlertRecord(
+                    alert_type='PROJECTED_BREAKAGE',
+                    severity='HIGH',
+                    sku_id=product.sku,
+                    product_id=pid,
+                    store_id=sid,
+                    action_hint='BUY',
+                    woc=round(woc, 1),
+                    stock=qty,
+                    rate=round(rate, 2),
+                    location_name=store.name,
+                    location_type='store',
+                    reason=f'WOC {round(woc, 1)} sem < 0.5',
+                    category=product.category or ''
+                ))
+            elif woc < min_woc:
+                alerts.append(AlertRecord(
+                    alert_type='PROJECTED_BREAKAGE',
+                    severity='MEDIUM',
+                    sku_id=product.sku,
+                    product_id=pid,
+                    store_id=sid,
+                    action_hint='BUY',
+                    woc=round(woc, 1),
+                    stock=qty,
+                    rate=round(rate, 2),
+                    location_name=store.name,
+                    location_type='store',
+                    reason=f'WOC {round(woc, 1)} sem < {min_woc}',
+                    category=product.category or ''
+                ))
+        
+        if rate > 0:
+            if woc > max_woc * 2:
+                alerts.append(AlertRecord(
+                    alert_type='OVERSTOCK',
+                    severity='HIGH',
+                    sku_id=product.sku,
+                    product_id=pid,
+                    store_id=sid,
+                    action_hint='REDISTRIBUTE',
+                    woc=round(woc, 1) if woc < 9999 else None,
+                    stock=qty,
+                    rate=round(rate, 2),
+                    location_name=store.name,
+                    location_type='store',
+                    reason=f'WOC {round(woc, 1)} sem > {max_woc * 2}',
+                    category=product.category or ''
+                ))
+            elif woc > max_woc:
+                alerts.append(AlertRecord(
+                    alert_type='OVERSTOCK',
+                    severity='MEDIUM',
+                    sku_id=product.sku,
+                    product_id=pid,
+                    store_id=sid,
+                    action_hint='REDISTRIBUTE',
+                    woc=round(woc, 1) if woc < 9999 else None,
+                    stock=qty,
+                    rate=round(rate, 2),
+                    location_name=store.name,
+                    location_type='store',
+                    reason=f'WOC {round(woc, 1)} sem > {max_woc}',
+                    category=product.category or ''
+                ))
+        
+        if days_since >= dead_days_store:
+            if days_since >= dead_days_store * 2:
+                severity = 'HIGH'
+                action_hint = 'BLOCK'
+            elif days_since >= dead_days_store * 1.5:
+                severity = 'MEDIUM'
+                action_hint = 'BLOCK'
+            else:
+                severity = 'LOW'
+                action_hint = 'NONE'
+            alerts.append(AlertRecord(
+                alert_type='NO_MOVEMENT',
+                severity=severity,
+                sku_id=product.sku,
+                product_id=pid,
+                store_id=sid,
+                action_hint=action_hint,
+                woc=round(woc, 1) if woc < 9999 else None,
+                stock=qty,
+                rate=round(rate, 2),
+                days_since_sale=days_since if days_since < 9999 else None,
+                location_name=store.name,
+                location_type='store',
+                reason=f'{days_since} días sin venta' if days_since < 9999 else 'Sin ventas registradas',
+                category=product.category or ''
+            ))
+    
+    for (pid, sid), last_date in last_sale_store.items():
+        stock_qty = store_stock.get((pid, sid), 0)
+        if stock_qty > 0:
+            continue
+        
+        product = products.get(pid)
+        store = stores.get(sid)
+        if not product or not store:
+            continue
+        
+        days_since = (today - last_date).days if last_date else 9999
+        if days_since <= broken_stock_days:
+            rate = sales_rate.get((pid, sid), 0)
+            if days_since <= 14:
+                severity = 'HIGH'
+            elif days_since <= 30:
+                severity = 'MEDIUM'
+            else:
+                severity = 'LOW'
+            alerts.append(AlertRecord(
+                alert_type='BREAKAGE',
+                severity=severity,
+                sku_id=product.sku,
+                product_id=pid,
+                store_id=sid,
+                action_hint='BUY' if severity == 'HIGH' else 'NONE',
+                woc=None,
+                stock=0,
+                rate=round(rate, 2) if rate else 0.0,
+                days_since_sale=days_since,
+                location_name=store.name,
+                location_type='store',
+                reason=f'Quiebre: {days_since} días desde última venta',
+                category=product.category or ''
+            ))
+    
+    for pid, qty in cd_stock.items():
+        if qty <= 0:
+            continue
+        
+        product = products.get(pid)
+        if not product:
+            continue
+        
+        global_rate = sum(sales_rate.get((pid, sid), 0) for sid in stores.keys())
+        woc_cd = qty / global_rate if global_rate > 0 else 9999
+        last_sale = last_sale_global.get(pid)
+        days_since = (today - last_sale).days if last_sale else 9999
+        
+        if global_rate > 0 and woc_cd < 9999:
+            if woc_cd > max_woc * 2:
+                alerts.append(AlertRecord(
+                    alert_type='OVERSTOCK',
+                    severity='HIGH',
+                    sku_id=product.sku,
+                    product_id=pid,
+                    store_id=None,
+                    action_hint='REDISTRIBUTE',
+                    woc=round(woc_cd, 1),
+                    stock=qty,
+                    rate=round(global_rate, 2),
+                    location_name='Centro Distribución',
+                    location_type='cd',
+                    reason=f'WOC CD {round(woc_cd, 1)} sem > {max_woc * 2}',
+                    category=product.category or ''
+                ))
+            elif woc_cd > max_woc:
+                alerts.append(AlertRecord(
+                    alert_type='OVERSTOCK',
+                    severity='MEDIUM',
+                    sku_id=product.sku,
+                    product_id=pid,
+                    store_id=None,
+                    action_hint='REDISTRIBUTE',
+                    woc=round(woc_cd, 1),
+                    stock=qty,
+                    rate=round(global_rate, 2),
+                    location_name='Centro Distribución',
+                    location_type='cd',
+                    reason=f'WOC CD {round(woc_cd, 1)} sem > {max_woc}',
+                    category=product.category or ''
+                ))
+        
+        if days_since >= dead_days_global:
+            if days_since >= dead_days_global * 2:
+                severity = 'HIGH'
+                action_hint = 'BLOCK'
+            elif days_since >= dead_days_global * 1.5:
+                severity = 'MEDIUM'
+                action_hint = 'BLOCK'
+            else:
+                severity = 'LOW'
+                action_hint = 'NONE'
+            alerts.append(AlertRecord(
+                alert_type='NO_MOVEMENT',
+                severity=severity,
+                sku_id=product.sku,
+                product_id=pid,
+                store_id=None,
+                action_hint=action_hint,
+                woc=round(woc_cd, 1) if woc_cd < 9999 else None,
+                stock=qty,
+                rate=round(global_rate, 2),
+                days_since_sale=days_since if days_since < 9999 else None,
+                location_name='Centro Distribución',
+                location_type='cd',
+                reason=f'{days_since} días sin venta global' if days_since < 9999 else 'Sin ventas registradas',
+                category=product.category or ''
+            ))
+    
+    alerts.sort(key=lambda x: (severity_order.get(x.severity, 99), x.sku_id))
     
     return alerts
 
