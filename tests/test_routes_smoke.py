@@ -18,6 +18,7 @@ def test_routes():
             ('/store_health', 'Store Health'),
             ('/alerts', 'Alerts'),
             ('/', 'Dashboard'),
+            ('/rebalancing', 'Rebalancing'),
         ]
         
         all_passed = True
