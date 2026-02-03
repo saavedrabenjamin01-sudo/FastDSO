@@ -1049,7 +1049,8 @@ def generate_predictions(
     meta: dict | None = None,
     df: pd.DataFrame | None = None,
     sales_run_id: str | None = None,
-    simulate: bool = False
+    simulate: bool = False,
+    include_held: bool = False
 ):
     from uuid import uuid4
     run_id = str(uuid4())
@@ -1073,11 +1074,17 @@ def generate_predictions(
     # 1) Origen de datos: df pasado o histórico completo
     # Try SalesWeeklyAgg (macro layer) first when no df is passed
     use_macro_layer = False
+    held_skus_excluded = []
     if df is None:
         macro_count = db.session.query(func.count(SalesWeeklyAgg.id)).scalar() or 0
         if macro_count > 0:
             use_macro_layer = True
-            product_map = {p.id: p.sku for p in Product.query.all()}
+            product_map = {}
+            for p in Product.query.all():
+                if p.is_on_hold and not include_held:
+                    held_skus_excluded.append(p.sku)
+                    continue
+                product_map[p.id] = p.sku
             store_map = {s.id: s.name for s in Store.query.all()}
             
             agg_rows = SalesWeeklyAgg.query.all()
@@ -1098,16 +1105,34 @@ def generate_predictions(
             if not rows:
                 db.session.commit()
                 return run_id, 0, 0, 0, 0
+            held_skus_set = set(p.sku for p in Product.query.filter_by(is_on_hold=True).all()) if not include_held else set()
             data = [{
                 'sku': r.product.sku,
                 'store': r.store.name,
                 'quantity': r.quantity,
                 'date': pd.to_datetime(r.event_date)
-            } for r in rows]
+            } for r in rows if r.product.sku not in held_skus_set]
+            held_skus_excluded.extend(list(held_skus_set))
             df = pd.DataFrame(data)
     else:
         df = df.copy()
         df['date'] = pd.to_datetime(df['date'])
+        if not include_held:
+            held_skus_set = set(p.sku for p in Product.query.filter_by(is_on_hold=True).all())
+            if held_skus_set:
+                df_original_len = len(df)
+                df = df[~df['sku'].astype(str).str.strip().isin(held_skus_set)]
+                if len(df) < df_original_len:
+                    held_skus_excluded.extend(list(held_skus_set))
+
+    if held_skus_excluded:
+        log_audit(
+            action='distribution.held_skus_excluded',
+            status='success',
+            message=f'Excluded {len(held_skus_excluded)} held SKUs from distribution',
+            run_id=run_id,
+            metadata={'excluded_skus': held_skus_excluded[:50], 'count': len(held_skus_excluded)}
+        )
 
     # Normalizar columnas clave (alineado con /upload)
     df['sku'] = df['sku'].astype(str).str.strip()
@@ -1772,7 +1797,8 @@ def generate_predictions_from_macro(
     scope_skus: list,
     mode: str = "sma3_min3",
     meta: dict | None = None,
-    user_id: int | None = None
+    user_id: int | None = None,
+    include_held: bool = False
 ):
     """
     Generate distribution predictions from SalesWeeklyAgg (macro layer)
@@ -1869,10 +1895,23 @@ def generate_predictions_from_macro(
         print(f"[DISTRIBUTION DEBUG] Targeted debug active for SKU={DEBUG_SKU}, Store={DEBUG_STORE}")
     
     product_map = {}
+    held_skus_excluded = []
     for sku in scope_skus_set:
         prod = Product.query.filter_by(sku=sku).first()
         if prod:
+            if prod.is_on_hold and not include_held:
+                held_skus_excluded.append(sku)
+                continue
             product_map[sku] = prod
+    
+    if held_skus_excluded:
+        log_audit(
+            action='distribution.held_skus_excluded',
+            status='success',
+            message=f'Excluded {len(held_skus_excluded)} held SKUs from distribution: {", ".join(held_skus_excluded[:10])}{"..." if len(held_skus_excluded) > 10 else ""}',
+            run_id=run_id,
+            metadata={'excluded_skus': held_skus_excluded, 'count': len(held_skus_excluded)}
+        )
     
     if not product_map:
         db.session.commit()
@@ -7034,6 +7073,15 @@ def upload():
             "fecha_doc": request.form.get('fecha_doc', '').strip() or None,
         }
         user_id = current_user.id if current_user.is_authenticated else None
+        include_held = request.form.get('include_held') == '1' and current_user.role == 'Admin'
+        
+        if include_held:
+            log_audit(
+                action='distribution.include_held_override',
+                status='success',
+                message=f'Admin {current_user.username} enabled include_held for distribution',
+                metadata={'user': current_user.username, 'analysis_mode': analysis_mode}
+            )
         
         # Request-file-only mode: always process as SKU list
         try:
@@ -7114,7 +7162,8 @@ def upload():
                 scope_skus=sku_list,
                 mode=analysis_mode,
                 meta=meta,
-                user_id=user_id
+                user_id=user_id,
+                include_held=include_held
             )
             
             session.pop('distribution_request_skus', None)
