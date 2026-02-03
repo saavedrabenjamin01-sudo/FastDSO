@@ -338,7 +338,7 @@
                         {% endfor %}
                       </tbody>
                     </table>
-                    {% if store.break_count > 5 %}<div class="drilldown-more"><a href="{{ url_for('alerts') }}?store={{ store.store_id }}&type=BREAKAGE">Ver todos</a></div>{% endif %}
+                    {% if store.break_count > 5 %}<div class="drilldown-more"><a href="{{ url_for('alerts_page') }}?store={{ store.store_id }}&type=BREAKAGE">Ver todos</a></div>{% endif %}
                   </div>
                   {% endif %}
                   {% if store.overstock_skus %}
