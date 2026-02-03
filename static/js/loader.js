@@ -122,6 +122,17 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function showModal(title, message, variant) {
+    var card = modal.querySelector('.proc-card');
+    card.classList.remove('proc-card-success', 'proc-card-error');
+    
+    var existingActions = card.querySelector('.proc-result-actions');
+    if (existingActions) existingActions.remove();
+    
+    var progressWrap = modal.querySelector('.proc-progress');
+    var percentEl = document.getElementById('procPercent');
+    if (progressWrap) progressWrap.style.display = '';
+    if (percentEl) percentEl.style.display = '';
+    
     procTitle.textContent = title || 'Procesando';
     procMsg.textContent = message || 'Trabajando en tu solicitud...';
     showIcon(variant || 'generic');

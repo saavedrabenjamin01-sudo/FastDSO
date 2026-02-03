@@ -862,15 +862,18 @@ def job_status_json(job_id):
     if not job:
         return jsonify({'error': 'Job not found'}), 404
     
-    result_data = job.get_result() if job.status == 'done' else None
+    result_data = job.get_result() if job.status in ('done', 'error') else None
     
     result_title = None
     result_message = None
+    traceback = None
+    
     if job.status == 'done':
         job_titles = {
             'upload_stock_cd': 'Stock CD cargado',
             'upload_macro_sales': 'Ventas macro cargadas',
-            'generate_distribution': 'Distribución generada'
+            'generate_distribution': 'Distribución generada',
+            'upload_stock_store': 'Stock tiendas cargado'
         }
         result_title = job_titles.get(job.job_type, 'Proceso completado')
         
@@ -885,10 +888,19 @@ def job_status_json(job_id):
             elif job.job_type == 'generate_distribution':
                 run_id = result_data.get('run_id')
                 result_message = f'Corrida #{run_id} creada con {result_data.get("total_predictions", 0):,} predicciones.'
+            elif job.job_type == 'upload_stock_store':
+                created = result_data.get('created', 0)
+                updated = result_data.get('updated', 0)
+                result_message = f'{created + updated:,} registros de stock actualizados.'
             else:
                 result_message = job.message or 'El proceso finalizó correctamente.'
         else:
             result_message = job.message or 'El proceso finalizó correctamente.'
+    elif job.status == 'error':
+        result_title = 'Error en el proceso'
+        result_message = job.message or 'Ocurrió un error durante el procesamiento.'
+        if result_data and isinstance(result_data, dict):
+            traceback = result_data.get('traceback') or result_data.get('error_details')
     
     return jsonify({
         'id': job.id,
@@ -900,7 +912,8 @@ def job_status_json(job_id):
         'updated_at': job.updated_at.isoformat() if job.updated_at else None,
         'result': result_data,
         'result_title': result_title,
-        'result_message': result_message
+        'result_message': result_message,
+        'traceback': traceback
     })
 
 
