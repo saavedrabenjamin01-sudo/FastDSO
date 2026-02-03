@@ -2793,6 +2793,161 @@ body{
   font-size: 0.72rem;
   margin-bottom: 4px;
 }
+.rebal-scope-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+.rebal-scope-row .rebal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rebal-scope-row .btn-group .btn {
+  font-size: 0.8rem;
+  padding: 4px 12px;
+}
+.rebal-category-section {
+  padding: 12px 16px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+.rebal-results-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+}
+.rebal-results-tab {
+  padding: 8px 16px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #64748b;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.rebal-results-tab:hover {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+.rebal-results-tab.active {
+  background: #fff;
+  color: #0ea5e9;
+  border-color: #e2e8f0;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+.rebal-tab-content {
+  display: none;
+}
+.rebal-tab-content.active {
+  display: block;
+}
+.rebal-dest-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+  padding: 16px;
+}
+.rebal-dest-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.rebal-dest-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+  border-bottom: 1px solid #e2e8f0;
+}
+.rebal-dest-badges {
+  display: flex;
+  gap: 6px;
+}
+.rebal-dest-items {
+  padding: 10px 14px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.rebal-dest-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px dashed #f1f5f9;
+  font-size: 0.85rem;
+}
+.rebal-dest-item:last-child {
+  border-bottom: none;
+}
+.rebal-dest-arrow {
+  color: #94a3b8;
+  font-size: 0.75rem;
+}
+.rebal-dest-qty {
+  margin-left: auto;
+  font-weight: 600;
+  color: #0ea5e9;
+}
+.rebal-dest-more {
+  padding: 8px 0;
+  text-align: center;
+  color: #64748b;
+  font-size: 0.8rem;
+  font-style: italic;
+}
+.rebal-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+  padding: 20px;
+}
+.rebal-summary-block {
+  background: #f8fafc;
+  border-radius: 10px;
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+}
+.rebal-summary-block h6 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #1e293b;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.rebal-summary-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.rebal-summary-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  font-size: 0.85rem;
+  border-bottom: 1px dashed #e2e8f0;
+}
+.rebal-summary-list li:last-child {
+  border-bottom: none;
+}
+.rebal-summary-val {
+  font-weight: 500;
+  color: #0ea5e9;
+}
 .rebal-auto-controls {
   display: flex;
   align-items: center;

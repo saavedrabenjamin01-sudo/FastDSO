@@ -8656,6 +8656,220 @@ def audit_view():
 import uuid
 import math
 
+# Rebalancing constants
+REBALANCING_MAX_ROWS = 2000
+REBALANCING_MAX_UNITS_PER_SKU_PER_DEST = 20
+
+
+def get_category_list():
+    """Get list of distinct categories from Product table."""
+    categories = (
+        db.session.query(Product.category)
+        .filter(Product.category.isnot(None))
+        .filter(Product.category != '')
+        .distinct()
+        .order_by(Product.category)
+        .all()
+    )
+    return [c[0] for c in categories]
+
+
+def fetch_category_skus(category, top_n=None, weeks_window=4):
+    """
+    Fetch SKUs for a category, optionally limited to Top N by total demand.
+    Uses SalesWeeklyAgg as the demand signal source.
+    Returns list of product IDs sorted by demand descending.
+    """
+    if not category:
+        return []
+    
+    today = date.today()
+    window_start = today - timedelta(days=weeks_window * 7)
+    window_start = window_start - timedelta(days=window_start.weekday())
+    
+    product_ids = [p.id for p in Product.query.filter(Product.category == category).all()]
+    if not product_ids:
+        return []
+    
+    demand_q = (
+        db.session.query(
+            SalesWeeklyAgg.product_id,
+            db.func.sum(SalesWeeklyAgg.units).label('total_units')
+        )
+        .filter(
+            SalesWeeklyAgg.product_id.in_(product_ids),
+            SalesWeeklyAgg.week_start >= window_start
+        )
+        .group_by(SalesWeeklyAgg.product_id)
+        .order_by(db.desc('total_units'))
+        .all()
+    )
+    
+    ranked_pids = [row[0] for row in demand_q]
+    
+    pids_without_sales = [pid for pid in product_ids if pid not in ranked_pids]
+    ranked_pids.extend(pids_without_sales)
+    
+    if top_n and top_n > 0:
+        ranked_pids = ranked_pids[:top_n]
+    
+    return ranked_pids
+
+
+def compute_blended_demand(product_id, store_id, weeks_window=4, category=None):
+    """
+    Compute demand for a (product, store) pair using 70% SKU demand + 30% category share.
+    Falls back to SKU-only if category is not available.
+    Uses SalesWeeklyAgg as the single source of truth.
+    Returns demand_weekly (float).
+    """
+    today = date.today()
+    window_start = today - timedelta(days=weeks_window * 7)
+    window_start = window_start - timedelta(days=window_start.weekday())
+    
+    sku_sales = (
+        db.session.query(db.func.sum(SalesWeeklyAgg.units))
+        .filter(
+            SalesWeeklyAgg.product_id == product_id,
+            SalesWeeklyAgg.store_id == store_id,
+            SalesWeeklyAgg.week_start >= window_start
+        )
+        .scalar() or 0
+    )
+    sku_demand = sku_sales / max(weeks_window, 1)
+    
+    if not category:
+        product = Product.query.get(product_id)
+        category = product.category if product else None
+    
+    if not category:
+        return sku_demand
+    
+    category_sales = (
+        db.session.query(db.func.sum(SalesWeeklyAgg.units))
+        .filter(
+            SalesWeeklyAgg.category == category,
+            SalesWeeklyAgg.store_id == store_id,
+            SalesWeeklyAgg.week_start >= window_start
+        )
+        .scalar() or 0
+    )
+    
+    category_total_sales = (
+        db.session.query(db.func.sum(SalesWeeklyAgg.units))
+        .filter(
+            SalesWeeklyAgg.category == category,
+            SalesWeeklyAgg.week_start >= window_start
+        )
+        .scalar() or 0
+    )
+    
+    if category_total_sales > 0:
+        store_category_share = category_sales / category_total_sales
+        category_weekly_demand = category_total_sales / max(weeks_window, 1)
+        category_demand_contribution = store_category_share * category_weekly_demand
+    else:
+        category_demand_contribution = 0
+    
+    blended_demand = 0.70 * sku_demand + 0.30 * category_demand_contribution
+    
+    return max(blended_demand, sku_demand * 0.5)
+
+
+def compute_store_demands_bulk(product_ids, weeks_window=4):
+    """
+    Bulk compute SKU and category demands for efficiency.
+    Returns dict: {(product_id, store_id): {'sku_demand': float, 'blended_demand': float}}
+    """
+    today = date.today()
+    window_start = today - timedelta(days=weeks_window * 7)
+    window_start = window_start - timedelta(days=window_start.weekday())
+    
+    product_category_map = {}
+    for p in Product.query.filter(Product.id.in_(product_ids)).all():
+        product_category_map[p.id] = p.category
+    
+    sku_sales_q = (
+        db.session.query(
+            SalesWeeklyAgg.product_id,
+            SalesWeeklyAgg.store_id,
+            db.func.sum(SalesWeeklyAgg.units).label('total_units')
+        )
+        .filter(
+            SalesWeeklyAgg.product_id.in_(product_ids),
+            SalesWeeklyAgg.week_start >= window_start
+        )
+        .group_by(SalesWeeklyAgg.product_id, SalesWeeklyAgg.store_id)
+        .all()
+    )
+    
+    sku_demand_map = {}
+    for pid, sid, total in sku_sales_q:
+        sku_demand_map[(pid, sid)] = total / max(weeks_window, 1)
+    
+    categories = set(c for c in product_category_map.values() if c)
+    
+    category_store_sales = {}
+    category_total_sales = {}
+    
+    if categories:
+        cat_store_q = (
+            db.session.query(
+                SalesWeeklyAgg.category,
+                SalesWeeklyAgg.store_id,
+                db.func.sum(SalesWeeklyAgg.units).label('total_units')
+            )
+            .filter(
+                SalesWeeklyAgg.category.in_(categories),
+                SalesWeeklyAgg.week_start >= window_start
+            )
+            .group_by(SalesWeeklyAgg.category, SalesWeeklyAgg.store_id)
+            .all()
+        )
+        for cat, sid, total in cat_store_q:
+            category_store_sales[(cat, sid)] = total / max(weeks_window, 1)
+        
+        cat_total_q = (
+            db.session.query(
+                SalesWeeklyAgg.category,
+                db.func.sum(SalesWeeklyAgg.units).label('total_units')
+            )
+            .filter(
+                SalesWeeklyAgg.category.in_(categories),
+                SalesWeeklyAgg.week_start >= window_start
+            )
+            .group_by(SalesWeeklyAgg.category)
+            .all()
+        )
+        for cat, total in cat_total_q:
+            category_total_sales[cat] = total
+    
+    result = {}
+    all_store_ids = set(sid for _, sid in sku_demand_map.keys())
+    
+    for pid in product_ids:
+        category = product_category_map.get(pid)
+        for sid in all_store_ids:
+            sku_demand = sku_demand_map.get((pid, sid), 0)
+            
+            if category and category in category_total_sales and category_total_sales[category] > 0:
+                cat_store_demand = category_store_sales.get((category, sid), 0)
+                cat_total = category_total_sales[category]
+                cat_weekly_total = cat_total / max(weeks_window, 1)
+                store_share = cat_store_demand / cat_total if cat_total > 0 else 0
+                cat_contribution = store_share * cat_weekly_total
+                blended = 0.70 * sku_demand + 0.30 * cat_contribution
+            else:
+                blended = sku_demand
+            
+            result[(pid, sid)] = {
+                'sku_demand': sku_demand,
+                'blended_demand': max(blended, sku_demand * 0.5)
+            }
+    
+    return result
+
+
 def compute_rebalancing_suggestions(
     weeks_window=4,
     target_woc_min=1.5,
@@ -8664,10 +8878,22 @@ def compute_rebalancing_suggestions(
     retain_woc=4.0,
     stock_floor=1,
     min_transfer_qty=2,
-    store_filter=None
+    store_filter=None,
+    scope='sku',
+    destination='one',
+    category=None,
+    top_n=None,
+    product_ids_filter=None
 ):
     """
     Compute store-to-store rebalancing suggestions.
+    
+    Extended params:
+    - scope: 'sku' (all SKUs or filtered list) or 'category' (SKUs from a category)
+    - destination: 'one' (single store filter) or 'all' (multi-destination matrix)
+    - category: category name when scope='category'
+    - top_n: limit to top N SKUs by demand when scope='category'
+    - product_ids_filter: list of product_ids to filter (when scope='sku' with specific list)
     
     Integrates with Operational Alerts Layer:
     - OVERSTOCK alerts mark SKUs as redistribution sources (higher priority)
@@ -8676,6 +8902,11 @@ def compute_rebalancing_suggestions(
     Returns list of dicts: {product_id, sku, name, from_store_id, from_store, to_store_id, to_store, qty, sales_rate_to, woc_from, woc_to, score, reason}
     Optimized: Uses indexed lookups instead of O(n*m) scans.
     """
+    sales_agg_count = db.session.query(db.func.count(SalesWeeklyAgg.id)).scalar() or 0
+    if sales_agg_count == 0:
+        app.logger.warning("Redistribution: No SalesWeeklyAgg data available")
+        return []
+    
     alert_candidates = get_redistribution_candidates()
     alert_sources = {(s['sku'], s['store_id']): s for s in alert_candidates['sources']}
     alert_destinations = {(d['sku'], d['store_id']): d for d in alert_candidates['destinations']}
@@ -8686,7 +8917,18 @@ def compute_rebalancing_suggestions(
     window_start_week = today - timedelta(days=weeks_window * 7)
     window_start_week = window_start_week - timedelta(days=window_start_week.weekday())
     
-    app.logger.info(f"Redistribution using SalesWeeklyAgg from {window_start_week} to {today}")
+    app.logger.info(f"Redistribution using SalesWeeklyAgg from {window_start_week} to {today}, scope={scope}, destination={destination}")
+    
+    if scope == 'category' and category:
+        target_product_ids = fetch_category_skus(category, top_n, weeks_window)
+        if not target_product_ids:
+            app.logger.warning(f"Redistribution: No SKUs found for category {category}")
+            return []
+        app.logger.info(f"Redistribution: Category '{category}' scope with {len(target_product_ids)} SKUs")
+    elif product_ids_filter:
+        target_product_ids = product_ids_filter
+    else:
+        target_product_ids = None
     
     latest_stock_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
     if not latest_stock_date:
@@ -8694,30 +8936,31 @@ def compute_rebalancing_suggestions(
     
     stock_map = {}
     stores_per_product_stock = defaultdict(set)
-    stock_q = (
-        db.session.query(
-            StockSnapshot.product_id,
-            StockSnapshot.store_id,
-            StockSnapshot.quantity
-        )
-        .filter(StockSnapshot.as_of_date == latest_stock_date)
-        .all()
-    )
+    stock_query = db.session.query(
+        StockSnapshot.product_id,
+        StockSnapshot.store_id,
+        StockSnapshot.quantity
+    ).filter(StockSnapshot.as_of_date == latest_stock_date)
+    
+    if target_product_ids:
+        stock_query = stock_query.filter(StockSnapshot.product_id.in_(target_product_ids))
+    
+    stock_q = stock_query.all()
     for pid, sid, qty in stock_q:
         stock_map[(pid, sid)] = qty
         stores_per_product_stock[pid].add(sid)
     
-    sales_q = (
-        db.session.query(
-            SalesWeeklyAgg.product_id,
-            SalesWeeklyAgg.store_id,
-            db.func.sum(SalesWeeklyAgg.units).label('total_units'),
-            db.func.count(db.func.distinct(SalesWeeklyAgg.week_start)).label('weeks_count')
-        )
-        .filter(SalesWeeklyAgg.week_start >= window_start_week)
-        .group_by(SalesWeeklyAgg.product_id, SalesWeeklyAgg.store_id)
-        .all()
-    )
+    sales_query = db.session.query(
+        SalesWeeklyAgg.product_id,
+        SalesWeeklyAgg.store_id,
+        db.func.sum(SalesWeeklyAgg.units).label('total_units'),
+        db.func.count(db.func.distinct(SalesWeeklyAgg.week_start)).label('weeks_count')
+    ).filter(SalesWeeklyAgg.week_start >= window_start_week)
+    
+    if target_product_ids:
+        sales_query = sales_query.filter(SalesWeeklyAgg.product_id.in_(target_product_ids))
+    
+    sales_q = sales_query.group_by(SalesWeeklyAgg.product_id, SalesWeeklyAgg.store_id).all()
     
     sales_rate_map = {}
     stores_per_product_sales = defaultdict(set)
@@ -8726,10 +8969,17 @@ def compute_rebalancing_suggestions(
         sales_rate_map[(pid, sid)] = rate
         stores_per_product_sales[pid].add(sid)
     
-    product_info = {p.id: (p.sku, p.name) for p in Product.query.all()}
+    if target_product_ids:
+        product_info = {p.id: (p.sku, p.name, p.category) for p in Product.query.filter(Product.id.in_(target_product_ids)).all()}
+    else:
+        product_info = {p.id: (p.sku, p.name, p.category) for p in Product.query.all()}
     store_info = {s.id: s.name for s in Store.query.all()}
+    all_store_ids = list(store_info.keys())
     
-    all_products = set(stores_per_product_stock.keys()) | set(stores_per_product_sales.keys())
+    if target_product_ids:
+        all_products = set(target_product_ids)
+    else:
+        all_products = set(stores_per_product_stock.keys()) | set(stores_per_product_sales.keys())
     
     suggestions = []
     
@@ -8795,10 +9045,10 @@ def compute_rebalancing_suggestions(
         donors.sort(key=lambda x: x.get('priority', x['give']), reverse=True)
         
         for receiver in receivers:
-            if store_filter and store_info.get(receiver['store_id']) != store_filter:
+            if destination == 'one' and store_filter and store_info.get(receiver['store_id']) != store_filter:
                 continue
             
-            remaining_need = receiver['need']
+            remaining_need = min(receiver['need'], REBALANCING_MAX_UNITS_PER_SKU_PER_DEST)
             for donor in donors:
                 if remaining_need <= 0:
                     break
@@ -8807,7 +9057,7 @@ def compute_rebalancing_suggestions(
                 if donor['store_id'] == receiver['store_id']:
                     continue
                 
-                transfer = min(remaining_need, donor['give'])
+                transfer = min(remaining_need, donor['give'], REBALANCING_MAX_UNITS_PER_SKU_PER_DEST)
                 
                 is_extreme = receiver['woc'] < 0.5
                 if transfer < min_transfer_qty and not is_extreme:
@@ -8824,10 +9074,12 @@ def compute_rebalancing_suggestions(
                 elif donor.get('alert_flagged'):
                     reason = f"[OVERSTOCK] {reason}"
                 
+                prod_info = product_info.get(pid, ('?', '?', None))
                 suggestions.append({
                     'product_id': pid,
-                    'sku': product_info.get(pid, ('?', '?'))[0],
-                    'name': product_info.get(pid, ('?', '?'))[1],
+                    'sku': prod_info[0],
+                    'name': prod_info[1],
+                    'category': prod_info[2] if len(prod_info) > 2 else None,
                     'from_store_id': donor['store_id'],
                     'from_store': store_info.get(donor['store_id'], '?'),
                     'to_store_id': receiver['store_id'],
@@ -8843,6 +9095,16 @@ def compute_rebalancing_suggestions(
                 
                 remaining_need -= transfer
                 donor['give'] -= transfer
+                
+                if len(suggestions) >= REBALANCING_MAX_ROWS:
+                    app.logger.warning(f"Redistribution: Hit MAX_ROWS limit ({REBALANCING_MAX_ROWS})")
+                    break
+            
+            if len(suggestions) >= REBALANCING_MAX_ROWS:
+                break
+        
+        if len(suggestions) >= REBALANCING_MAX_ROWS:
+            break
     
     suggestions.sort(key=lambda x: x['score'], reverse=True)
     return suggestions
@@ -8908,6 +9170,23 @@ def rebalancing():
         store_filter = request.form.get('store_filter', '').strip()
         simulate = request.form.get('simulate') == '1'
         
+        scope = request.form.get('scope', 'sku').strip()
+        destination = request.form.get('destination', 'one').strip()
+        category = request.form.get('category', '').strip() or None
+        try:
+            top_n = int(request.form.get('top_n', 0)) or None
+        except:
+            top_n = None
+        
+        if scope not in ('sku', 'category'):
+            scope = 'sku'
+        if destination not in ('one', 'all'):
+            destination = 'one'
+        
+        if scope == 'category' and not category:
+            flash('Selecciona una categoría para el modo por categoría.', 'warning')
+            return redirect(url_for('rebalancing'))
+        
         suggestions = compute_rebalancing_suggestions(
             weeks_window=weeks_window,
             target_woc_min=target_woc_min,
@@ -8916,7 +9195,11 @@ def rebalancing():
             retain_woc=retain_woc,
             stock_floor=stock_floor,
             min_transfer_qty=min_transfer_qty,
-            store_filter=store_filter or None
+            store_filter=store_filter or None,
+            scope=scope,
+            destination=destination,
+            category=category,
+            top_n=top_n
         )
         
         run_id = str(uuid.uuid4())
@@ -8928,7 +9211,11 @@ def rebalancing():
             'retain_woc': retain_woc,
             'stock_floor': stock_floor,
             'min_transfer_qty': min_transfer_qty,
-            'store_filter': store_filter or None
+            'store_filter': store_filter or None,
+            'scope': scope,
+            'destination': destination,
+            'category': category,
+            'top_n': top_n
         }
         
         kpis['total_units'] = sum(s['qty'] for s in suggestions)
@@ -9064,10 +9351,24 @@ def rebalancing():
     
     is_simulation = run_info.get('is_simulation', False) if run_info else False
     
+    categories = get_category_list()
+    
+    by_destination = {}
+    for s in suggestions:
+        dest = s.get('to_store', '?')
+        if dest not in by_destination:
+            by_destination[dest] = {'count': 0, 'units': 0, 'items': []}
+        by_destination[dest]['count'] += 1
+        by_destination[dest]['units'] += s.get('qty', 0)
+        by_destination[dest]['items'].append(s)
+    
     return render_template(
         'rebalancing.html',
         stores=stores,
+        categories=categories,
         suggestions=suggestions_page,
+        all_suggestions=suggestions,
+        by_destination=by_destination,
         sug_pagination=sug_pagination,
         kpis=kpis,
         run_info=run_info,
@@ -9081,7 +9382,11 @@ def rebalancing():
             'retain_woc': retain_woc,
             'stock_floor': stock_floor,
             'min_transfer_qty': min_transfer_qty,
-            'store_filter': store_filter
+            'store_filter': store_filter,
+            'scope': run_info.get('params', {}).get('scope', 'sku') if run_info else 'sku',
+            'destination': run_info.get('params', {}).get('destination', 'one') if run_info else 'one',
+            'category': run_info.get('params', {}).get('category', '') if run_info else '',
+            'top_n': run_info.get('params', {}).get('top_n', 20) if run_info else 20
         }
     )
 
@@ -9528,9 +9833,20 @@ def manual_transfer_remove_item(item_id):
 @require_permission('rebalancing:run')
 def manual_transfer_calculate():
     """
-    Assisted Manual Plan: Calculate transfer quantities for a list of SKUs.
-    System determines optimal qty based on WOC logic - no user qty input needed.
+    Assisted Manual Plan: Calculate transfer quantities for SKUs.
+    
+    Extended features:
+    - destination: 'one' (single store) or 'all' (all stores)
+    - input_mode: 'sku' (SKU list) or 'category' (category selection)
+    - system_decides_qty: default True, system calculates optimal qty
+    - override_qty: if True and qty provided in file, use file qty
+    
+    Uses SalesWeeklyAgg as single source of truth.
     """
+    destination_mode = request.form.get('destination_mode', 'one').strip()
+    input_mode = request.form.get('input_mode', 'sku').strip()
+    category = request.form.get('category', '').strip()
+    
     to_store_id = request.form.get('to_store_id', type=int)
     from_store_id = request.form.get('from_store_id', type=int)
     
@@ -9542,58 +9858,94 @@ def manual_transfer_calculate():
     stock_floor = request.form.get('stock_floor', 1, type=int)
     min_transfer_qty = request.form.get('min_transfer_qty', 2, type=int)
     
-    if not to_store_id:
-        return jsonify({'error': 'Tienda destino es requerida'}), 400
+    override_qty = request.form.get('override_qty') == '1'
     
-    if from_store_id and from_store_id == to_store_id:
+    sales_agg_count = db.session.query(db.func.count(SalesWeeklyAgg.id)).scalar() or 0
+    if sales_agg_count == 0:
+        return jsonify({'error': 'No hay datos de ventas (SalesWeeklyAgg) disponibles. Cargue datos primero.'}), 400
+    
+    if destination_mode == 'one' and not to_store_id:
+        return jsonify({'error': 'Tienda destino es requerida para modo "una tienda"'}), 400
+    
+    if from_store_id and to_store_id and from_store_id == to_store_id:
         return jsonify({'error': 'Tienda origen no puede ser igual a destino'}), 400
     
-    to_store = Store.query.get(to_store_id)
+    to_store = Store.query.get(to_store_id) if to_store_id else None
     from_store = Store.query.get(from_store_id) if from_store_id else None
     
-    if not to_store:
+    if destination_mode == 'one' and not to_store:
         return jsonify({'error': 'Tienda destino no encontrada'}), 404
     
-    sku_text = request.form.get('sku_text', '').strip()
-    sku_file = request.files.get('sku_file')
-    
     sku_list = []
+    sku_qty_override = {}
     
-    if sku_file and sku_file.filename:
-        try:
-            filename = sku_file.filename.lower()
-            if filename.endswith('.csv'):
-                import csv
-                import io
-                content = sku_file.read().decode('utf-8-sig')
-                reader = csv.DictReader(io.StringIO(content))
-                for row in reader:
-                    sku = str(row.get('sku', row.get('SKU', ''))).strip()
-                    if sku:
-                        sku_list.append(sku)
-            elif filename.endswith('.xlsx') or filename.endswith('.xls'):
-                df = pd.read_excel(sku_file)
-                df.columns = [c.lower().strip() for c in df.columns]
-                for _, row in df.iterrows():
-                    sku = str(row.get('sku', '')).strip()
-                    if sku:
-                        sku_list.append(sku)
-        except Exception as e:
-            return jsonify({'error': f'Error leyendo archivo: {str(e)}'}), 400
-    
-    if sku_text and not sku_list:
-        for line in sku_text.split('\n'):
-            line = line.strip().split(',')[0].split(';')[0].strip()
-            if line:
-                sku_list.append(line)
-    
-    if not sku_list:
-        return jsonify({'error': 'No se encontraron SKUs válidos'}), 400
+    if input_mode == 'category':
+        if not category:
+            return jsonify({'error': 'Selecciona una categoría'}), 400
+        
+        category_products = Product.query.filter(Product.category == category).all()
+        if not category_products:
+            return jsonify({'error': f'No hay productos en la categoría "{category}"'}), 400
+        
+        sku_list = [p.sku for p in category_products]
+        app.logger.info(f"Manual calc: Category mode with {len(sku_list)} SKUs from '{category}'")
+    else:
+        sku_text = request.form.get('sku_text', '').strip()
+        sku_file = request.files.get('sku_file')
+        
+        if sku_file and sku_file.filename:
+            try:
+                filename = sku_file.filename.lower()
+                if filename.endswith('.csv'):
+                    import csv
+                    import io
+                    content = sku_file.read().decode('utf-8-sig')
+                    reader = csv.DictReader(io.StringIO(content))
+                    for row in reader:
+                        sku = str(row.get('sku', row.get('SKU', ''))).strip()
+                        if sku:
+                            sku_list.append(sku)
+                            if override_qty and 'qty' in row or 'quantity' in row:
+                                try:
+                                    qty_val = int(row.get('qty', row.get('quantity', 0)))
+                                    if qty_val > 0:
+                                        sku_qty_override[sku] = qty_val
+                                except:
+                                    pass
+                elif filename.endswith('.xlsx') or filename.endswith('.xls'):
+                    df = pd.read_excel(sku_file)
+                    df.columns = [c.lower().strip() for c in df.columns]
+                    for _, row in df.iterrows():
+                        sku = str(row.get('sku', '')).strip()
+                        if sku:
+                            sku_list.append(sku)
+                            if override_qty and ('qty' in df.columns or 'quantity' in df.columns):
+                                try:
+                                    qty_val = int(row.get('qty', row.get('quantity', 0)))
+                                    if qty_val > 0:
+                                        sku_qty_override[sku] = qty_val
+                                except:
+                                    pass
+            except Exception as e:
+                return jsonify({'error': f'Error leyendo archivo: {str(e)}'}), 400
+        
+        if sku_text and not sku_list:
+            for line in sku_text.split('\n'):
+                line = line.strip().split(',')[0].split(';')[0].strip()
+                if line:
+                    sku_list.append(line)
+        
+        if not sku_list:
+            return jsonify({'error': 'No se encontraron SKUs válidos'}), 400
     
     sku_list = list(dict.fromkeys(sku_list))
     
+    if len(sku_list) > REBALANCING_MAX_ROWS:
+        return jsonify({'error': f'Demasiados SKUs ({len(sku_list)}). Máximo: {REBALANCING_MAX_ROWS}'}), 400
+    
     today = date.today()
-    cutoff = today - timedelta(days=weeks_window * 7)
+    window_start = today - timedelta(days=weeks_window * 7)
+    window_start = window_start - timedelta(days=window_start.weekday())
     
     latest_stock_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
     if not latest_stock_date:
@@ -9618,29 +9970,33 @@ def manual_transfer_calculate():
     for pid, sid, qty in stock_q:
         stock_map[(pid, sid)] = qty
     
-    week_expr = db.func.strftime('%Y-%W', DistributionRecord.event_date)
     sales_q = (
         db.session.query(
-            DistributionRecord.product_id,
-            DistributionRecord.store_id,
-            db.func.sum(DistributionRecord.quantity).label('total_qty'),
-            db.func.count(db.func.distinct(week_expr)).label('num_weeks')
+            SalesWeeklyAgg.product_id,
+            SalesWeeklyAgg.store_id,
+            db.func.sum(SalesWeeklyAgg.units).label('total_units'),
+            db.func.count(db.func.distinct(SalesWeeklyAgg.week_start)).label('weeks_count')
         )
         .filter(
-            DistributionRecord.event_date >= cutoff,
-            DistributionRecord.product_id.in_(product_ids)
+            SalesWeeklyAgg.product_id.in_(product_ids),
+            SalesWeeklyAgg.week_start >= window_start
         )
-        .group_by(DistributionRecord.product_id, DistributionRecord.store_id)
+        .group_by(SalesWeeklyAgg.product_id, SalesWeeklyAgg.store_id)
         .all()
     )
     
     sales_rate_map = {}
-    for pid, sid, total_qty, num_weeks in sales_q:
-        rate = total_qty / max(num_weeks, 1)
+    for pid, sid, total_units, weeks_count in sales_q:
+        rate = total_units / max(weeks_count, 1)
         sales_rate_map[(pid, sid)] = rate
     
     store_info = {s.id: s.name for s in Store.query.all()}
     all_store_ids = list(store_info.keys())
+    
+    if destination_mode == 'all':
+        destination_store_ids = [sid for sid in all_store_ids if sid != from_store_id]
+    else:
+        destination_store_ids = [to_store_id]
     
     results = []
     
@@ -9651,8 +10007,10 @@ def manual_transfer_calculate():
             results.append({
                 'sku': sku,
                 'product_name': '-',
-                'to_store': to_store.name,
+                'to_store': to_store.name if to_store else 'N/A',
+                'to_store_id': to_store_id,
                 'donor_store': None,
+                'donor_store_id': None,
                 'transfer_qty': 0,
                 'woc_dest': 0,
                 'donor_give': 0,
@@ -9663,122 +10021,161 @@ def manual_transfer_calculate():
         
         pid = product.id
         
-        stock_dest = stock_map.get((pid, to_store_id), 0)
-        rate_dest = sales_rate_map.get((pid, to_store_id), 0)
-        woc_dest = stock_dest / max(rate_dest, 0.01) if rate_dest > 0 else 999
-        
-        if rate_dest == 0:
-            results.append({
-                'sku': sku,
-                'product_name': product.name,
-                'to_store': to_store.name,
-                'donor_store': None,
-                'transfer_qty': 0,
-                'woc_dest': 0,
-                'donor_give': 0,
-                'status': 'NO-SALES',
-                'notes': 'Sin historial de ventas en destino'
-            })
-            continue
-        
-        if woc_dest >= woc_min:
-            need_units = 0
-        else:
-            need_units = max(math.ceil(woc_target * rate_dest) - stock_dest, 0)
-        
-        if need_units == 0:
-            results.append({
-                'sku': sku,
-                'product_name': product.name,
-                'to_store': to_store.name,
-                'donor_store': None,
-                'transfer_qty': 0,
-                'woc_dest': round(woc_dest, 2),
-                'donor_give': 0,
-                'status': 'NO-NEED',
-                'notes': f'WOC {woc_dest:.1f} >= {woc_min}'
-            })
-            continue
-        
-        candidate_donors = []
-        search_store_ids = [from_store_id] if from_store_id else all_store_ids
-        
-        for sid in search_store_ids:
-            if sid == to_store_id:
+        for dest_store_id in destination_store_ids:
+            dest_store_name = store_info.get(dest_store_id, '?')
+            
+            stock_dest = stock_map.get((pid, dest_store_id), 0)
+            rate_dest = sales_rate_map.get((pid, dest_store_id), 0)
+            woc_dest = stock_dest / max(rate_dest, 0.01) if rate_dest > 0 else 999
+            
+            if rate_dest == 0:
+                if destination_mode == 'one':
+                    results.append({
+                        'sku': sku,
+                        'product_name': product.name,
+                        'product_id': pid,
+                        'to_store': dest_store_name,
+                        'to_store_id': dest_store_id,
+                        'donor_store': None,
+                        'donor_store_id': None,
+                        'transfer_qty': 0,
+                        'woc_dest': 0,
+                        'donor_give': 0,
+                        'status': 'NO-SALES',
+                        'notes': 'Sin historial de ventas en destino'
+                    })
                 continue
             
-            stock_donor = stock_map.get((pid, sid), 0)
-            if stock_donor <= 0:
+            if sku in sku_qty_override and override_qty:
+                need_units = sku_qty_override[sku]
+            elif woc_dest >= woc_min:
+                need_units = 0
+            else:
+                need_units = max(math.ceil(woc_target * rate_dest) - stock_dest, 0)
+            
+            need_units = min(need_units, REBALANCING_MAX_UNITS_PER_SKU_PER_DEST)
+            
+            if need_units == 0:
+                if destination_mode == 'one':
+                    results.append({
+                        'sku': sku,
+                        'product_name': product.name,
+                        'product_id': pid,
+                        'to_store': dest_store_name,
+                        'to_store_id': dest_store_id,
+                        'donor_store': None,
+                        'donor_store_id': None,
+                        'transfer_qty': 0,
+                        'woc_dest': round(woc_dest, 2),
+                        'donor_give': 0,
+                        'status': 'NO-NEED',
+                        'notes': f'WOC {woc_dest:.1f} >= {woc_min}'
+                    })
                 continue
             
-            rate_donor = sales_rate_map.get((pid, sid), 0)
-            keep_units = max(math.ceil(retain_woc * rate_donor), stock_floor) if rate_donor > 0 else stock_floor
-            give_units = max(stock_donor - keep_units, 0)
+            candidate_donors = []
+            search_store_ids = [from_store_id] if from_store_id else all_store_ids
             
-            if give_units > 0:
-                woc_donor = stock_donor / max(rate_donor, 0.01)
-                candidate_donors.append({
-                    'store_id': sid,
-                    'store_name': store_info.get(sid, '?'),
-                    'give': give_units,
-                    'woc': woc_donor
-                })
-        
-        candidate_donors.sort(key=lambda x: x['give'], reverse=True)
-        
-        if not candidate_donors:
+            for sid in search_store_ids:
+                if sid == dest_store_id:
+                    continue
+                
+                stock_donor = stock_map.get((pid, sid), 0)
+                if stock_donor <= 0:
+                    continue
+                
+                rate_donor = sales_rate_map.get((pid, sid), 0)
+                keep_units = max(math.ceil(retain_woc * rate_donor), stock_floor) if rate_donor > 0 else stock_floor
+                give_units = max(stock_donor - keep_units, 0)
+                
+                if give_units > 0:
+                    woc_donor = stock_donor / max(rate_donor, 0.01)
+                    candidate_donors.append({
+                        'store_id': sid,
+                        'store_name': store_info.get(sid, '?'),
+                        'give': give_units,
+                        'woc': woc_donor
+                    })
+            
+            candidate_donors.sort(key=lambda x: x['give'], reverse=True)
+            
+            if not candidate_donors:
+                if destination_mode == 'one':
+                    results.append({
+                        'sku': sku,
+                        'product_name': product.name,
+                        'product_id': pid,
+                        'to_store': dest_store_name,
+                        'to_store_id': dest_store_id,
+                        'donor_store': from_store.name if from_store else None,
+                        'donor_store_id': from_store_id,
+                        'transfer_qty': 0,
+                        'woc_dest': round(woc_dest, 2),
+                        'donor_give': 0,
+                        'status': 'NO-DONOR',
+                        'notes': 'Sin tienda donante disponible'
+                    })
+                continue
+            
+            best_donor = candidate_donors[0]
+            transfer = min(need_units, best_donor['give'], REBALANCING_MAX_UNITS_PER_SKU_PER_DEST)
+            
+            is_stockout = stock_dest == 0 and rate_dest > 0
+            if transfer < min_transfer_qty and not is_stockout:
+                transfer = 0
+                status = 'NO-NEED'
+                notes = f'Transferencia ({transfer}) < mínimo ({min_transfer_qty})'
+            else:
+                status = 'OK'
+                notes = ''
+            
             results.append({
                 'sku': sku,
                 'product_name': product.name,
-                'to_store': to_store.name,
-                'donor_store': from_store.name if from_store else None,
-                'transfer_qty': 0,
+                'product_id': pid,
+                'to_store': dest_store_name,
+                'to_store_id': dest_store_id,
+                'donor_store': best_donor['store_name'],
+                'donor_store_id': best_donor['store_id'],
+                'transfer_qty': transfer,
                 'woc_dest': round(woc_dest, 2),
-                'donor_give': 0,
-                'status': 'NO-DONOR',
-                'notes': 'Sin tienda donante disponible'
+                'donor_give': best_donor['give'],
+                'status': status,
+                'notes': notes
             })
-            continue
+            
+            if len(results) >= REBALANCING_MAX_ROWS:
+                break
         
-        best_donor = candidate_donors[0]
-        transfer = min(need_units, best_donor['give'])
-        
-        is_stockout = stock_dest == 0 and rate_dest > 0
-        if transfer < min_transfer_qty and not is_stockout:
-            transfer = 0
-            status = 'NO-NEED'
-            notes = f'Transferencia ({transfer}) < mínimo ({min_transfer_qty})'
-        else:
-            status = 'OK'
-            notes = ''
-        
-        results.append({
-            'sku': sku,
-            'product_name': product.name,
-            'product_id': pid,
-            'to_store': to_store.name,
-            'to_store_id': to_store_id,
-            'donor_store': best_donor['store_name'],
-            'donor_store_id': best_donor['store_id'],
-            'transfer_qty': transfer,
-            'woc_dest': round(woc_dest, 2),
-            'donor_give': best_donor['give'],
-            'status': status,
-            'notes': notes
-        })
+        if len(results) >= REBALANCING_MAX_ROWS:
+            break
     
     ok_count = sum(1 for r in results if r['status'] == 'OK' and r.get('transfer_qty', 0) > 0)
     no_need_count = sum(1 for r in results if r['status'] == 'NO-NEED')
     no_donor_count = sum(1 for r in results if r['status'] in ('NO-DONOR', 'NO-SKU', 'NO-SALES'))
     
+    by_destination = {}
+    for r in results:
+        dest = r.get('to_store', '?')
+        if dest not in by_destination:
+            by_destination[dest] = {'count': 0, 'units': 0}
+        by_destination[dest]['count'] += 1
+        if r.get('transfer_qty', 0) > 0:
+            by_destination[dest]['units'] += r['transfer_qty']
+    
     return jsonify({
-        'to_store': to_store.name,
+        'to_store': to_store.name if to_store else None,
         'from_store': from_store.name if from_store else None,
+        'destination_mode': destination_mode,
+        'input_mode': input_mode,
+        'category': category,
         'items': results,
         'total_items': len(results),
         'ok_count': ok_count,
         'no_need_count': no_need_count,
-        'no_donor_count': no_donor_count
+        'no_donor_count': no_donor_count,
+        'by_destination': by_destination,
+        'total_units': sum(r.get('transfer_qty', 0) for r in results if r['status'] == 'OK')
     })
 
 

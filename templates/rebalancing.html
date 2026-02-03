@@ -101,8 +101,56 @@
           <input type="hidden" name="stock_floor" id="autoStockFloor">
           <input type="hidden" name="min_transfer_qty" id="autoMinTransfer">
 
+          <div class="rebal-scope-row mb-3">
+            <div class="rebal-field me-4">
+              <label class="rebal-label">Alcance</label>
+              <div class="btn-group btn-group-sm" role="group">
+                <input type="radio" class="btn-check" name="scope" id="scopeSku" value="sku" {% if params.scope == 'sku' %}checked{% endif %}>
+                <label class="btn btn-outline-primary" for="scopeSku"><i class="bi bi-upc-scan me-1"></i>Todos los SKUs</label>
+                <input type="radio" class="btn-check" name="scope" id="scopeCategory" value="category" {% if params.scope == 'category' %}checked{% endif %}>
+                <label class="btn btn-outline-primary" for="scopeCategory"><i class="bi bi-tags me-1"></i>Por Categoría</label>
+              </div>
+            </div>
+            <div class="rebal-field">
+              <label class="rebal-label">Destino</label>
+              <div class="btn-group btn-group-sm" role="group">
+                <input type="radio" class="btn-check" name="destination" id="destOne" value="one" {% if params.destination == 'one' %}checked{% endif %}>
+                <label class="btn btn-outline-secondary" for="destOne"><i class="bi bi-shop me-1"></i>Una tienda</label>
+                <input type="radio" class="btn-check" name="destination" id="destAll" value="all" {% if params.destination == 'all' %}checked{% endif %}>
+                <label class="btn btn-outline-secondary" for="destAll"><i class="bi bi-grid me-1"></i>Todas las tiendas</label>
+              </div>
+            </div>
+          </div>
+
+          <div id="autoCategorySection" class="rebal-category-section mb-3" style="display:none;">
+            <div class="alert alert-info py-2 mb-2" style="font-size: 0.85rem;">
+              <i class="bi bi-info-circle me-1"></i>
+              Modo por categoría: El sistema seleccionará los SKUs más demandados de la categoría elegida.
+            </div>
+            <div class="row g-2">
+              <div class="col-md-6">
+                <label class="rebal-label">Categoría</label>
+                <select name="category" id="autoCategory" class="form-select form-select-sm">
+                  <option value="">-- Seleccionar --</option>
+                  {% for cat in categories %}
+                  <option value="{{ cat }}" {% if params.category == cat %}selected{% endif %}>{{ cat }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-md-3">
+                <label class="rebal-label">Top N SKUs</label>
+                <input type="number" name="top_n" id="autoTopN" class="form-control form-control-sm" value="{{ params.top_n|default(20) }}" min="1" max="500">
+              </div>
+            </div>
+          </div>
+
+          <div id="autoAllStoresWarning" class="alert alert-warning py-2 mb-3" style="display:none; font-size: 0.85rem;">
+            <i class="bi bi-exclamation-triangle me-1"></i>
+            <strong>Todas las tiendas:</strong> La salida puede ser grande. Se aplicará límite de 2000 filas y 20 unidades por SKU/destino.
+          </div>
+
           <div class="rebal-auto-controls">
-            <div class="rebal-field rebal-field-inline">
+            <div class="rebal-field rebal-field-inline" id="autoStoreFilterSection">
               <label class="rebal-label">Tienda destino (filtro)</label>
               <select name="store_filter" class="form-select form-select-sm" style="width: 200px;">
                 <option value="">-- Todas --</option>
@@ -138,10 +186,36 @@
       {% if current_user.has_permission('rebalancing:run') %}
       <div id="manualModeContent" class="rebal-mode-content">
         <div class="rebal-manual-controls">
-          <div class="rebal-manual-stores-row">
+          <div class="rebal-scope-row mb-3">
+            <div class="rebal-field me-4">
+              <label class="rebal-label">Destino</label>
+              <div class="btn-group btn-group-sm" role="group">
+                <input type="radio" class="btn-check" name="manualDestMode" id="manualDestOne" value="one" checked>
+                <label class="btn btn-outline-secondary" for="manualDestOne"><i class="bi bi-shop me-1"></i>Una tienda</label>
+                <input type="radio" class="btn-check" name="manualDestMode" id="manualDestAll" value="all">
+                <label class="btn btn-outline-secondary" for="manualDestAll"><i class="bi bi-grid me-1"></i>Todas las tiendas</label>
+              </div>
+            </div>
             <div class="rebal-field">
+              <label class="rebal-label">Entrada</label>
+              <div class="btn-group btn-group-sm" role="group">
+                <input type="radio" class="btn-check" name="manualInputMode" id="manualInputSku" value="sku" checked>
+                <label class="btn btn-outline-primary" for="manualInputSku"><i class="bi bi-list-ul me-1"></i>Lista SKUs</label>
+                <input type="radio" class="btn-check" name="manualInputMode" id="manualInputCat" value="category">
+                <label class="btn btn-outline-primary" for="manualInputCat"><i class="bi bi-tags me-1"></i>Categoría</label>
+              </div>
+            </div>
+          </div>
+
+          <div id="manualAllStoresWarning" class="alert alert-warning py-2 mb-3" style="display:none; font-size: 0.85rem;">
+            <i class="bi bi-exclamation-triangle me-1"></i>
+            <strong>Todas las tiendas:</strong> Se generarán transferencias hacia todas las tiendas que necesiten stock.
+          </div>
+
+          <div class="rebal-manual-stores-row" id="manualStoresRow">
+            <div class="rebal-field" id="manualToStoreField">
               <label class="rebal-label">Tienda destino <span class="text-danger">*</span></label>
-              <select id="manualToStore" class="form-select form-select-sm" required>
+              <select id="manualToStore" class="form-select form-select-sm">
                 <option value="">-- Seleccionar --</option>
                 {% for store in stores %}
                 <option value="{{ store.id }}">{{ store.name }}</option>
@@ -158,10 +232,33 @@
               </select>
             </div>
           </div>
-          <div class="rebal-manual-input-row">
+
+          <div id="manualCategorySection" class="mb-3" style="display:none;">
+            <div class="alert alert-info py-2 mb-2" style="font-size: 0.85rem;">
+              <i class="bi bi-info-circle me-1"></i>
+              Modo por categoría: El sistema evaluará todos los SKUs de la categoría.
+            </div>
+            <div class="rebal-field" style="max-width: 300px;">
+              <label class="rebal-label">Categoría</label>
+              <select id="manualCategory" class="form-select form-select-sm">
+                <option value="">-- Seleccionar --</option>
+                {% for cat in categories %}
+                <option value="{{ cat }}">{{ cat }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <div id="manualSkuSection" class="rebal-manual-input-row">
             <div class="rebal-field rebal-field-file">
               <label class="rebal-label">Archivo SKUs (CSV/Excel, columna: sku)</label>
               <input type="file" id="manualSkuFile" class="form-control form-control-sm" accept=".csv,.xlsx,.xls">
+              <div class="form-check mt-1">
+                <input class="form-check-input" type="checkbox" id="manualOverrideQty" value="1">
+                <label class="form-check-label" for="manualOverrideQty" style="font-size: 0.8rem;">
+                  Usar qty del archivo (si tiene columna qty)
+                </label>
+              </div>
             </div>
             <div class="rebal-field-divider">o</div>
             <div class="rebal-field rebal-field-textarea">
@@ -169,6 +266,7 @@
               <textarea id="manualSkuText" class="form-control form-control-sm" rows="3" placeholder="SKU001&#10;SKU002&#10;SKU003">{% if prefill_sku %}{{ prefill_sku }}{% endif %}</textarea>
             </div>
           </div>
+
           <div class="rebal-manual-actions">
             <button type="button" class="btn btn-sm rebal-btn-primary" id="manualCalculateBtn">
               <i class="bi bi-calculator me-1"></i>Calcular plan
@@ -251,19 +349,32 @@
   </div>
 
   <div class="rebal-card rebal-table-card">
-    <div class="rebal-table-header">
-      <div class="rebal-table-title-wrap">
-        <div class="rebal-table-title">
-          <i class="bi bi-list-ul me-2"></i>Sugerencias de Redistribución
-        </div>
-        <div class="rebal-table-hint">
-          <i class="bi bi-arrow-right me-1"></i>De tiendas con exceso → a tiendas con alta demanda
-        </div>
-      </div>
-      <span class="rebal-table-badge">{{ sug_pagination.start }}-{{ sug_pagination.end }} de {{ sug_pagination.total }}</span>
+    <div class="rebal-results-tabs mb-3">
+      <button type="button" class="rebal-results-tab active" data-tab="transfers">
+        <i class="bi bi-list-ul me-1"></i>Transferencias
+      </button>
+      <button type="button" class="rebal-results-tab" data-tab="by-dest">
+        <i class="bi bi-shop me-1"></i>Por Destino
+      </button>
+      <button type="button" class="rebal-results-tab" data-tab="summary">
+        <i class="bi bi-bar-chart-line me-1"></i>Resumen
+      </button>
     </div>
-    <div class="rebal-table-wrap">
-      {% if suggestions %}
+
+    <div id="tabTransfers" class="rebal-tab-content active">
+      <div class="rebal-table-header">
+        <div class="rebal-table-title-wrap">
+          <div class="rebal-table-title">
+            <i class="bi bi-list-ul me-2"></i>Sugerencias de Redistribución
+          </div>
+          <div class="rebal-table-hint">
+            <i class="bi bi-arrow-right me-1"></i>De tiendas con exceso → a tiendas con alta demanda
+          </div>
+        </div>
+        <span class="rebal-table-badge">{{ sug_pagination.start }}-{{ sug_pagination.end }} de {{ sug_pagination.total }}</span>
+      </div>
+      <div class="rebal-table-wrap">
+        {% if suggestions %}
       <table class="rebal-table">
         <thead>
           <tr>
@@ -330,6 +441,86 @@
         <div class="rebal-empty-hint">Ajusta los parámetros y ejecuta el proceso para generar transferencias.</div>
       </div>
       {% endif %}
+      </div>
+    </div>
+
+    <div id="tabByDest" class="rebal-tab-content" style="display:none;">
+      <div class="rebal-table-header">
+        <div class="rebal-table-title">
+          <i class="bi bi-shop me-2"></i>Transferencias agrupadas por Tienda Destino
+        </div>
+      </div>
+      {% if by_destination %}
+      <div class="rebal-dest-cards">
+        {% for dest, data in by_destination.items() %}
+        <div class="rebal-dest-card">
+          <div class="rebal-dest-header">
+            <span class="badge-receiver"><i class="bi bi-shop me-1"></i>{{ dest }}</span>
+            <span class="rebal-dest-badges">
+              <span class="mt-badge mt-badge-info">{{ data.count }} SKUs</span>
+              <span class="mt-badge mt-badge-ok">{{ data.units }} unidades</span>
+            </span>
+          </div>
+          <div class="rebal-dest-items">
+            {% for item in data.items[:10] %}
+            <div class="rebal-dest-item">
+              <code class="rebal-sku">{{ item.sku }}</code>
+              <span class="rebal-dest-arrow"><i class="bi bi-arrow-left"></i></span>
+              <span class="badge-donor">{{ item.from_store }}</span>
+              <span class="rebal-dest-qty">{{ item.qty }} u</span>
+            </div>
+            {% endfor %}
+            {% if data.count > 10 %}
+            <div class="rebal-dest-more">
+              <i class="bi bi-three-dots me-1"></i>{{ data.count - 10 }} más
+            </div>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="rebal-empty py-4">
+        <div class="rebal-empty-hint">No hay datos agrupados disponibles.</div>
+      </div>
+      {% endif %}
+    </div>
+
+    <div id="tabSummary" class="rebal-tab-content" style="display:none;">
+      <div class="rebal-table-header">
+        <div class="rebal-table-title">
+          <i class="bi bi-bar-chart-line me-2"></i>Resumen de Redistribución
+        </div>
+      </div>
+      {% if suggestions %}
+      <div class="rebal-summary-grid">
+        <div class="rebal-summary-block">
+          <h6><i class="bi bi-shop-window me-2"></i>Top Tiendas Destino</h6>
+          <ul class="rebal-summary-list">
+            {% set sorted_dests = by_destination | dictsort(false, 'value', reverse=true) %}
+            {% for dest, data in sorted_dests[:5] %}
+            <li>
+              <span class="badge-receiver">{{ dest }}</span>
+              <span class="rebal-summary-val">{{ data.units }} unidades ({{ data.count }} SKUs)</span>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+        <div class="rebal-summary-block">
+          <h6><i class="bi bi-upc-scan me-2"></i>Información General</h6>
+          <ul class="rebal-summary-list">
+            <li><strong>Total unidades:</strong> {{ kpis.total_units|default(0) }}</li>
+            <li><strong>Total movimientos:</strong> {{ kpis.num_moves|default(0) }}</li>
+            <li><strong>SKUs únicos:</strong> {{ kpis.num_skus|default(0) }}</li>
+            <li><strong>Tiendas destino:</strong> {{ kpis.num_receivers|default(0) }}</li>
+          </ul>
+        </div>
+      </div>
+      {% else %}
+      <div class="rebal-empty py-4">
+        <div class="rebal-empty-hint">Genera una redistribución para ver el resumen.</div>
+      </div>
+      {% endif %}
     </div>
   </div>
 </div>
@@ -342,6 +533,28 @@ function updateSugPage(page) {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
+  const resultsTabs = document.querySelectorAll('.rebal-results-tab');
+  const tabContents = {
+    'transfers': document.getElementById('tabTransfers'),
+    'by-dest': document.getElementById('tabByDest'),
+    'summary': document.getElementById('tabSummary')
+  };
+  
+  resultsTabs.forEach(tab => {
+    tab.addEventListener('click', function() {
+      resultsTabs.forEach(t => t.classList.remove('active'));
+      this.classList.add('active');
+      const target = this.dataset.tab;
+      Object.keys(tabContents).forEach(k => {
+        if (tabContents[k]) {
+          tabContents[k].style.display = (k === target) ? 'block' : 'none';
+          if (k === target) tabContents[k].classList.add('active');
+          else tabContents[k].classList.remove('active');
+        }
+      });
+    });
+  });
+
   const modeTabs = document.querySelectorAll('.rebal-mode-tab');
   const autoContent = document.getElementById('autoModeContent');
   const manualContent = document.getElementById('manualModeContent');
@@ -376,6 +589,48 @@ document.addEventListener('DOMContentLoaded', function() {
     syncAutoParams();
   });
 
+  function updateAutoScopeVisibility() {
+    const scopeCat = document.getElementById('scopeCategory')?.checked;
+    const destAll = document.getElementById('destAll')?.checked;
+    const catSection = document.getElementById('autoCategorySection');
+    const allWarning = document.getElementById('autoAllStoresWarning');
+    const storeFilter = document.getElementById('autoStoreFilterSection');
+    
+    if (catSection) catSection.style.display = scopeCat ? 'block' : 'none';
+    if (allWarning) allWarning.style.display = destAll ? 'block' : 'none';
+    if (storeFilter) storeFilter.style.display = destAll ? 'none' : 'flex';
+  }
+
+  document.querySelectorAll('input[name="scope"]').forEach(r => {
+    r.addEventListener('change', updateAutoScopeVisibility);
+  });
+  document.querySelectorAll('input[name="destination"]').forEach(r => {
+    r.addEventListener('change', updateAutoScopeVisibility);
+  });
+  updateAutoScopeVisibility();
+
+  function updateManualModeVisibility() {
+    const destAll = document.getElementById('manualDestAll')?.checked;
+    const inputCat = document.getElementById('manualInputCat')?.checked;
+    const allWarning = document.getElementById('manualAllStoresWarning');
+    const toStoreField = document.getElementById('manualToStoreField');
+    const catSection = document.getElementById('manualCategorySection');
+    const skuSection = document.getElementById('manualSkuSection');
+    
+    if (allWarning) allWarning.style.display = destAll ? 'block' : 'none';
+    if (toStoreField) toStoreField.style.display = destAll ? 'none' : 'block';
+    if (catSection) catSection.style.display = inputCat ? 'block' : 'none';
+    if (skuSection) skuSection.style.display = inputCat ? 'none' : 'flex';
+  }
+
+  document.querySelectorAll('input[name="manualDestMode"]').forEach(r => {
+    r.addEventListener('change', updateManualModeVisibility);
+  });
+  document.querySelectorAll('input[name="manualInputMode"]').forEach(r => {
+    r.addEventListener('change', updateManualModeVisibility);
+  });
+  updateManualModeVisibility();
+
   const prefillSku = '{{ prefill_sku|default("", true) }}';
   if (prefillSku) {
     modeTabs.forEach(t => t.classList.remove('active'));
@@ -389,8 +644,11 @@ document.addEventListener('DOMContentLoaded', function() {
   const calculateBtn = document.getElementById('manualCalculateBtn');
   if (calculateBtn) {
     calculateBtn.addEventListener('click', function() {
+      const destMode = document.querySelector('input[name="manualDestMode"]:checked')?.value || 'one';
+      const inputMode = document.querySelector('input[name="manualInputMode"]:checked')?.value || 'sku';
+      
       const toStore = document.getElementById('manualToStore').value;
-      if (!toStore) {
+      if (destMode === 'one' && !toStore) {
         alert('Selecciona una tienda destino');
         return;
       }
@@ -398,11 +656,19 @@ document.addEventListener('DOMContentLoaded', function() {
       const fromStore = document.getElementById('manualFromStore').value;
       const fileInput = document.getElementById('manualSkuFile');
       const textInput = document.getElementById('manualSkuText').value.trim();
+      const categoryInput = document.getElementById('manualCategory')?.value || '';
 
-      if (!fileInput.files.length && !textInput) {
+      if (inputMode === 'category' && !categoryInput) {
+        alert('Selecciona una categoría');
+        return;
+      }
+
+      if (inputMode === 'sku' && !fileInput.files.length && !textInput) {
         alert('Proporciona un archivo o lista de SKUs');
         return;
       }
+
+      const overrideQty = document.getElementById('manualOverrideQty')?.checked ? '1' : '';
 
       const params = {
         weeks_window: document.getElementById('paramWeeksWindow').value,
@@ -415,10 +681,17 @@ document.addEventListener('DOMContentLoaded', function() {
       };
 
       const formData = new FormData();
-      formData.append('to_store_id', toStore);
+      formData.append('destination_mode', destMode);
+      formData.append('input_mode', inputMode);
+      if (destMode === 'one') formData.append('to_store_id', toStore);
       if (fromStore) formData.append('from_store_id', fromStore);
-      formData.append('sku_text', textInput);
-      if (fileInput.files.length) formData.append('sku_file', fileInput.files[0]);
+      if (inputMode === 'category') {
+        formData.append('category', categoryInput);
+      } else {
+        formData.append('sku_text', textInput);
+        if (fileInput.files.length) formData.append('sku_file', fileInput.files[0]);
+        if (overrideQty) formData.append('override_qty', '1');
+      }
       Object.keys(params).forEach(k => formData.append(k, params[k]));
 
       calculateBtn.disabled = true;

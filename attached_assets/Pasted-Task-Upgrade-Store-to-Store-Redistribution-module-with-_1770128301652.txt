@@ -1,0 +1,157 @@
+Task: Upgrade “Store-to-Store Redistribution” module with (1) category-aware planning and (2) “one store to all” workflows, for BOTH modes: Automatic Suggestion and Assisted Manual.
+
+Context / constraints
+- Keep the existing redistribution logic and UI working.
+- Add new capabilities as additive options (toggles/sections), not a rewrite.
+- Use Macro Sales (weekly agg) as the sales signal source (not the legacy per-upload sales table).
+- Category is now a first-class field on Product and is available in Macro Sales + templates.
+
+========================================================
+A) UX / IA FLOW (what the user should be able to do)
+
+1) Automatic Redistribution (current mode)
+Add two new “Scopes”:
+A1) Scope = “By SKU list (existing behavior)”
+A2) Scope = “By Category”  ✅ NEW
+- User selects:
+  - Destination store (required)
+  - Category (required)
+  - Optional: “Limit to Top N SKUs by demand in category” default 20
+  - Params: history_weeks, min_woc, target_woc, max_woc, max_retain_woc, min_fill, eligible_stores (same as today)
+- Output: suggested transfers that move the right SKUs from donor stores to the destination store.
+
+Add a new “Destination target”
+A3) Destination = “One store” (existing)
+A4) Destination = “All stores” ✅ NEW
+- The user selects:
+  - Category OR SKU list
+  - Params
+- Output: matrix of transfers: donors -> multiple destinations (balanced), with caps.
+
+2) Assisted Manual Builder (current mode)
+Today it accepts an uploaded file with SKU + quantity. Change it to:
+- User chooses:
+  - Origin store (optional if “auto-pick donors” enabled)
+  - Destination: single store OR all stores ✅ NEW
+  - Input method:
+    B1) SKU list file (sku only) ✅ NEW (quantity optional, ignored unless override toggle)
+    B2) Category select ✅ NEW (choose category, system picks SKUs)
+  - “System decides quantities” (default ON) ✅ REQUIRED
+  - Optional “Override qty from file” toggle (default OFF)
+- Output: system suggests quantities per SKU based on business rules, while respecting:
+  - Donor retain floor (min stock / max retain WOC)
+  - Destination need (target WOC etc.)
+  - Eligibility and caps.
+
+========================================================
+B) BUSINESS RULES (the “intelligent qty” engine)
+
+Inputs per (sku, store):
+- Demand signal: Macro weekly sales (SalesWeeklyAgg) for the chosen window.
+- Stock: StoreStockSnapshot (latest) for each store.
+- Optional: store/category rank weights (use store category performance).
+- Constraints:
+  - Donor must keep at least “max_retain_woc” worth of stock OR “min_store_stock” units.
+  - Destination should be brought toward target_woc (or between min_woc and max_woc band).
+  - min_fill = minimum units to transfer when a move is decided (default 2).
+
+Demand calculation (category-aware):
+- If distributing by category:
+  - For each store, compute category_demand_weekly = sum weekly demand of SKUs in that category over window / window_weeks.
+  - For each SKU, compute sku_demand_weekly similarly.
+  - Final “need” for SKU at a store = blend:
+      need_score = 0.70 * sku_need + 0.30 * category_need_share
+    where category_need_share allocates some units to stores that are strong in category even if SKU is new/low history.
+- If distributing by SKU list:
+  - Use sku_demand_weekly primarily; if SKU has low/no sales at store:
+    fallback to category-level weighting (same as above).
+
+Need computation:
+- woc = stock_store / max(demand_weekly, epsilon)
+- desired_stock = target_woc * demand_weekly
+- need_units = max(0, ceil(desired_stock - stock_store))
+- Apply min_woc/max_woc band:
+  - If stock_store already >= max_woc*demand_weekly => need=0
+  - If stock_store < min_woc*demand_weekly => prioritize strongly
+
+Donor availability:
+- donor_excess = max(0, stock_donor - retain_stock)
+- retain_stock = max(
+    max_retain_woc * demand_weekly_donor,
+    min_store_stock_units
+  )
+- Transfer qty = min(need_units, donor_excess)
+- If transfer qty > 0 but < min_fill, either:
+  - bump to min_fill if donor_excess allows and destination still below min_woc band
+  - else keep 0 (avoid noisy transfers)
+
+“All stores” algorithm:
+- For each SKU, rank destinations by (priority):
+  1) below min_woc band
+  2) higher demand_weekly
+  3) higher store_rank_in_category
+- For donors, pick from stores with highest donor_excess first.
+- Greedy allocate units from donors to destinations until:
+  - all destinations are within band, or
+  - no donor_excess left, or
+  - global cap reached (MAX_TRANSFERS_ROWS / MAX_UNITS).
+
+========================================================
+C) DATA / QUERIES (performance-aware)
+
+Add helper queries (SQLAlchemy) and cache in-memory per request:
+1) latest store stock snapshot per (store_id, product_id)
+2) macro weekly demand per (store_id, product_id) in date range
+3) product category mapping (product_id -> category)
+
+Important:
+- Normalize store names already solved—do not reintroduce string matching. Always join by store_id/product_id.
+
+========================================================
+D) UI CHANGES (FastDSO style)
+
+In rebalancing.html:
+- Add “Scope” segmented control: SKU list / Category
+- Add “Destination” segmented control: One store / All stores
+- If Category chosen: show category dropdown, Top N input, and explanation tooltip.
+- If All stores chosen: show an info banner that output can be large, default Top N=10/20 and caps.
+
+Results page:
+- Add tabs:
+  - “Summary” (KPIs, #moves, units moved, stores affected)
+  - “Transfers” (paginated table)
+  - “By destination” (accordion per store)
+- Ensure pagination (10/25/50) like Dashboard.
+
+Manual assisted section:
+- Replace “qty required” with:
+  - file input for SKU list (sku column)
+  - optional checkbox “Use qty from file as hard override”
+  - otherwise system decides qty.
+
+========================================================
+E) SAFETY / VALIDATION
+
+- Reject if no Macro Sales loaded (show friendly message).
+- If category has zero SKUs in Product table -> warn.
+- Hard caps:
+  - MAX_ROWS default 2000
+  - MAX_UNITS_PER_SKU_PER_DEST default 20 (configurable)
+- Log debug summary like distribution runs.
+
+========================================================
+F) DELIVERABLES
+1) Update FastPlanner/Redistribution data models only if needed (prefer no schema changes).
+2) Add category/all-stores options to both auto and manual assisted.
+3) Add pagination and summary views.
+4) Ensure existing single-destination + manual flows still work.
+
+========================================================
+G) TEST CASES (must implement)
+1) Category + One store: choose a category, verify it proposes transfers for SKUs in that category only.
+2) Category + All stores: verify destinations with low WOC are prioritized.
+3) Manual assisted SKU list without qty: system decides qty.
+4) Manual assisted with qty override: uses provided qty but still respects donor retain floor.
+5) Large dataset: ensure pagination + no ERR_RESPONSE_HEADERS_TOO_BIG.
+
+Implement now, commit changes, and keep UI consistent with FastDSO styling.
