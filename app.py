@@ -7256,7 +7256,11 @@ def upload_stock():
         cat_col = cols_lower.get('category') or cols_lower.get('categoria')
 
         if not sku_col:
-            flash('El archivo debe tener columna "SKU" o "Codigo".', 'danger')
+            session['upload_error'] = {
+                'title': 'Error en el archivo',
+                'message': 'El archivo debe tener columna "SKU" o "Codigo".',
+                'column': 'SKU'
+            }
             return redirect(url_for('upload_stock'))
 
         # columnas de tiendas = todo lo que no es SKU, Producto, ni Category
@@ -7264,7 +7268,11 @@ def upload_stock():
         excluded_cols = [c for c in excluded_cols if c]  # filter None
         store_cols = [c for c in df.columns if c not in excluded_cols]
         if not store_cols:
-            flash('No se encontraron columnas de tiendas.', 'danger')
+            session['upload_error'] = {
+                'title': 'Error en el archivo',
+                'message': 'No se encontraron columnas de tiendas. Cada columna después de SKU/Producto debe ser una tienda.',
+                'column': 'Columnas de tiendas'
+            }
             return redirect(url_for('upload_stock'))
 
         # limpieza básica
@@ -7391,9 +7399,10 @@ def upload_stock():
         }
         return redirect(url_for('upload_stock'))
 
-    # GET - check for upload success
+    # GET - check for upload success/error
     upload_success = session.pop('upload_success', None)
-    return render_template('upload_stock.html', upload_success=upload_success)
+    upload_error = session.pop('upload_error', None)
+    return render_template('upload_stock.html', upload_success=upload_success, upload_error=upload_error)
 
 from datetime import date
 from sqlalchemy import func

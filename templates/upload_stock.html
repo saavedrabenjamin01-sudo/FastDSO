@@ -1,6 +1,40 @@
 {% extends 'base.html' %}
 {% block content %}
 
+{% if upload_error %}
+<div class="modal fade" id="uploadErrorModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title"><i class="bi bi-x-circle-fill me-2"></i>{{ upload_error.title }}</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body text-center py-4">
+        <div class="text-danger mb-3">
+          <i class="bi bi-x-circle-fill" style="font-size: 4rem;"></i>
+        </div>
+        <h4 class="mb-3">Error en la carga</h4>
+        <p class="text-muted mb-3">{{ upload_error.message }}</p>
+        {% if upload_error.column %}
+        <div class="alert alert-warning mb-0">
+          <i class="bi bi-info-circle me-2"></i>Columna requerida: <code>{{ upload_error.column }}</code>
+        </div>
+        {% endif %}
+      </div>
+      <div class="modal-footer justify-content-center">
+        <button type="button" class="btn btn-primary" data-bs-dismiss="modal"><i class="bi bi-arrow-repeat me-1"></i>Intentar de nuevo</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  var modal = new bootstrap.Modal(document.getElementById('uploadErrorModal'));
+  modal.show();
+});
+</script>
+{% endif %}
+
 {% if upload_success %}
 <div class="modal fade" id="uploadSuccessModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
