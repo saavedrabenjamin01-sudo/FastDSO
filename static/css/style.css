@@ -764,6 +764,102 @@ body{
   to{ transform: rotate(360deg); }
 }
 
+/* Processing Modal Success/Error States */
+.proc-card-success .proc-icon { color: #22c55e; }
+.proc-card-error .proc-icon { color: #ef4444; }
+
+.proc-svg-success { color: #22c55e; }
+.proc-svg-error { color: #ef4444; }
+
+.proc-card-success { animation: procBounceIn 0.4s ease; }
+.proc-card-error { animation: procShakeIn 0.4s ease; }
+
+@keyframes procBounceIn {
+  0% { transform: scale(0.9); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+@keyframes procShakeIn {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-8px); }
+  40%, 80% { transform: translateX(8px); }
+}
+
+.proc-check-anim {
+  stroke-dasharray: 50;
+  stroke-dashoffset: 50;
+  animation: procDrawCheck 0.5s ease forwards 0.2s;
+}
+@keyframes procDrawCheck {
+  to { stroke-dashoffset: 0; }
+}
+
+.proc-result-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 24px;
+}
+.proc-btn-primary {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  color: #fff;
+  border: none;
+  padding: 14px 28px;
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 1rem;
+  text-decoration: none;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.proc-btn-primary:hover {
+  background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
+  color: #fff;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(37,99,235,0.35);
+}
+.proc-btn-secondary {
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+  padding: 12px 24px;
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.proc-btn-secondary:hover {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+.proc-error-details {
+  text-align: left;
+  margin-bottom: 12px;
+}
+.proc-error-details summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: #64748b;
+}
+.proc-error-traceback {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 0.75rem;
+  color: #991b1b;
+  max-height: 150px;
+  overflow: auto;
+  margin-top: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* === Dashboard Mockup v1 === */
 .dashv1{ display:flex; flex-direction:column; gap:12px; }
 .dashv1-runstrip{

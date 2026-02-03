@@ -861,6 +861,35 @@ def job_status_json(job_id):
     job = db.session.get(Job, job_id)
     if not job:
         return jsonify({'error': 'Job not found'}), 404
+    
+    result_data = job.get_result() if job.status == 'done' else None
+    
+    result_title = None
+    result_message = None
+    if job.status == 'done':
+        job_titles = {
+            'upload_stock_cd': 'Stock CD cargado',
+            'upload_macro_sales': 'Ventas macro cargadas',
+            'generate_distribution': 'Distribución generada'
+        }
+        result_title = job_titles.get(job.job_type, 'Proceso completado')
+        
+        if result_data:
+            if job.job_type == 'upload_stock_cd':
+                cnt = result_data.get('products_created', 0) + result_data.get('products_updated', 0)
+                result_message = f'{cnt:,} registros procesados correctamente.'
+            elif job.job_type == 'upload_macro_sales':
+                weeks = result_data.get('weeks_loaded', 0)
+                rows = result_data.get('rows_processed', 0)
+                result_message = f'{rows:,} filas procesadas en {weeks} semanas.'
+            elif job.job_type == 'generate_distribution':
+                run_id = result_data.get('run_id')
+                result_message = f'Corrida #{run_id} creada con {result_data.get("total_predictions", 0):,} predicciones.'
+            else:
+                result_message = job.message or 'El proceso finalizó correctamente.'
+        else:
+            result_message = job.message or 'El proceso finalizó correctamente.'
+    
     return jsonify({
         'id': job.id,
         'job_type': job.job_type,
@@ -869,7 +898,9 @@ def job_status_json(job_id):
         'message': job.message,
         'created_at': job.created_at.isoformat() if job.created_at else None,
         'updated_at': job.updated_at.isoformat() if job.updated_at else None,
-        'result': job.get_result() if job.status == 'done' else None
+        'result': result_data,
+        'result_title': result_title,
+        'result_message': result_message
     })
 
 

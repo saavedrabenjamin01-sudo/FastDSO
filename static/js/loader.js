@@ -136,6 +136,73 @@ document.addEventListener('DOMContentLoaded', function() {
     document.body.style.overflow = '';
   }
 
+  function showSuccessState(title, message, redirectUrl) {
+    stopProgress();
+    var card = modal.querySelector('.proc-card');
+    card.classList.add('proc-card-success');
+    
+    allIcons.forEach(function(icon) { icon.style.display = 'none'; });
+    
+    var iconContainer = document.getElementById('procIcon');
+    iconContainer.innerHTML = '<svg class="proc-svg proc-svg-success" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+      '<circle cx="32" cy="32" r="28" stroke="currentColor" stroke-width="3" fill="none"/>' +
+      '<path class="proc-check-anim" d="M20 32L28 40L44 24" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '</svg>';
+    
+    procTitle.textContent = title;
+    procMsg.textContent = message;
+    
+    var progressWrap = modal.querySelector('.proc-progress');
+    var percentEl = document.getElementById('procPercent');
+    if (progressWrap) progressWrap.style.display = 'none';
+    if (percentEl) percentEl.style.display = 'none';
+    
+    var actionsHtml = '<div class="proc-result-actions">' +
+      '<a href="' + redirectUrl + '" class="btn proc-btn-primary"><i class="bi bi-arrow-right me-2"></i>Continuar</a>' +
+      '<button type="button" class="btn proc-btn-secondary" onclick="window.location.reload()"><i class="bi bi-plus-circle me-2"></i>Cargar otro</button>' +
+      '</div>';
+    
+    var existingActions = card.querySelector('.proc-result-actions');
+    if (existingActions) existingActions.remove();
+    card.insertAdjacentHTML('beforeend', actionsHtml);
+  }
+
+  function showErrorState(title, message, traceback) {
+    stopProgress();
+    var card = modal.querySelector('.proc-card');
+    card.classList.add('proc-card-error');
+    
+    allIcons.forEach(function(icon) { icon.style.display = 'none'; });
+    
+    var iconContainer = document.getElementById('procIcon');
+    iconContainer.innerHTML = '<svg class="proc-svg proc-svg-error" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+      '<circle cx="32" cy="32" r="28" stroke="currentColor" stroke-width="3" fill="none"/>' +
+      '<path d="M22 22L42 42M42 22L22 42" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>' +
+      '</svg>';
+    
+    procTitle.textContent = title;
+    procMsg.textContent = message;
+    
+    var progressWrap = modal.querySelector('.proc-progress');
+    var percentEl = document.getElementById('procPercent');
+    if (progressWrap) progressWrap.style.display = 'none';
+    if (percentEl) percentEl.style.display = 'none';
+    
+    var detailsHtml = '';
+    if (traceback) {
+      detailsHtml = '<details class="proc-error-details"><summary>Detalles técnicos</summary>' +
+        '<pre class="proc-error-traceback">' + traceback + '</pre></details>';
+    }
+    
+    var actionsHtml = '<div class="proc-result-actions">' + detailsHtml +
+      '<button type="button" class="btn proc-btn-secondary" onclick="window.location.reload()"><i class="bi bi-arrow-clockwise me-2"></i>Intentar de nuevo</button>' +
+      '</div>';
+    
+    var existingActions = card.querySelector('.proc-result-actions');
+    if (existingActions) existingActions.remove();
+    card.insertAdjacentHTML('beforeend', actionsHtml);
+  }
+
   function pollJobStatus(jobId, redirectUrl, variant) {
     updateMessage('Procesando datos en el servidor...');
     
@@ -153,14 +220,17 @@ document.addEventListener('DOMContentLoaded', function() {
           
           if (data.status === 'done') {
             updateProgress(100);
-            updateMessage('Completado. Redirigiendo...');
-            setTimeout(function() {
-              window.location.href = redirectUrl;
-            }, 500);
+            showSuccessState(
+              data.result_title || 'Carga completada',
+              data.result_message || data.message || 'El proceso finalizó correctamente.',
+              redirectUrl
+            );
           } else if (data.status === 'error') {
-            hideModal();
-            alert('Error: ' + (data.message || 'Error desconocido'));
-            window.location.reload();
+            showErrorState(
+              'Error en el proceso',
+              data.message || 'Error desconocido',
+              data.traceback
+            );
           } else {
             setTimeout(poll, 1500);
           }
