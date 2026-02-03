@@ -57,7 +57,16 @@ Do not make changes to the folder `Excel tipo/`.
     - **Normalized Alerts**: All forecast routes use compute_alerts_normalized() with BREAKAGE type for consistency
     - **Category Forecast Mode**: Third tab "Forecast por Categoría" for executive-level category purchase decisions with aggregated demand using SalesWeeklyAgg, KPI cards (weekly demand, horizon demand, total stock, deficit), decision badge (BUY_NOW/REVIEW/DO_NOT_BUY), action split showing redistribute potential vs purchase required, and contextual cross-links to dashboard_category, slow_stock, alerts, and rebalancing
 - **Inventory Optimization**:
-    - **Store-to-Store Rebalancing**: A consolidated module offering auto-suggestions based on WOC and sales velocity, and an assisted manual plan where the system calculates optimal transfer amounts for user-provided SKUs.
+    - **Store-to-Store Rebalancing**: A consolidated module offering auto-suggestions based on WOC and sales velocity with category-aware planning:
+        - **Category-Aware Demand Blending**: Uses 70/30 SKU/category demand blend (0.7 * SKU_demand + 0.3 * store_category_share * category_weekly_demand) for more accurate redistribution
+        - **Scope Selection**: Choose between all SKUs or filter by category with Top-N SKU selection
+        - **Destination Modes**: "One store" for targeted transfers or "All stores" for system-wide redistribution matrix
+        - **Manual Assisted Mode**: Calculate transfer plans for user-provided SKUs with optional qty override from file
+        - **Input Flexibility**: SKU list (text paste or CSV/XLSX upload) or category-based input
+        - **Safety Limits**: MAX_ROWS=2000 suggestions, MAX_UNITS_PER_SKU_PER_DEST=20 to prevent excessive transfers
+        - **Results Views**: Three-tab interface (Transfers/By Destination/Summary) with grouped views and pagination
+        - **SalesWeeklyAgg Integration**: Single source of truth for demand calculations; rejects if no data available
+        - **Alerts Integration**: OVERSTOCK alerts mark SKUs as redistribution sources, BREAKAGE alerts mark stores as destinations
     - **Stock-out Replenishment (BREAK_REPLENISH)**: Identifies and suggests replenishment for out-of-stock SKU-Store pairs with historical demand.
     - **Slow Stock & Smart Reallocation**: Manages dead and slow-moving inventory with configurable thresholds, offering store-level and CD-level classification, KPI cards, and smart transfer suggestions. Includes a product flagging workflow to manage risk. Features category filter dropdown, page size selector (10/25/50), improved table styling with sticky headers and zebra striping, and product name ellipsis with tooltips.
 - **FastPlanner (Warehouse Execution)**: A Kanban-based module for warehouse operations to manage distribution plan execution:
