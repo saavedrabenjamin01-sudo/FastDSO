@@ -3,10 +3,17 @@
 {% block title %}Stock Lento & Reasignación{% endblock %}
 {% block page_title %}Stock Lento & Reasignación Inteligente{% endblock %}
 
-{# Pagination controls macro (matches Dashboard style, no size dropdown) #}
+{# Pagination controls macro with page size selector #}
 {% macro pagination_controls(pag, page_param) %}
 <div class="slow-pagination">
-  <small class="text-muted">{{ pag.total }} registros</small>
+  <div class="slow-pagination-left">
+    <small class="text-muted">{{ pag.total }} registros</small>
+    <select class="form-select form-select-sm slow-page-size" onchange="updateParam('page_size', this.value); updateParam('{{ page_param }}', 1)">
+      <option value="10" {% if page_size == 10 %}selected{% endif %}>10 / pág</option>
+      <option value="25" {% if page_size == 25 %}selected{% endif %}>25 / pág</option>
+      <option value="50" {% if page_size == 50 %}selected{% endif %}>50 / pág</option>
+    </select>
+  </div>
   {% if pag.pages > 1 %}
     <nav>
       <ul class="pagination pagination-sm mb-0">
@@ -217,6 +224,15 @@
         <input type="text" class="form-control form-control-sm" id="skuSearch" placeholder="Buscar..." value="{{ sku_search }}">
       </div>
       <div class="slow-filter-field">
+        <label class="slow-filter-label">Categoría</label>
+        <select class="form-select form-select-sm" id="categoryFilter">
+          <option value="">Todas</option>
+          {% for cat in categories %}
+          <option value="{{ cat }}" {% if category_filter == cat %}selected{% endif %}>{{ cat }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="slow-filter-field">
         <label class="slow-filter-label">Tienda</label>
         <select class="form-select form-select-sm" id="storeFilter">
           <option value="">Todas</option>
@@ -292,7 +308,7 @@
             {% for row in slow_pag.items %}
             <tr>
               <td class="text-mono">{{ row.sku }}</td>
-              <td>{{ row.product_name[:30] }}{% if row.product_name|length > 30 %}...{% endif %}</td>
+              <td><span class="product-name" title="{{ row.product_name }}">{{ row.product_name }}</span></td>
               <td>{{ row.store }}</td>
               <td class="text-end">{{ row.stock }}</td>
               <td class="text-end">{{ row.days_since_last_sale if row.days_since_last_sale < 9999 else '—' }}</td>
@@ -355,7 +371,7 @@
             {% for row in global_pag.items %}
             <tr>
               <td class="text-mono">{{ row.sku }}</td>
-              <td>{{ row.product_name[:30] }}{% if row.product_name|length > 30 %}...{% endif %}</td>
+              <td><span class="product-name" title="{{ row.product_name }}">{{ row.product_name }}</span></td>
               <td class="text-end fw-bold">{{ row.stock }}</td>
               <td class="text-end">{{ row.stock_cd }}</td>
               <td class="text-end">{{ row.stock_stores }}</td>
@@ -421,7 +437,7 @@
             {% for row in sug_pag.items %}
             <tr>
               <td class="text-mono">{{ row.sku }}</td>
-              <td>{{ row.product_name[:25] }}{% if row.product_name|length > 25 %}...{% endif %}</td>
+              <td><span class="product-name" title="{{ row.product_name }}">{{ row.product_name }}</span></td>
               <td>{{ row.from_store }}</td>
               <td>{{ row.to_store }}</td>
               <td class="text-end fw-bold">{{ row.qty }}</td>
@@ -482,7 +498,7 @@
             {% for row in cd_pag.items %}
             <tr>
               <td class="text-mono">{{ row.sku }}</td>
-              <td>{{ row.product_name[:30] }}{% if row.product_name|length > 30 %}...{% endif %}</td>
+              <td><span class="product-name" title="{{ row.product_name }}">{{ row.product_name }}</span></td>
               <td class="text-end">{{ row.stock_cd }}</td>
               <td class="text-end">{{ row.days_since_last_sale_global if row.days_since_last_sale_global else '—' }}</td>
               <td class="text-end">{{ row.days_since_last_purchase if row.days_since_last_purchase else '—' }}</td>
@@ -557,6 +573,7 @@ function updateParam(param, value) {
 function applyFilters() {
   const url = new URL(window.location.href);
   url.searchParams.set('sku_search', document.getElementById('skuSearch').value);
+  url.searchParams.set('category', document.getElementById('categoryFilter').value);
   url.searchParams.set('store_filter', document.getElementById('storeFilter').value);
   url.searchParams.set('status_filter', document.getElementById('statusFilter').value);
   url.searchParams.set('slow_page', 1);
@@ -567,6 +584,7 @@ function applyFilters() {
 function clearFilters() {
   const url = new URL(window.location.href);
   url.searchParams.delete('sku_search');
+  url.searchParams.delete('category');
   url.searchParams.delete('store_filter');
   url.searchParams.delete('status_filter');
   url.searchParams.set('slow_page', 1);

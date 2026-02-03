@@ -10492,7 +10492,10 @@ def slow_stock():
     flagged_only = request.args.get('flagged', '').strip() == '1'
     category_filter = request.args.get('category', '').strip()
     
-    # Pagination parameters (fixed 10 per page)
+    # Pagination parameters
+    page_size = request.args.get('page_size', 10, type=int)
+    if page_size not in (10, 25, 50):
+        page_size = 10
     slow_page = request.args.get('slow_page', 1, type=int)
     sug_page = request.args.get('sug_page', 1, type=int)
     cd_page = request.args.get('cd_page', 1, type=int)
@@ -10530,9 +10533,9 @@ def slow_stock():
         if category_filter:
             store_data = [r for r in store_data if r.get('product_id') in category_product_ids]
         
-        slow_pag = paginate_list(store_data, slow_page, 10)
-        sug_pag = paginate_list(results.get('transfers', []), sug_page, 10)
-        cd_pag = paginate_list(results.get('cd_analysis', []), cd_page, 10)
+        slow_pag = paginate_list(store_data, slow_page, page_size)
+        sug_pag = paginate_list(results.get('transfers', []), sug_page, page_size)
+        cd_pag = paginate_list(results.get('cd_analysis', []), cd_page, page_size)
         
         # Apply filters to global analysis
         global_data = results.get('global_analysis', [])
@@ -10548,10 +10551,17 @@ def slow_stock():
         if category_filter:
             global_data = [r for r in global_data if r.get('product_id') in category_product_ids]
         
-        global_pag = paginate_list(global_data, global_page, 10)
+        global_pag = paginate_list(global_data, global_page, page_size)
     
     # Get flagged products for display
     flagged_products = Product.query.filter(Product.eligible_for_distribution == False).order_by(Product.sku).all()
+    
+    # Get distinct categories for filter dropdown (using SQL distinct for performance)
+    categories_query = db.session.query(Product.category).filter(
+        Product.category.isnot(None),
+        Product.category != ''
+    ).distinct().order_by(Product.category).all()
+    categories = [c[0] for c in categories_query]
     
     return render_template('slow_stock.html',
                            products=products,
@@ -10572,7 +10582,9 @@ def slow_stock():
                            status_filter=status_filter,
                            flagged_only=flagged_only,
                            category_filter=category_filter,
-                           flagged_products=flagged_products)
+                           flagged_products=flagged_products,
+                           categories=categories,
+                           page_size=page_size)
 
 
 @app.route('/slow_stock/upload_lifecycle', methods=['POST'])

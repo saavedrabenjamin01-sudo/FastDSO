@@ -4987,14 +4987,19 @@ body{
   font-size: 0.85rem;
 }
 .slow-table thead {
-  background: #f8fafc;
+  background: #f6f8fb;
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 .slow-table th {
   padding: 12px 14px;
   text-align: left;
   font-weight: 600;
-  color: #475569;
-  border-bottom: 1px solid #e2e8f0;
+  font-size: 0.85rem;
+  letter-spacing: 0.2px;
+  color: #0f172a;
+  border-bottom: 1px solid rgba(15,23,42,0.12);
   white-space: nowrap;
 }
 .slow-table td {
@@ -5002,19 +5007,49 @@ body{
   border-bottom: 1px solid #f1f5f9;
   color: #334155;
 }
-.slow-table tbody tr:hover {
+.slow-table tbody tr:nth-child(even) {
   background: #fafbfc;
+}
+.slow-table tbody tr:nth-child(odd) {
+  background: #fff;
+}
+.slow-table tbody tr:hover {
+  background: #f0f4f8;
 }
 .slow-table .text-mono {
   font-family: 'SF Mono', 'Consolas', monospace;
   font-size: 0.82rem;
   color: #6366f1;
 }
+.slow-table .product-name {
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
 .slow-table-footer {
   padding: 12px 20px;
   background: #f8fafc;
   border-top: 1px solid #e2e8f0;
   font-size: 0.82rem;
+}
+.slow-pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.slow-pagination-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.slow-page-size {
+  width: auto;
+  padding: 4px 10px;
+  font-size: 0.8rem;
 }
 
 /* Badges */

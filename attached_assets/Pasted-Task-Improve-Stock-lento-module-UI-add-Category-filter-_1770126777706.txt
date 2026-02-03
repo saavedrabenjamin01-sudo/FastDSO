@@ -1,0 +1,75 @@
+Task: Improve “Stock lento” module UI + add Category filter (without breaking logic).
+
+FILES TO TOUCH
+- templates/slow_stock.html (or the template used by Stock lento route)
+- static/css/style.css (or dedicated css used by FastDSO)
+- app.py (route that renders Stock lento + query builder)
+- (Optional) models: Product.category already exists; ensure it’s used.
+
+A) VISUAL FIXES (headers look “purple/mauve” with dark text and low contrast)
+1) Table wrapper:
+- Put the table inside a card with padding and subtle shadow (same style as dashboard tables).
+- Add a sticky header (optional) so the header stays visible while scrolling.
+
+2) Table header styling:
+- Replace current header background with a clean high-contrast theme consistent with FastDSO:
+  - background: var(--surface-2) or a light neutral (e.g. #f6f8fb)
+  - text: var(--text-strong) or #0f172a
+  - border-bottom: 1px solid rgba(15,23,42,.12)
+- Increase font-weight to 600 and font-size to 0.85–0.9rem.
+- Add letter-spacing: 0.2px.
+- Ensure the header row is not inheriting a weird gradient or opacity from parent containers.
+
+3) Table readability:
+- Row hover highlight (subtle).
+- Zebra striping (very light).
+- Align numeric columns right.
+- Clamp very long product names to 1 line with ellipsis + title tooltip.
+
+4) Large table handling:
+- Use the same pagination component style used in dashboard tables (10 rows default).
+- Add “records count” and page size selector (10/25/50) if not already.
+
+B) CATEGORY FILTER (required)
+Goal: filter Stock lento results by Product.category.
+1) In route (app.py):
+- Read query param: category = request.args.get("category","").strip()
+- Build base query joining Product:
+  - slow_stock rows query must join Product and include Product.category
+- If category is non-empty:
+  - filter(Product.category == category)
+
+2) Provide list of categories to template:
+- Query distinct categories from Product where category not null/empty
+- Sort alphabetically
+- Pass categories + selected_category
+
+3) In template (slow_stock.html):
+- Add filter bar above the table:
+  - Category select (All + categories list)
+  - Search input for sku/name (if exists)
+  - Apply button (or auto-submit on change)
+- When category changes, reset page to 1.
+
+C) STORE ANALYSIS TABLE (the one with bad headers)
+If there are TWO tables (overall + “analysis by store”), apply the same header styling to both.
+- Add a section title “Store Breakdown” / “Análisis por tienda” with a small subtitle.
+- Ensure header colors match across both tables.
+
+D) PERFORMANCE SAFETY (do not slow the site further)
+- If slow_stock is computed in Python from a big dataframe, do NOT compute distinct categories by scanning the whole dataset; use SQL distinct on Product.category.
+- Use pagination at SQL level where possible.
+
+E) ACCEPTANCE CHECKS
+- Headers are clearly visible (no mauve background + black text clash).
+- Category dropdown appears and filters correctly.
+- Pagination still works and keeps category filter in URL.
+- Default view shows “All categories”.
+- No new errors if category is null/blank for some products.
+
+IMPLEMENTATION NOTES (for Replit)
+- Keep all existing variable names passed to the template.
+- Only add new params: categories, selected_category (and maybe category param in pagination links).
+- Reuse the dashboard pagination macro if available.
+
+Deliverable: commit changes with improved UI + category filter.
