@@ -1,0 +1,148 @@
+Task: Upgrade FastPlanner (priority blocking + close-with-exceptions upload that returns items to CD as “flagged/problem”).
+
+Goal summary
+1) Priority blocking:
+- If there is ANY “URGENT” folio not yet in “DESPACHO” (Dispatch) or later, warehouse users cannot start/claim work on “MEDIUM/LOW” folios.
+- They may still VIEW them, but the “Take/Start” actions are disabled with a clear tooltip/banner.
+- Once all URGENT folios are at least in DESPACHO (or DONE/CLOSED), MEDIUM can be taken. Same rule for MEDIUM vs LOW if you want (optional).
+
+2) Close flow with exceptions:
+- When a folio is moved to “CLOSE” (or “DONE -> CLOSE”), show a modal popup requiring an Excel/CSV upload of “not shipped / issues” lines:
+  required columns: sku, product_name (optional), quantity
+- These quantities must be returned back into CD stock as “problem stock” (flagged), not normal available stock.
+- The folio stores a closure record: who closed, when, counts of exception lines, file name.
+
+3) Marked/problem stock:
+- Add a flag/state that identifies CD stock that is NOT eligible for distribution.
+- It must be excluded from distribution/redistribution suggestions by default, but still visible in Stock Query and Stock CD with a badge “Problem”.
+
+--------------------------------------------
+A) DATA MODEL CHANGES (minimal, safe)
+1) FastPlanner folio/task table (whatever you use: PlannerTask / PlannerFolio / DistributionRun extension)
+Add columns:
+- urgency: TEXT ENUM {low, medium, urgent} default “medium”
+- status: existing kanban status
+- locked_reason: nullable text (optional)
+- closed_at datetime, closed_by_user_id int nullable
+- exceptions_file_name text nullable
+- exceptions_count int default 0
+
+2) Stock CD model changes
+Option 1 (recommended): extend StockCDSnapshot with a “quality_status”
+- quality_status TEXT default “OK” (values: OK, PROBLEM)
+- problem_reason TEXT nullable (e.g., “damaged”, “missing”, “manual_adjust”)
+- is_eligible_for_distribution BOOLEAN generated from status (or store in Product as well)
+
+Option 2: separate table StockCDIssue (not recommended now, more work).
+
+Also ensure Product has:
+- eligible_for_distribution BOOLEAN default True (you already tried this earlier; make sure migration/reset is handled)
+- risk_score / risk_reason optional (if already present, keep it)
+
+--------------------------------------------
+B) PRIORITY BLOCKING LOGIC (FastPlanner board)
+Where: FastPlanner kanban view + API endpoints that “claim/start/move” a folio.
+
+Define ordering:
+- urgent > medium > low
+Define “blocking statuses”:
+- A folio blocks others if urgency=urgent AND status NOT IN (“DESPACHO”, “CERRADO”, “FINALIZADO”, “DONE”)
+  (use the exact status names in your app)
+
+Rules:
+1) If any urgent-blocking folio exists:
+- Disable “Start/Take/Move to Picking” actions for all medium/low folios.
+- Show small banner at top: “Urgent folios pending: X. Medium/Low actions are locked until urgent is at Dispatch.”
+
+2) If no urgent blockers but any medium blockers (optional second layer):
+- Disable LOW actions until all MEDIUM are at Dispatch.
+
+Implementation:
+- In the FastPlanner route, compute:
+  urgent_blockers = count of urgent where status not in allowed
+  medium_blockers = count of medium where status not in allowed (optional)
+- Pass flags to template:
+  can_start_medium = (urgent_blockers == 0)
+  can_start_low = (urgent_blockers == 0 and (medium_blockers == 0 if enabled))
+- For each card, if disabled:
+  - render action buttons disabled
+  - add tooltip text
+
+Backend safety:
+- In the POST endpoint that changes status (e.g., /fastplanner/move/<id>), enforce the rule server-side too.
+  If blocked -> return 403 with message.
+
+--------------------------------------------
+C) CLOSE FLOW WITH EXCEPTIONS UPLOAD
+UX:
+- When user clicks “Close folio” (or moves to “CERRAR” column), open modal:
+  Title: “Close folio: upload exceptions”
+  Text: “Upload items not shipped / damaged / missing. They will be returned to CD as PROBLEM stock.”
+  File input (.xlsx / .csv)
+  Buttons: Cancel / Upload & Close
+
+Behavior:
+- If user has ZERO exceptions, allow a checkbox “No exceptions” to close without file.
+- If file uploaded:
+  - parse file
+  - validate columns: sku, quantity (product_name optional)
+  - quantity must be integer > 0
+  - for each row:
+      find Product by sku
+      if not found: create product placeholder (sku + name if provided, category null)
+      upsert to CD stock as PROBLEM:
+         - increase PROBLEM quantity for that SKU
+         - do NOT increase OK quantity
+  - store closure metadata on the folio
+
+Server routes:
+1) GET FastPlanner board: includes modal markup (hidden)
+2) POST /fastplanner/close/<folio_id>
+   - form-data: file or no_exceptions flag
+   - does parsing + DB updates + closes folio
+   - flash success / flash validation errors
+
+Data storage:
+- Save the uploaded file in instance/uploads/planner_exceptions/ with timestamp + folio id.
+
+--------------------------------------------
+D) MAKE “PROBLEM STOCK” VISIBLE BUT EXCLUDED
+1) Stock Query:
+- Show two CD quantities:
+  - CD OK
+  - CD PROBLEM
+- Total remains visible; highlight that PROBLEM is not distributable.
+
+2) Distribution generator:
+- When calculating available CD stock, use only OK quantities.
+- Add a small info note: “Problem stock excluded from distribution.”
+
+3) Stock CD upload module:
+- Keep existing modes, but default uploads go to OK.
+- Add an optional checkbox “Mark this upload as Problem stock” (later; optional now).
+
+--------------------------------------------
+E) TEMPLATE / UI DETAILS (FastDSO style)
+- Use the same modal system used for loaders (Bootstrap modal or your custom overlay).
+- Add urgency chips on each folio card:
+  urgent = red pill, medium = amber, low = slate
+- Add disabled button style consistent with FastDSO.
+
+--------------------------------------------
+F) TEST SCENARIOS (must implement)
+1) Create 1 urgent folio in “PENDIENTE” and 1 low folio:
+- low “Start” button disabled, urgent enabled
+- backend rejects low move with 403 if forced
+
+2) Move urgent to “DESPACHO”:
+- low becomes enabled
+
+3) Close folio with exceptions file:
+- PROBLEM CD stock increases
+- folio shows closed metadata + exceptions_count
+- distribution excludes PROBLEM stock
+
+4) Close folio with “No exceptions”:
+- closes successfully, no stock changes
+
+Deliverables: implement all above without breaking current FastPlanner/DistributionRun flow. Commit the changes.

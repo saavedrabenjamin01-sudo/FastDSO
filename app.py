@@ -232,6 +232,8 @@ class StockCD(db.Model):
     as_of_date = db.Column(db.Date, nullable=False)
     product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
     quantity = db.Column(db.Integer, nullable=False)
+    quality_status = db.Column(db.String(20), nullable=False, default='OK')
+    problem_reason = db.Column(db.Text, nullable=True)
 
     product = db.relationship('Product')
 
@@ -636,8 +638,12 @@ class DistributionPlan(db.Model):
     approved_at = db.Column(db.DateTime, nullable=True)
     started_at = db.Column(db.DateTime, nullable=True)
     closed_at = db.Column(db.DateTime, nullable=True)
+    closed_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    exceptions_file_name = db.Column(db.Text, nullable=True)
+    exceptions_count = db.Column(db.Integer, nullable=False, default=0)
 
     created_by = db.relationship('User', foreign_keys=[created_by_user_id])
+    closed_by = db.relationship('User', foreign_keys=[closed_by_user_id])
     approved_by = db.relationship('User', foreign_keys=[approved_by_user_id])
     assigned_to = db.relationship('User', foreign_keys=[assigned_to_user_id])
     lines = db.relationship('DistributionPlanLine', backref='plan', lazy='dynamic', cascade='all, delete-orphan')
@@ -1155,12 +1161,15 @@ def generate_predictions(
         for pid, sid, qty in stock_rows:
             store_stock_lookup[(pid, sid)] = qty or 0
     
-    # Pre-load CD stock for the active date
+    # Pre-load CD stock for the active date (exclude PROBLEM stock from distribution)
     cd_stock_lookup = {}
     if active_cd_stock_date:
-        cd_rows = StockCD.query.filter_by(as_of_date=active_cd_stock_date).all()
+        cd_rows = StockCD.query.filter(
+            StockCD.as_of_date == active_cd_stock_date,
+            db.or_(StockCD.quality_status == 'OK', StockCD.quality_status.is_(None))
+        ).all()
         for row in cd_rows:
-            cd_stock_lookup[row.product_id] = row.quantity or 0
+            cd_stock_lookup[row.product_id] = cd_stock_lookup.get(row.product_id, 0) + (row.quantity or 0)
     
     # Pre-compute category sales rates per store (for BACKOFF_STOCKOUT tie-breaking)
     cat_store_sales_rate = {}
@@ -2072,10 +2081,14 @@ def generate_predictions_from_macro(
     snapshot_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar()
     
     if snapshot_date:
-        cd_stock_rows = StockCD.query.filter_by(as_of_date=snapshot_date).filter(
-            StockCD.product_id.in_(product_ids)
+        cd_stock_rows = StockCD.query.filter(
+            StockCD.as_of_date == snapshot_date,
+            StockCD.product_id.in_(product_ids),
+            db.or_(StockCD.quality_status == 'OK', StockCD.quality_status.is_(None))
         ).all()
-        cd_stock = {row.product_id: row.quantity for row in cd_stock_rows}
+        cd_stock = {}
+        for row in cd_stock_rows:
+            cd_stock[row.product_id] = cd_stock.get(row.product_id, 0) + (row.quantity or 0)
     else:
         cd_stock = {}
     
@@ -7872,17 +7885,26 @@ def stock_query():
 
         if product:
             if scope == "cd":
-                # Tomamos el registro más reciente (no solo hoy)
-                cd_row = (StockCD.query
-                          .filter_by(product_id=product.id)
-                          .order_by(StockCD.as_of_date.desc())
-                          .first())
+                latest_date = db.session.query(db.func.max(StockCD.as_of_date)).filter_by(product_id=product.id).scalar()
+                
+                qty_ok = 0
+                qty_problem = 0
+                if latest_date:
+                    cd_rows = StockCD.query.filter_by(product_id=product.id, as_of_date=latest_date).all()
+                    for row in cd_rows:
+                        if row.quality_status == 'PROBLEM':
+                            qty_problem += int(row.quantity)
+                        else:
+                            qty_ok += int(row.quantity)
+                
                 result = {
                     "sku": product.sku,
                     "product": product.name,
                     "scope": "cd",
-                    "as_of_date": cd_row.as_of_date if cd_row else None,
-                    "quantity": int(cd_row.quantity) if cd_row else 0
+                    "as_of_date": latest_date,
+                    "quantity": qty_ok,
+                    "quantity_ok": qty_ok,
+                    "quantity_problem": qty_problem
                 }
 
             else:
@@ -12790,6 +12812,19 @@ def planner():
         plans_by_status[status] = query.order_by(DistributionPlan.created_at.desc()).all()
 
     can_operate = current_user.has_permission('planner:operate')
+    
+    blocking_statuses = ['APPROVED', 'IN_PROGRESS', 'PACKED']
+    urgent_blockers = DistributionPlan.query.filter(
+        DistributionPlan.urgency == 'URGENT',
+        DistributionPlan.status.in_(blocking_statuses)
+    ).count()
+    medium_blockers = DistributionPlan.query.filter(
+        DistributionPlan.urgency == 'MEDIUM',
+        DistributionPlan.status.in_(blocking_statuses)
+    ).count()
+    
+    can_start_medium = (urgent_blockers == 0)
+    can_start_low = (urgent_blockers == 0 and medium_blockers == 0)
 
     return render_template(
         'planner.html',
@@ -12798,7 +12833,11 @@ def planner():
         urgency_filter=urgency_filter,
         folio_search=folio_search,
         can_operate=can_operate,
-        PLAN_URGENCIES=PLAN_URGENCIES
+        PLAN_URGENCIES=PLAN_URGENCIES,
+        urgent_blockers=urgent_blockers,
+        medium_blockers=medium_blockers,
+        can_start_medium=can_start_medium,
+        can_start_low=can_start_low
     )
 
 
@@ -12832,6 +12871,26 @@ def planner_detail(plan_id):
     )
 
 
+def check_priority_blocking(plan_urgency):
+    """Check if a plan is blocked by higher priority plans. Returns (is_blocked, message)."""
+    blocking_statuses = ['APPROVED', 'IN_PROGRESS', 'PACKED']
+    if plan_urgency in ('MEDIUM', 'LOW'):
+        urgent_blockers = DistributionPlan.query.filter(
+            DistributionPlan.urgency == 'URGENT',
+            DistributionPlan.status.in_(blocking_statuses)
+        ).count()
+        if urgent_blockers > 0:
+            return True, f'Acción bloqueada: hay {urgent_blockers} folio(s) URGENTE(s) pendientes de despacho'
+    if plan_urgency == 'LOW':
+        medium_blockers = DistributionPlan.query.filter(
+            DistributionPlan.urgency == 'MEDIUM',
+            DistributionPlan.status.in_(blocking_statuses)
+        ).count()
+        if medium_blockers > 0:
+            return True, f'Acción bloqueada: hay {medium_blockers} folio(s) MEDIO(s) pendientes de despacho'
+    return False, ''
+
+
 @app.route('/planner/<int:plan_id>/take', methods=['POST'])
 @login_required
 @require_permission('planner:operate')
@@ -12842,6 +12901,11 @@ def planner_take(plan_id):
     if plan.status != 'APPROVED':
         flash('Solo se pueden tomar planes en estado APROBADO', 'warning')
         return redirect(url_for('planner'))
+    
+    is_blocked, block_msg = check_priority_blocking(plan.urgency)
+    if is_blocked:
+        flash(block_msg, 'danger')
+        return redirect(url_for('planner')), 403
     
     plan.status = 'IN_PROGRESS'
     plan.assigned_to_user_id = current_user.id
@@ -12871,6 +12935,11 @@ def planner_pack(plan_id):
         flash('Solo se pueden empacar planes en estado EN PROGRESO', 'warning')
         return redirect(url_for('planner'))
     
+    is_blocked, block_msg = check_priority_blocking(plan.urgency)
+    if is_blocked:
+        flash(block_msg, 'danger')
+        return redirect(url_for('planner')), 403
+    
     plan.status = 'PACKED'
     
     log = PlanActivityLog(
@@ -12897,6 +12966,11 @@ def planner_dispatch(plan_id):
         flash('Solo se pueden despachar planes en estado EMPACADO', 'warning')
         return redirect(url_for('planner'))
     
+    is_blocked, block_msg = check_priority_blocking(plan.urgency)
+    if is_blocked:
+        flash(block_msg, 'danger')
+        return redirect(url_for('planner')), 403
+    
     plan.status = 'DISPATCHED'
     
     log = PlanActivityLog(
@@ -12916,26 +12990,118 @@ def planner_dispatch(plan_id):
 @login_required
 @require_permission('planner:operate')
 def planner_close(plan_id):
-    """Close a plan: move from DISPATCHED to CLOSED."""
+    """Close a plan: move from DISPATCHED to CLOSED with optional exceptions upload."""
     plan = DistributionPlan.query.get_or_404(plan_id)
     
     if plan.status != 'DISPATCHED':
         flash('Solo se pueden cerrar planes en estado DESPACHADO', 'warning')
         return redirect(url_for('planner'))
     
+    no_exceptions = request.form.get('no_exceptions') == '1'
+    exceptions_file = request.files.get('exceptions_file')
+    exceptions_count = 0
+    exceptions_file_name = None
+    
+    if not no_exceptions and exceptions_file and exceptions_file.filename:
+        try:
+            from werkzeug.utils import secure_filename as wz_secure_filename
+            
+            exceptions_file.seek(0, 2)
+            file_size = exceptions_file.tell()
+            exceptions_file.seek(0)
+            if file_size > 5 * 1024 * 1024:
+                flash('El archivo es demasiado grande. Máximo 5MB.', 'danger')
+                return redirect(url_for('planner'))
+            
+            filename = exceptions_file.filename.lower()
+            if filename.endswith('.xlsx') or filename.endswith('.xls'):
+                df = pd.read_excel(exceptions_file)
+            elif filename.endswith('.csv'):
+                df = pd.read_csv(exceptions_file)
+            else:
+                flash('Formato de archivo no válido. Use Excel (.xlsx) o CSV', 'danger')
+                return redirect(url_for('planner'))
+            
+            df.columns = [c.strip().lower() for c in df.columns]
+            if 'sku' not in df.columns or 'quantity' not in df.columns:
+                flash('El archivo debe contener columnas: sku, quantity', 'danger')
+                return redirect(url_for('planner'))
+            
+            latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar() or date.today()
+            
+            for _, row in df.iterrows():
+                sku = str(row['sku']).strip()
+                try:
+                    qty = int(row['quantity'])
+                except (ValueError, TypeError):
+                    continue
+                if qty <= 0:
+                    continue
+                
+                product = Product.query.filter_by(sku=sku).first()
+                if not product:
+                    prod_name = str(row.get('product_name', sku)).strip() if 'product_name' in df.columns else sku
+                    product = Product(sku=sku, name=prod_name, category=None, eligible_for_distribution=False)
+                    db.session.add(product)
+                    db.session.flush()
+                
+                existing = StockCD.query.filter_by(
+                    as_of_date=latest_cd_date,
+                    product_id=product.id,
+                    quality_status='PROBLEM'
+                ).first()
+                
+                if existing:
+                    existing.quantity += qty
+                    existing.problem_reason = f'Cierre folio {plan.folio}'
+                else:
+                    new_stock = StockCD(
+                        as_of_date=latest_cd_date,
+                        product_id=product.id,
+                        quantity=qty,
+                        quality_status='PROBLEM',
+                        problem_reason=f'Cierre folio {plan.folio}'
+                    )
+                    db.session.add(new_stock)
+                
+                exceptions_count += 1
+            
+            upload_dir = os.path.join(app.instance_path, 'uploads', 'planner_exceptions')
+            os.makedirs(upload_dir, exist_ok=True)
+            timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+            orig_filename = wz_secure_filename(exceptions_file.filename) or 'exceptions.xlsx'
+            safe_filename = f'{plan.folio}_{timestamp}_{orig_filename}'
+            file_path = os.path.join(upload_dir, safe_filename)
+            exceptions_file.seek(0)
+            exceptions_file.save(file_path)
+            exceptions_file_name = safe_filename
+            
+        except Exception as e:
+            flash(f'Error al procesar archivo de excepciones: {str(e)}', 'danger')
+            return redirect(url_for('planner'))
+    
     plan.status = 'CLOSED'
     plan.closed_at = datetime.utcnow()
+    plan.closed_by_user_id = current_user.id
+    plan.exceptions_count = exceptions_count
+    plan.exceptions_file_name = exceptions_file_name
+    
+    comment = f'Plan cerrado por {current_user.username}'
+    if exceptions_count > 0:
+        comment += f' con {exceptions_count} excepciones (stock problema)'
+    elif no_exceptions:
+        comment += ' sin excepciones'
     
     log = PlanActivityLog(
         plan_id=plan.id,
         action='CLOSED',
         user_id=current_user.id,
-        comment=f'Plan cerrado por {current_user.username}'
+        comment=comment
     )
     db.session.add(log)
     db.session.commit()
     
-    flash(f'Plan {plan.folio} cerrado exitosamente', 'success')
+    flash(f'Plan {plan.folio} cerrado exitosamente' + (f' con {exceptions_count} excepciones' if exceptions_count > 0 else ''), 'success')
     return redirect(url_for('planner'))
 
 

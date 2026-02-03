@@ -59,15 +59,33 @@
       </div>
 
       {% if result.scope == 'cd' %}
-        <div class="query-kpi-card">
-          <div class="query-kpi-badge">
-            <i class="bi bi-box-seam"></i>
+        <div class="d-flex gap-3 flex-wrap">
+          <div class="query-kpi-card">
+            <div class="query-kpi-badge">
+              <i class="bi bi-box-seam"></i>
+            </div>
+            <div class="query-kpi-body">
+              <div class="query-kpi-label">Stock CD Disponible</div>
+              <div class="query-kpi-number text-success">{{ "{:,}".format(result.quantity_ok|default(result.quantity)|int) }}</div>
+            </div>
           </div>
-          <div class="query-kpi-body">
-            <div class="query-kpi-label">Stock CD disponible</div>
-            <div class="query-kpi-number">{{ "{:,}".format(result.quantity|int) }}</div>
+          {% if result.quantity_problem and result.quantity_problem > 0 %}
+          <div class="query-kpi-card" style="border-left: 4px solid #dc3545;">
+            <div class="query-kpi-badge" style="background: #dc354520; color: #dc3545;">
+              <i class="bi bi-exclamation-triangle"></i>
+            </div>
+            <div class="query-kpi-body">
+              <div class="query-kpi-label">Stock Problema <span class="badge bg-danger ms-1">No distribuible</span></div>
+              <div class="query-kpi-number text-danger">{{ "{:,}".format(result.quantity_problem|int) }}</div>
+            </div>
           </div>
+          {% endif %}
         </div>
+        {% if result.quantity_problem and result.quantity_problem > 0 %}
+        <div class="alert alert-warning mt-3 mb-0" style="font-size: 0.85rem;">
+          <i class="bi bi-info-circle me-1"></i> El stock problema proviene de excepciones de cierre de folios en FastPlanner. Este stock no es elegible para distribución.
+        </div>
+        {% endif %}
       {% else %}
         {% if result.stores and result.stores|length > 0 %}
           <div class="query-card">

@@ -6,6 +6,23 @@
   <p class="text-muted">Tablero Kanban de ejecución de almacén</p>
 </div>
 
+{% if urgent_blockers > 0 %}
+<div class="alert alert-warning d-flex align-items-center mb-3" role="alert">
+  <i class="bi bi-exclamation-triangle-fill me-2"></i>
+  <div>
+    <strong>Prioridad bloqueante:</strong> {{ urgent_blockers }} folio(s) URGENTE(s) pendientes de despacho. 
+    Las acciones para folios MEDIUM/LOW están deshabilitadas hasta que los urgentes lleguen a DESPACHO.
+  </div>
+</div>
+{% elif medium_blockers > 0 %}
+<div class="alert alert-info d-flex align-items-center mb-3" role="alert">
+  <i class="bi bi-info-circle-fill me-2"></i>
+  <div>
+    {{ medium_blockers }} folio(s) MEDIO(s) pendientes. Las acciones para folios LOW están deshabilitadas.
+  </div>
+</div>
+{% endif %}
+
 <div class="card mb-4">
   <div class="card-body">
     <form method="get" class="row g-3 align-items-end">
@@ -67,25 +84,24 @@
             {% endif %}
           </div>
           <div class="kanban-card-actions">
+            {% set is_blocked = (plan.urgency == 'MEDIUM' and not can_start_medium) or (plan.urgency == 'LOW' and not can_start_low) %}
             {% if can_operate and status == 'APPROVED' %}
             <form method="post" action="{{ url_for('planner_take', plan_id=plan.id) }}" style="display:inline;">
-              <button type="submit" class="btn btn-xs btn-success"><i class="bi bi-hand-index"></i> Tomar</button>
+              <button type="submit" class="btn btn-xs btn-success" {% if is_blocked %}disabled title="Bloqueado por folios de mayor prioridad"{% endif %}><i class="bi bi-hand-index"></i> Tomar</button>
             </form>
             {% endif %}
             {% if can_operate and status == 'IN_PROGRESS' %}
             <form method="post" action="{{ url_for('planner_pack', plan_id=plan.id) }}" style="display:inline;">
-              <button type="submit" class="btn btn-xs btn-info"><i class="bi bi-box-seam"></i> Empacar</button>
+              <button type="submit" class="btn btn-xs btn-info" {% if is_blocked %}disabled title="Bloqueado por folios de mayor prioridad"{% endif %}><i class="bi bi-box-seam"></i> Empacar</button>
             </form>
             {% endif %}
             {% if can_operate and status == 'PACKED' %}
             <form method="post" action="{{ url_for('planner_dispatch', plan_id=plan.id) }}" style="display:inline;">
-              <button type="submit" class="btn btn-xs btn-warning"><i class="bi bi-truck"></i> Despachar</button>
+              <button type="submit" class="btn btn-xs btn-warning" {% if is_blocked %}disabled title="Bloqueado por folios de mayor prioridad"{% endif %}><i class="bi bi-truck"></i> Despachar</button>
             </form>
             {% endif %}
             {% if can_operate and status == 'DISPATCHED' %}
-            <form method="post" action="{{ url_for('planner_close', plan_id=plan.id) }}" style="display:inline;">
-              <button type="submit" class="btn btn-xs btn-secondary"><i class="bi bi-check-circle"></i> Cerrar</button>
-            </form>
+            <button type="button" class="btn btn-xs btn-secondary" onclick="openCloseModal({{ plan.id }}, '{{ plan.folio }}')"><i class="bi bi-check-circle"></i> Cerrar</button>
             {% endif %}
             <a href="{{ url_for('planner_detail', plan_id=plan.id) }}" class="btn btn-xs btn-outline-primary"><i class="bi bi-eye"></i> Ver</a>
             <a href="{{ url_for('planner_export_picking', plan_id=plan.id) }}" class="btn btn-xs btn-outline-success"><i class="bi bi-download"></i> Picking</a>
@@ -110,4 +126,57 @@
   <p class="text-muted">Los planes aprobados desde el centro de runs aparecerán aquí automáticamente.</p>
 </div>
 {% endif %}
+
+<div class="modal fade" id="closeExceptionsModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form id="closeModalForm" method="post" enctype="multipart/form-data">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-check-circle"></i> Cerrar Folio: <span id="closeModalFolio"></span></h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted mb-3">Sube un archivo con los artículos no enviados / dañados / faltantes. Estos se devolverán al CD como <strong>Stock Problema</strong> (no elegible para distribución).</p>
+          
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Archivo de excepciones (Excel/CSV)</label>
+            <input type="file" name="exceptions_file" id="exceptionsFile" class="form-control" accept=".xlsx,.xls,.csv">
+            <div class="form-text">Columnas requeridas: <code>sku</code>, <code>quantity</code>. Opcional: <code>product_name</code></div>
+          </div>
+          
+          <div class="form-check mt-3">
+            <input class="form-check-input" type="checkbox" id="noExceptionsCheck" name="no_exceptions" value="1" onchange="toggleExceptionsFile()">
+            <label class="form-check-label" for="noExceptionsCheck">
+              <i class="bi bi-check2-circle text-success"></i> No hay excepciones - cerrar sin archivo
+            </label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-primary"><i class="bi bi-check-circle"></i> Cerrar Folio</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+function openCloseModal(planId, folio) {
+  document.getElementById('closeModalFolio').textContent = folio;
+  document.getElementById('closeModalForm').action = '/planner/' + planId + '/close';
+  document.getElementById('exceptionsFile').value = '';
+  document.getElementById('noExceptionsCheck').checked = false;
+  document.getElementById('exceptionsFile').disabled = false;
+  var modal = new bootstrap.Modal(document.getElementById('closeExceptionsModal'));
+  modal.show();
+}
+
+function toggleExceptionsFile() {
+  var noExceptions = document.getElementById('noExceptionsCheck').checked;
+  document.getElementById('exceptionsFile').disabled = noExceptions;
+  if (noExceptions) {
+    document.getElementById('exceptionsFile').value = '';
+  }
+}
+</script>
 {% endblock %}
