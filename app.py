@@ -4396,13 +4396,18 @@ def forecast_decision_engine(
     category_demand_fallback: float = None
 ) -> ForecastDecisionResult:
     """
-    Centralized Forecast Decision Pipeline.
+    Centralized Forecast Decision Pipeline with Operational Alerts Integration.
     
     Decision Order (strict):
-    1) Risk Evaluation: Check alerts (breakage, projected breakage), slow stock flags, recent sales
+    1) Risk Evaluation: Check alerts (breakage, projected breakage, no_movement), slow stock flags, recent sales
     2) Demand Estimation: Use SKU demand if available, fallback to category demand ONLY if no SKU sales
     3) Coverage Calculation: Consolidate CD + store stock
-    4) Business Rules: Apply decision logic
+    4) Business Rules: Apply decision logic with alert overrides
+    
+    Alert Override Rules:
+    - BREAKAGE (HIGH) → forces BUY
+    - OVERSTOCK (MEDIUM/HIGH) → forces NO_BUY (unless breakage exists)
+    - NO_MOVEMENT (MEDIUM/HIGH) → forces BLOCK
     
     Returns:
         ForecastDecisionResult with recommendation, reason_code, explanation
@@ -4410,46 +4415,111 @@ def forecast_decision_engine(
     import math
     
     alerts = alerts or []
+    
+    def get_alert_attr(alert, attr, default=None):
+        """Get attribute from AlertRecord or dict."""
+        if isinstance(alert, AlertRecord):
+            return getattr(alert, attr, default) if hasattr(alert, attr) else default
+        return alert.get(attr, default)
+    
+    def get_alert_type(alert):
+        """Get normalized alert type from AlertRecord or dict."""
+        if isinstance(alert, AlertRecord):
+            return alert.alert_type
+        atype = alert.get('type', '') or alert.get('alert_type', '')
+        type_map = {
+            'BROKEN_STOCK': 'BREAKAGE',
+            'PROJECTED_STOCKOUT': 'PROJECTED_BREAKAGE',
+            'SILENT_SKU': 'NO_MOVEMENT'
+        }
+        return type_map.get(atype, atype)
+    
+    alert_types = [get_alert_type(a) for a in alerts]
     debug_info = {
         'sku': sku,
         'input_demand': avg_weekly_demand,
         'total_stock': total_stock,
         'lifecycle': lifecycle_status,
         'slow_flagged': slow_stock_flagged,
-        'alert_types': [a.get('type') for a in alerts]
+        'alert_types': alert_types
     }
     
     # ==========================================================================
-    # STEP 1: RISK EVALUATION
+    # STEP 1: RISK EVALUATION (Operational Alerts Integration)
     # ==========================================================================
     has_breakage = False
-    has_projected_stockout = False
+    has_projected_breakage = False
     has_overstock_alert = False
+    has_no_movement = False
     alert_severity = 'LOW'
     
+    forces_buy = False
+    forces_no_buy = False
+    forces_block = False
+    is_slow_eligible = False
+    
     for alert in alerts:
-        atype = alert.get('type', '')
-        asev = alert.get('severity', 'LOW')
-        if atype == 'BROKEN_STOCK':
+        atype = get_alert_type(alert)
+        asev = get_alert_attr(alert, 'severity', 'LOW')
+        action_hint = get_alert_attr(alert, 'action_hint', 'NONE')
+        
+        if atype == 'BREAKAGE':
             has_breakage = True
             if asev == 'HIGH':
                 alert_severity = 'HIGH'
+                forces_buy = True
             elif asev == 'MEDIUM' and alert_severity != 'HIGH':
                 alert_severity = 'MEDIUM'
-        elif atype == 'PROJECTED_STOCKOUT':
-            has_projected_stockout = True
+        elif atype == 'PROJECTED_BREAKAGE':
+            has_projected_breakage = True
             if asev == 'HIGH':
                 alert_severity = 'HIGH'
             elif asev == 'MEDIUM' and alert_severity != 'HIGH':
                 alert_severity = 'MEDIUM'
         elif atype == 'OVERSTOCK':
             has_overstock_alert = True
+            if asev in ('HIGH', 'MEDIUM'):
+                forces_no_buy = True
+        elif atype == 'NO_MOVEMENT':
+            has_no_movement = True
+            is_slow_eligible = True
+            if asev in ('HIGH', 'MEDIUM'):
+                forces_block = True
+        elif atype == 'BROKEN_STOCK':
+            has_breakage = True
+            if asev == 'HIGH':
+                alert_severity = 'HIGH'
+                forces_buy = True
+            elif asev == 'MEDIUM' and alert_severity != 'HIGH':
+                alert_severity = 'MEDIUM'
+        elif atype == 'PROJECTED_STOCKOUT':
+            has_projected_breakage = True
+            if asev == 'HIGH':
+                alert_severity = 'HIGH'
+            elif asev == 'MEDIUM' and alert_severity != 'HIGH':
+                alert_severity = 'MEDIUM'
+        elif atype == 'SILENT_SKU':
+            has_no_movement = True
+            is_slow_eligible = True
+            if asev in ('HIGH', 'MEDIUM'):
+                forces_block = True
+    
+    has_projected_stockout = has_projected_breakage
+    
+    if is_slow_eligible and not slow_stock_flagged:
+        slow_stock_flagged = True
+        alerts_logger.info(f"[{sku}] Alert Override: NO_MOVEMENT alert sets slow_stock_flagged=True")
     
     debug_info['risk_eval'] = {
         'has_breakage': has_breakage,
-        'has_projected_stockout': has_projected_stockout,
+        'has_projected_breakage': has_projected_breakage,
         'has_overstock_alert': has_overstock_alert,
-        'alert_severity': alert_severity
+        'has_no_movement': has_no_movement,
+        'alert_severity': alert_severity,
+        'forces_buy': forces_buy,
+        'forces_no_buy': forces_no_buy,
+        'forces_block': forces_block,
+        'is_slow_eligible': is_slow_eligible
     }
     
     # ==========================================================================
@@ -4487,11 +4557,59 @@ def forecast_decision_engine(
     }
     
     # ==========================================================================
-    # STEP 4: BUSINESS RULES (strict order)
+    # STEP 4: BUSINESS RULES (strict order with alert overrides)
     # ==========================================================================
     MAX_WOC_THRESHOLD = 6.0  # Weeks of cover for overstock
     
-    # Rule A: If overstock (high WOC without breakage or projected stockout) → NO_BUY
+    # PRE-RULE: Check for alert-forced overrides (highest priority)
+    # These are operational decisions that override normal calculation logic
+    # Precedence: BREAKAGE (HIGH) > NO_MOVEMENT (BLOCK) > OVERSTOCK (NO_BUY)
+    
+    # Override 1: BREAKAGE (HIGH) forces BUY - highest priority override
+    # Note: BREAKAGE HIGH can force BUY even without recent sales if the alert is active
+    if forces_buy:
+        purchase_qty = max(raw_purchase_qty, math.ceil(lead_time_demand))
+        alerts_logger.info(f"[{sku}] Alert Override: BREAKAGE (HIGH) forces BUY | qty={purchase_qty}")
+        forecast_logger.info(f"[{sku}] Path: ALERT_FORCE_BUY | breakage=HIGH")
+        return ForecastDecisionResult(
+            recommendation='BUY',
+            reason_code='BREAKAGE_URGENT',
+            explanation=f'Quiebre crítico detectado, reponer urgente {purchase_qty} unidades.',
+            purchase_qty=purchase_qty,
+            risk_level='HIGH',
+            decision_path='1_ALERT_FORCE_BUY',
+            debug_info=debug_info
+        )
+    
+    # Override 2: NO_MOVEMENT (MEDIUM/HIGH) forces BLOCK (after BREAKAGE)
+    if forces_block:
+        alerts_logger.info(f"[{sku}] Alert Override: NO_MOVEMENT (MEDIUM/HIGH) forces BLOCK")
+        forecast_logger.info(f"[{sku}] Path: ALERT_FORCE_BLOCK | no_movement=True")
+        return ForecastDecisionResult(
+            recommendation='BLOCKED',
+            reason_code='NO_MOVEMENT_BLOCK',
+            explanation='SKU sin movimiento de ventas, compra bloqueada por alerta operativa.',
+            purchase_qty=0,
+            risk_level='MEDIUM',
+            decision_path='2_ALERT_FORCE_BLOCK',
+            debug_info=debug_info
+        )
+    
+    # Rule A: If overstock alert forces NO_BUY (unless breakage/projected stockout exists)
+    if forces_no_buy and not has_breakage and not has_projected_breakage:
+        alerts_logger.info(f"[{sku}] Alert Override: OVERSTOCK (MEDIUM/HIGH) forces NO_BUY")
+        forecast_logger.info(f"[{sku}] Path: ALERT_FORCE_NO_BUY | overstock=True")
+        return ForecastDecisionResult(
+            recommendation='NO_BUY',
+            reason_code='OVERSTOCK_ALERT',
+            explanation='Exceso de stock detectado por alerta operativa, no comprar.',
+            purchase_qty=0,
+            risk_level='LOW',
+            decision_path='A1_ALERT_FORCE_NO_BUY',
+            debug_info=debug_info
+        )
+    
+    # Rule A2: If overstock by WOC (high WOC without breakage or projected stockout) → NO_BUY
     # Note: Breakage and projected stockout take precedence over overstock
     if weeks_of_cover > MAX_WOC_THRESHOLD and not has_breakage and not has_projected_stockout:
         forecast_logger.info(f"[{sku}] Path: OVERSTOCK_BLOCK | WOC={weeks_of_cover:.1f}")
@@ -4501,7 +4619,7 @@ def forecast_decision_engine(
             explanation=f'Stock excede {MAX_WOC_THRESHOLD} semanas de cobertura, no requiere compra.',
             purchase_qty=0,
             risk_level='LOW',
-            decision_path='A_OVERSTOCK_BLOCK',
+            decision_path='A2_OVERSTOCK_BLOCK',
             debug_info=debug_info
         )
     
@@ -8286,9 +8404,20 @@ def compute_rebalancing_suggestions(
 ):
     """
     Compute store-to-store rebalancing suggestions.
+    
+    Integrates with Operational Alerts Layer:
+    - OVERSTOCK alerts mark SKUs as redistribution sources (higher priority)
+    - BREAKAGE alerts mark stores as redistribution destinations (higher priority)
+    
     Returns list of dicts: {product_id, sku, name, from_store_id, from_store, to_store_id, to_store, qty, sales_rate_to, woc_from, woc_to, score, reason}
     Optimized: Uses indexed lookups instead of O(n*m) scans.
     """
+    alert_candidates = get_redistribution_candidates()
+    alert_sources = {(s['sku'], s['store_id']): s for s in alert_candidates['sources']}
+    alert_destinations = {(d['sku'], d['store_id']): d for d in alert_candidates['destinations']}
+    
+    alerts_logger.info(f"Redistribution: {len(alert_sources)} OVERSTOCK sources, {len(alert_destinations)} BREAKAGE destinations from alerts")
+    
     today = date.today()
     window_start_week = today - timedelta(days=weeks_window * 7)
     window_start_week = window_start_week - timedelta(days=window_start_week.weekday())
@@ -8355,29 +8484,51 @@ def compute_rebalancing_suggestions(
                 'woc': woc
             })
         
+        sku_str = product_info.get(pid, ('?', '?'))[0]
+        
         receivers = []
         for sd in store_data:
+            is_breakage_dest = (sku_str, sd['store_id']) in alert_destinations
+            
             if sd['rate'] > 0 and sd['woc'] < target_woc_min:
                 need = max(math.ceil(target_woc_target * sd['rate']) - sd['stock'], 0)
                 if need > 0:
+                    priority_boost = 100 if is_breakage_dest else 0
                     receivers.append({
                         **sd,
                         'need': need,
-                        'priority': (sd['rate'], -sd['woc'])
+                        'priority': (priority_boost + sd['rate'], -sd['woc']),
+                        'alert_flagged': is_breakage_dest
                     })
+            elif is_breakage_dest and sd['stock'] == 0:
+                need = max(math.ceil(target_woc_target * max(sd['rate'], 0.5)), 1)
+                receivers.append({
+                    **sd,
+                    'need': need,
+                    'priority': (100 + max(sd['rate'], 0.5), 0),
+                    'alert_flagged': True
+                })
+                alerts_logger.info(f"[{sku_str}] Redistribution: BREAKAGE alert adds receiver store_id={sd['store_id']}")
         receivers.sort(key=lambda x: x['priority'], reverse=True)
         
         donors = []
         for sd in store_data:
-            if sd['woc'] > target_woc_max:
+            is_overstock_source = (sku_str, sd['store_id']) in alert_sources
+            
+            if sd['woc'] > target_woc_max or is_overstock_source:
                 keep_units = max(math.ceil(retain_woc * sd['rate']), stock_floor)
                 give_units = max(sd['stock'] - keep_units, 0)
                 if give_units > 0:
+                    priority_boost = 100 if is_overstock_source else 0
                     donors.append({
                         **sd,
-                        'give': give_units
+                        'give': give_units,
+                        'priority': priority_boost + give_units,
+                        'alert_flagged': is_overstock_source
                     })
-        donors.sort(key=lambda x: x['give'], reverse=True)
+                    if is_overstock_source:
+                        alerts_logger.info(f"[{sku_str}] Redistribution: OVERSTOCK alert adds donor store_id={sd['store_id']}")
+        donors.sort(key=lambda x: x.get('priority', x['give']), reverse=True)
         
         for receiver in receivers:
             if store_filter and store_info.get(receiver['store_id']) != store_filter:
@@ -8398,9 +8549,16 @@ def compute_rebalancing_suggestions(
                 if transfer < min_transfer_qty and not is_extreme:
                     continue
                 
+                alert_priority = receiver.get('alert_flagged', False) or donor.get('alert_flagged', False)
                 score = receiver['rate'] * 10 + (target_woc_min - receiver['woc']) * 5
+                if alert_priority:
+                    score += 50
                 
                 reason = f"WOC {receiver['woc']:.1f} < {target_woc_min}, rate {receiver['rate']:.1f}/wk"
+                if receiver.get('alert_flagged'):
+                    reason = f"[BREAKAGE] {reason}"
+                elif donor.get('alert_flagged'):
+                    reason = f"[OVERSTOCK] {reason}"
                 
                 suggestions.append({
                     'product_id': pid,
@@ -8415,7 +8573,8 @@ def compute_rebalancing_suggestions(
                     'woc_from': donor['woc'],
                     'woc_to': receiver['woc'],
                     'score': score,
-                    'reason': reason
+                    'reason': reason,
+                    'alert_flagged': alert_priority
                 })
                 
                 remaining_need -= transfer
@@ -9593,10 +9752,18 @@ SLOW_STOCK_PARAMS = {
 def compute_slow_stock_analysis(params=None):
     """
     Compute slow/dead stock analysis for stores and CD.
+    
+    Integrates with Operational Alerts Layer:
+    - SKUs with NO_MOVEMENT alerts are automatically eligible for slow stock analysis
+    - Alert-driven eligibility is merged with computed analysis
+    
     Returns dict with store_analysis, cd_analysis, and transfer_suggestions.
     """
     if params is None:
         params = SLOW_STOCK_PARAMS.copy()
+    
+    alert_eligible_skus = get_slow_stock_eligible_skus()
+    alerts_logger.info(f"Slow Stock Analysis: {len(alert_eligible_skus)} SKUs eligible via NO_MOVEMENT alerts")
     
     today = date.today()
     
@@ -9715,7 +9882,12 @@ def compute_slow_stock_analysis(params=None):
         else:
             status = 'HEALTHY_STORE'
         
-        # Include all SKU-store pairs with stock
+        alert_flagged = product.sku in alert_eligible_skus
+        
+        if alert_flagged and status == 'HEALTHY_STORE':
+            status = 'SLOW_STORE'
+            alerts_logger.info(f"[{product.sku}] Slow Stock: Alert flag overrides HEALTHY -> SLOW_STORE")
+        
         store_analysis.append({
             'sku': product.sku,
             'product_name': product.name,
@@ -9726,7 +9898,8 @@ def compute_slow_stock_analysis(params=None):
             'coverage_weeks': round(woc, 1) if woc < 9999 else None,
             'status': status,
             'product_id': pid,
-            'store_id': sid
+            'store_id': sid,
+            'alert_flagged': alert_flagged
         })
         
         # Track donors (DEAD or SLOW only)
