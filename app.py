@@ -9202,9 +9202,11 @@ def compute_rebalancing_suggestions(
     all_store_ids = list(store_info.keys())
     
     if target_product_ids:
-        all_products = set(target_product_ids)
+        all_products = set(target_product_ids) - held_product_ids
     else:
-        all_products = set(stores_per_product_stock.keys()) | set(stores_per_product_sales.keys())
+        all_products = (set(stores_per_product_stock.keys()) | set(stores_per_product_sales.keys())) - held_product_ids
+    
+    all_products = all_products & set(product_info.keys())
     
     suggestions = []
     
