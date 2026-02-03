@@ -1,0 +1,98 @@
+Goal: Improve UX for ALL upload/process modules (Stock CD, Stock Stores, Macro Sales, Distribution Generator) with a consistent visual layout AND an attractive success/error popup after processing. Remove “silent success” and avoid confusing redirects.
+
+SCOPE
+Templates:
+- templates/upload_stock_cd.html
+- templates/upload_stock.html
+- templates/macro_sales_upload.html (or whatever file is used for “Ventas Macro”)
+- templates/distribution_request_upload.html (or the “Generar distribución” template currently used)
+- templates/base.html (only if needed)
+- templates/_processing_modal.html (if needed)
+
+Static:
+- static/css/style.css
+- static/js/loader.js
+- Add: static/js/toast.js (new) OR inline minimal JS if preferred
+
+Backend:
+- app.py routes that handle these uploads
+- Ensure flash messages are used consistently with categories: success / danger / warning / info
+
+A) STANDARDIZE VISUAL LAYOUT (all 4 pages)
+1) Each page must have:
+- Header row: Title + short subtitle + small “template download” button (if you already have templates, link them)
+- “Requirements” card: required columns, accepted formats, and a short example mapping
+- “Upload” card: file input + mode selectors (if any) + metadata fields (date, etc) + primary CTA button
+- “Tips” mini card on the right (desktop) or below (mobile): best practices and common errors
+
+2) Use consistent spacing and card styling matching FastDSO style already used in other modules:
+- Rounded corners (12–16px)
+- Soft border and subtle shadow
+- Use existing color tokens (do NOT introduce new palette)
+
+B) ADD SUCCESS/ERROR POPUP AFTER SUBMIT (all 4 pages)
+Requirement:
+- After processing completes, show a modal-style popup overlay (same brand style as processing modal) with:
+  - Icon (success: check-circle, error: x-circle, warning: exclamation)
+  - Title (“Upload completed”, “Upload failed”, etc)
+  - Short message (from server)
+  - Optional details accordion (only if error)
+  - Buttons:
+    - Primary: “Continue” (go to the next logical page)
+    - Secondary: “Stay here” / “Upload another”
+- Must work even after a redirect (PRG pattern). The popup should be triggered based on flash messages stored in session.
+
+Implementation approach (preferred):
+1) Backend: after each upload route finishes:
+- Set flash(category='success', message='...') or flash(category='danger', message='...')
+- Redirect back to the same page (or to dashboard) depending on module.
+2) Frontend: in base.html (or a shared partial):
+- Read flashed messages (already rendered).
+- Also store the last flash in a JSON script tag so JS can open popup automatically.
+
+Add a shared popup partial:
+- templates/_result_modal.html (new)
+- Include it in base.html near the bottom (like _processing_modal.html)
+
+Add JS:
+- static/js/result_modal.js (new)
+- On DOMContentLoaded:
+  - If there is a flash message with category success/danger/warning => open popup automatically.
+  - For success, default CTA destination is:
+    - Stock CD -> go to Dashboard or Stock Query
+    - Stock Stores -> go to Dashboard or Stock Query
+    - Macro Sales -> go to Dashboard Category (or Alerts)
+    - Distribution Generator -> open “Send for Approval” popup immediately after success (handled in a later step; for now show success modal and CTA “Send for approval” if run was created)
+
+C) INTEGRATE WITH EXISTING PROCESSING MODAL (no double loaders)
+- Keep the current processing modal for “in progress”.
+- Ensure the old page-level “loading” screens/spinners are removed so only ONE loader exists.
+- loader.js should keep showing the animated processing modal during submit.
+- When the server returns and page reloads/redirects, processing modal disappears naturally; then result modal appears based on flash.
+
+D) ERROR DETAILS (important)
+For failures:
+- Server should flash a concise message, plus optionally a “debug_id” (timestamp or UUID) for logs.
+- On the page, keep the existing flash area for accessibility, but also show the popup.
+- If pandas validation fails, flash: “Missing columns: …” and list missing columns.
+
+E) CONFIRM MODULES + ROUTES
+Ensure the popup works on these endpoints (adjust names to actual app):
+- /upload_stock_cd
+- /upload_stock (stores)
+- /macro_sales/upload
+- /distribution/generate (or upload route)
+If template names differ, locate correct templates and apply changes.
+
+F) ACCEPTANCE CRITERIA
+- Upload a valid file: see processing modal, then success popup with correct icon + message.
+- Upload invalid file: see processing modal, then error popup with friendly explanation.
+- No “empty” screens after upload.
+- No duplicated loaders.
+- Visual consistency across the 4 pages.
+
+Deliverables:
+- Updated 4 templates with standardized layout
+- New shared result modal partial + JS
+- Minimal CSS additions in style.css for the popup
+- Backend flash messages made consistent for each route
