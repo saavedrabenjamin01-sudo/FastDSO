@@ -885,19 +885,27 @@ def job_status_json(job_id):
         
         if result_data:
             if job.job_type == 'upload_stock_cd':
-                cnt = result_data.get('products_created', 0) + result_data.get('products_updated', 0)
-                result_message = f'{cnt:,} registros procesados correctamente.'
+                created = result_data.get('created', 0)
+                updated = result_data.get('updated', 0)
+                total_rows = result_data.get('total_rows', 0)
+                result_message = f'{total_rows:,} filas leídas. {created:,} nuevos, {updated:,} actualizados.'
             elif job.job_type == 'upload_macro_sales':
-                weeks = result_data.get('weeks_loaded', 0)
-                rows = result_data.get('rows_processed', 0)
-                result_message = f'{rows:,} filas procesadas en {weeks} semanas.'
+                records = result_data.get('records_created', 0)
+                total_rows = result_data.get('total_rows', 0)
+                weeks = result_data.get('weeks', 0)
+                result_message = f'{total_rows:,} filas procesadas en {weeks} semanas. {records:,} registros creados.'
             elif job.job_type == 'generate_distribution':
                 run_id = result_data.get('run_id')
                 result_message = f'Corrida #{run_id} creada con {result_data.get("total_predictions", 0):,} predicciones.'
             elif job.job_type == 'upload_stock_store':
                 created = result_data.get('created', 0)
                 updated = result_data.get('updated', 0)
-                result_message = f'{created + updated:,} registros de stock actualizados.'
+                total_rows = result_data.get('total_rows', 0)
+                result_message = f'{total_rows:,} filas procesadas. {created:,} nuevos, {updated:,} actualizados.'
+            elif job.job_type == 'upload_sales':
+                records = result_data.get('records_created', 0)
+                total_rows = result_data.get('total_rows', 0)
+                result_message = f'{total_rows:,} filas leídas. {records:,} registros de venta creados.'
             else:
                 result_message = job.message or 'El proceso finalizó correctamente.'
         else:
@@ -7356,24 +7364,36 @@ def upload_stock():
                     created += 1
 
         db.session.commit()
+        
+        upload_stats = {
+            'created': created,
+            'updated': updated,
+            'total_rows': len(df),
+            'store_count': len(store_cols),
+            'as_of_date': str(today)
+        }
+        
         log_audit(
             action="stock_store.upload",
             message=f"Stock tiendas cargado: {created} nuevos, {updated} actualizados",
             entity_type="StockSnapshot",
             metadata={
                 "filename": filename,
-                "created": created,
-                "updated": updated,
-                "distinct_skus": len(df),
-                "store_count": len(store_cols),
-                "as_of_date": str(today)
+                **upload_stats
             }
         )
-        flash(f'Stock cargado. Nuevos: {created}. Actualizados: {updated}.', 'success')
-        return redirect(url_for('dashboard'))
+        
+        session['upload_success'] = {
+            'type': 'stock_store',
+            'title': 'Stock Tiendas Cargado',
+            'message': f'{len(df):,} filas procesadas. {created:,} nuevos, {updated:,} actualizados.',
+            'stats': upload_stats
+        }
+        return redirect(url_for('upload_stock'))
 
-    # GET
-    return render_template('upload_stock.html')
+    # GET - check for upload success
+    upload_success = session.pop('upload_success', None)
+    return render_template('upload_stock.html', upload_success=upload_success)
 
 from datetime import date
 from sqlalchemy import func
