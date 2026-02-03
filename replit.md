@@ -48,8 +48,12 @@ Do not make changes to the folder `Excel tipo/`.
     - **Slow Stock Integration**: Reduces purchase qty by 50% for flagged SKUs
     - **Explainability**: Each result includes recommendation (BUY/NO_BUY/REDISTRIBUTE/BLOCKED), reason_code, explanation (1 sentence), decision_path for internal logging
     - **Single SKU Export**: /forecast/export route generates Excel with complete SKU forecast details
-    - **Batch Forecast Mode**: Two-tab interface (Single/Batch) with file upload (CSV/XLSX) or text paste, max 500 SKUs per run, stored in ForecastBatchRun and ForecastBatchItem models, with paginated results table, KPI cards (BUY_NOW/REVIEW/DO_NOT_BUY counts), explain modal, and batch export
+    - **Batch Forecast Mode**: Two-tab interface (Single/Batch) with file upload (CSV/XLSX) or text paste, max 500 SKUs per run, stored in ForecastBatchRun and ForecastBatchItem models, with paginated results table, KPI cards (BUY_NOW/REVIEW/DO_NOT_BUY/ERROR counts), explain modal, and batch export
     - **SKU-Aware Navigation**: Export, Alerts, and Slow Stock buttons pass SKU as query param for contextual filtering
+    - **Decision Consistency**: Server-side validation ensures purchase_qty <= 0 cannot have BUY_NOW decision across all API routes (single, batch, category)
+    - **Error Handling**: Missing SKUs in batch mode show status=ERROR with reason_code=SKU_NOT_FOUND, included in results and exports
+    - **Explanation Pills**: Visual CSS pills replace bracketed labels ([MACRO], [CRÍTICO], [COMPRAR], etc.) for clearer decision context
+    - **Normalized Alerts**: All forecast routes use compute_alerts_normalized() with BREAKAGE type for consistency
     - **Category Forecast Mode**: Third tab "Forecast por Categoría" for executive-level category purchase decisions with aggregated demand using SalesWeeklyAgg, KPI cards (weekly demand, horizon demand, total stock, deficit), decision badge (BUY_NOW/REVIEW/DO_NOT_BUY), action split showing redistribute potential vs purchase required, and contextual cross-links to dashboard_category, slow_stock, alerts, and rebalancing
 - **Inventory Optimization**:
     - **Store-to-Store Rebalancing**: A consolidated module offering auto-suggestions based on WOC and sales velocity, and an assisted manual plan where the system calculates optimal transfer amounts for user-provided SKUs.

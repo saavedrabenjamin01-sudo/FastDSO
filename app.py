@@ -5043,9 +5043,12 @@ def api_forecast_v2():
     
     # Map engine output to API response format
     recommendation = decision_result.recommendation
+    final_purchase_qty = decision_result.purchase_qty
+    
     # Map new format to legacy decision format for backward compatibility
+    # CONSISTENCY RULE: if purchase_qty <= 0, decision cannot be BUY_NOW
     if recommendation == 'BUY':
-        decision = 'BUY_NOW'
+        decision = 'BUY_NOW' if final_purchase_qty > 0 else 'DO_NOT_BUY'
     elif recommendation == 'NO_BUY':
         decision = 'DO_NOT_BUY'
     elif recommendation == 'REDISTRIBUTE':
@@ -5054,8 +5057,6 @@ def api_forecast_v2():
         decision = 'DO_NOT_BUY'
     else:
         decision = 'REVIEW'
-    
-    final_purchase_qty = decision_result.purchase_qty
     risk_level = decision_result.risk_level
     reason_code = decision_result.reason_code
     
@@ -5131,47 +5132,54 @@ def api_forecast_v2():
 def generate_forecast_explanation(avg_weekly_demand, horizon_demand, total_stock, weeks_of_cover,
                                    lead_time_weeks, safety_pct, lifecycle_status, alerts,
                                    slow_stock_flagged, suggested_purchase):
-    """Generate business-readable explanation bullets for forecast recommendation."""
+    """Generate business-readable 3-bullet explanation for forecast recommendation."""
     bullets = []
     
-    bullets.append(f"Demanda semanal promedio: {avg_weekly_demand:.1f} unidades")
-    bullets.append(f"Stock actual: {total_stock} u (~{weeks_of_cover:.1f} semanas de cobertura)")
+    demand_source = 'MACRO'
+    if lifecycle_status == 'NEW':
+        demand_source = 'CATEGORY_FALLBACK'
+    elif avg_weekly_demand == 0:
+        demand_source = 'NO_DATA'
     
-    coverage_gap = lead_time_weeks + (lead_time_weeks * safety_pct) - weeks_of_cover
-    if coverage_gap > 0:
-        bullets.append(f"Lead time: {lead_time_weeks:.0f} semanas → riesgo de stockout durante lead time")
-    else:
-        bullets.append(f"Lead time: {lead_time_weeks:.0f} semanas → cobertura suficiente")
+    bullets.append(f"[{demand_source}] Demanda: {avg_weekly_demand:.1f} u/sem → {horizon_demand:.0f} u horizonte")
     
+    stock_status = 'OK'
+    if weeks_of_cover < 2:
+        stock_status = 'CRÍTICO'
+    elif weeks_of_cover < 4:
+        stock_status = 'BAJO'
+    elif weeks_of_cover > 8:
+        stock_status = 'ALTO'
+    
+    alert_flags = []
     for alert in alerts:
         alert_type = alert.get('type', '')
-        if alert_type == 'PROJECTED_STOCKOUT':
-            bullets.append("Alerta: Stockout proyectado detectado")
+        if alert_type == 'BROKEN_STOCK':
+            alert_flags.append('QUIEBRE')
         elif alert_type == 'OVERSTOCK':
-            bullets.append("Alerta: Sobrestock activo - compra no recomendada")
-        elif alert_type == 'BROKEN_STOCK':
-            bullets.append("Alerta: Quiebre de stock detectado")
-        elif alert_type == 'SILENT_SKU':
-            bullets.append("Alerta: SKU sin movimiento reciente")
-    
+            alert_flags.append('SOBRESTOCK')
+        elif alert_type == 'PROJECTED_STOCKOUT':
+            alert_flags.append('STOCKOUT_PROYECTADO')
     if slow_stock_flagged:
-        bullets.append("SKU flaggeado como stock lento - revisar antes de comprar")
+        alert_flags.append('STOCK_LENTO')
     
-    if lifecycle_status == 'DEAD':
-        bullets.append("Ciclo de vida: MUERTO (90+ días sin ventas) - compra bloqueada")
-    elif lifecycle_status == 'SLOW':
-        bullets.append("Ciclo de vida: LENTO (31-90 días) - penalización 50% aplicada")
-    elif lifecycle_status == 'NEW':
-        bullets.append("Ciclo de vida: NUEVO - usando promedio de categoría")
-    elif lifecycle_status == 'ACTIVE':
-        bullets.append("Ciclo de vida: ACTIVO - ventas en últimos 30 días")
+    alert_str = f" ({', '.join(alert_flags)})" if alert_flags else ''
+    bullets.append(f"[{stock_status}] Stock: {total_stock} u = {weeks_of_cover:.1f} sem cobertura{alert_str}")
     
     if suggested_purchase > 0:
-        bullets.append(f"Compra sugerida: {suggested_purchase} unidades")
+        action = 'COMPRAR'
+        if any(a.get('type') == 'BROKEN_STOCK' for a in alerts):
+            action = 'REDISTRIBUIR+COMPRAR'
+        bullets.append(f"[{action}] Acción: Comprar {suggested_purchase} u para cubrir lead time ({lead_time_weeks:.0f} sem)")
     else:
-        bullets.append("Compra sugerida: 0 unidades (stock suficiente)")
+        action = 'NO_COMPRAR'
+        if any(a.get('type') == 'BROKEN_STOCK' for a in alerts):
+            action = 'REDISTRIBUIR'
+            bullets.append(f"[{action}] Acción: Redistribuir stock existente desde tiendas con exceso")
+        else:
+            bullets.append(f"[{action}] Acción: Stock suficiente, no comprar ahora")
     
-    return bullets[:6]
+    return bullets[:3]
 
 
 @app.route('/forecast/export', methods=['GET'])
@@ -5271,10 +5279,31 @@ def export_single_sku_forecast():
     horizon_demand = avg_weekly * horizon_weeks
     demand_lead_time = avg_weekly * lead_time_weeks
     safety_units = math.ceil(demand_lead_time * safety_pct)
-    suggested_purchase = max(0, math.ceil(demand_lead_time + safety_units - total_stock))
     
-    if lifecycle_status == 'DEAD' or 'OVERSTOCK' in reasons:
-        suggested_purchase = 0
+    has_recent_sales = any(a.get('type') in ['PROJECTED_STOCKOUT', 'BROKEN_STOCK'] for a in sku_alerts) or avg_weekly > 0
+    category_demand_fallback = None
+    if lifecycle_status == 'NEW' and product.category:
+        category_demand_fallback = get_category_avg_demand(product.category, store_id_filter)
+    
+    decision_result = forecast_decision_engine(
+        sku=sku_param,
+        avg_weekly_demand=avg_weekly,
+        total_stock=total_stock,
+        lead_time_weeks=lead_time_weeks,
+        safety_pct=safety_pct,
+        horizon_weeks=horizon_weeks,
+        alerts=sku_alerts,
+        lifecycle_status=lifecycle_status,
+        slow_stock_flagged=slow_stock_flagged,
+        has_recent_sales=has_recent_sales,
+        category_demand_fallback=category_demand_fallback
+    )
+    
+    suggested_purchase = decision_result.purchase_qty
+    suggested_action = decision_result.recommendation
+    reason_code = decision_result.reason_code
+    reason_detail = decision_result.explanation
+    risk_level = decision_result.risk_level
     
     model_used = 'SMA4'
     if lifecycle_status == 'SLOW':
@@ -5282,26 +5311,30 @@ def export_single_sku_forecast():
     elif lifecycle_status == 'NEW':
         model_used = 'CATEGORY_AVG'
     
+    demand_source = 'MACRO' if avg_weekly > 0 else ('CATEGORY_FALLBACK' if category_demand_fallback else 'NO_DATA')
+    
     data = [{
-        'SKU': str(sku_param),
-        'Producto': product.name,
-        'Categoría': product.category or '',
-        'Ciclo de Vida': lifecycle_status,
-        'Modelo Usado': model_used,
-        'Demanda Semanal': round(avg_weekly, 2),
-        'Demanda Horizonte': round(horizon_demand, 0),
-        'Stock CD': int(cd_stock),
-        'Stock Tiendas': int(store_stock),
-        'Stock Total': total_stock,
-        'Compra Sugerida': suggested_purchase,
-        'Comprar Ahora': 'Sí' if buy_now else 'No',
-        'Nivel Riesgo': risk_level,
-        'Razones': '; '.join(reasons) if reasons else 'STANDARD',
-        'Horizonte (sem)': horizon_weeks,
-        'Lead Time (sem)': lead_time_weeks,
-        'Safety %': f"{safety_pct*100:.0f}%",
-        'Tienda': store_param or 'Todas',
-        'Fecha Export': today.strftime('%Y-%m-%d')
+        'sku': str(sku_param),
+        'product_name': product.name,
+        'category': product.category or '',
+        'weekly_demand': round(avg_weekly, 2),
+        'horizon_weeks': horizon_weeks,
+        'horizon_demand': round(horizon_demand, 0),
+        'lead_time_weeks': lead_time_weeks,
+        'safety_stock_units': safety_units,
+        'stock_cd': int(cd_stock),
+        'stock_stores': int(store_stock),
+        'total_stock': total_stock,
+        'suggested_purchase_qty': suggested_purchase,
+        'suggested_action': suggested_action,
+        'reason_code': reason_code,
+        'reason_detail': reason_detail,
+        'lifecycle_status': lifecycle_status,
+        'model_used': model_used,
+        'demand_source': demand_source,
+        'risk_level': risk_level,
+        'store_filter': store_param or 'ALL',
+        'export_date': today.strftime('%Y-%m-%d')
     }]
     
     df = pd.DataFrame(data)
@@ -5377,13 +5410,20 @@ def api_forecast_batch():
     all_product_ids = set(p.id for p in products)
     lifecycle_map = classify_sku_lifecycle(sales_30d_map, sales_90d_map, sales_ever_map, all_product_ids)
     
-    all_alerts = compute_alerts()
+    # Use normalized alerts for consistency (convert back to legacy format for compatibility)
+    normalized_alerts = compute_alerts_normalized()
     alerts_by_sku = {}
-    for a in all_alerts:
-        sku = a.get('sku', '')
+    for a in normalized_alerts:
+        sku = a.sku_id
         if sku not in alerts_by_sku:
             alerts_by_sku[sku] = []
-        alerts_by_sku[sku].append(a)
+        # Convert to legacy dict format for forecast_decision_engine compatibility
+        alerts_by_sku[sku].append({
+            'type': 'BROKEN_STOCK' if a.alert_type == 'BREAKAGE' else a.alert_type,
+            'sku': a.sku_id,
+            'store_id': a.store_id,
+            'severity': a.severity
+        })
     
     history_weeks = 12
     history_cutoff = today - timedelta(days=history_weeks * 7)
@@ -5449,8 +5489,47 @@ def api_forecast_batch():
     redistribute_count = 0
     broken_stock_count = 0
     
+    error_count = 0
     for sku in sku_list:
         if sku not in found_skus:
+            # Add ERROR row for missing SKU
+            error_item = ForecastBatchItem(
+                batch_id=batch_id,
+                product_id=None,
+                sku=str(sku),
+                product_name='[SKU NO ENCONTRADO]',
+                category='',
+                lifecycle_status='ERROR',
+                model_used='N/A',
+                weekly_demand=0,
+                total_stock=0,
+                suggested_purchase=0,
+                decision='ERROR',
+                risk_level='ERROR',
+                reason_summary='SKU_NOT_FOUND',
+                explain_json=json.dumps(['SKU no existe en el catálogo de productos'])
+            )
+            db.session.add(error_item)
+            
+            results.append({
+                'sku': str(sku),
+                'product_name': '[SKU NO ENCONTRADO]',
+                'category': '',
+                'lifecycle_status': 'ERROR',
+                'model_used': 'N/A',
+                'weekly_demand': 0,
+                'total_stock': 0,
+                'suggested_purchase': 0,
+                'decision': 'ERROR',
+                'recommendation': 'ERROR',
+                'risk_level': 'ERROR',
+                'reason_code': 'SKU_NOT_FOUND',
+                'explanation': 'SKU no existe en el catálogo de productos',
+                'decision_path': 'ERROR',
+                'broken_stock_flag': False,
+                'explain_bullets': ['[ERROR] SKU no existe en el catálogo de productos']
+            })
+            error_count += 1
             continue
         
         product = product_map[sku]
@@ -5490,9 +5569,16 @@ def api_forecast_batch():
         
         # Map engine output to legacy format
         recommendation = decision_result.recommendation
+        final_purchase_qty = decision_result.purchase_qty
+        
+        # CONSISTENCY RULE: if purchase_qty <= 0, decision cannot be BUY_NOW
         if recommendation == 'BUY':
-            decision = 'BUY_NOW'
-            buy_now_count += 1
+            if final_purchase_qty > 0:
+                decision = 'BUY_NOW'
+                buy_now_count += 1
+            else:
+                decision = 'DO_NOT_BUY'
+                do_not_buy_count += 1
         elif recommendation == 'NO_BUY':
             decision = 'DO_NOT_BUY'
             do_not_buy_count += 1
@@ -5505,8 +5591,6 @@ def api_forecast_batch():
         else:
             decision = 'REVIEW'
             review_count += 1
-        
-        final_purchase_qty = decision_result.purchase_qty
         risk_level = decision_result.risk_level
         reason_code = decision_result.reason_code
         
@@ -5613,7 +5697,7 @@ def api_forecast_batch():
         'broken_stock_count': broken_stock_count,
         'blocked_count': blocked_count,
         'redistribute_count': redistribute_count,
-        'not_found': len(sku_list) - len(results),
+        'error_count': error_count,
         'results': results
     })
 
@@ -5634,6 +5718,9 @@ def api_get_batch_forecast(batch_id):
     total = items_q.count()
     items = items_q.offset((page - 1) * per_page).limit(per_page).all()
     
+    # Count ERROR items for pagination context
+    error_count = ForecastBatchItem.query.filter_by(batch_id=batch_id, decision='ERROR').count()
+    
     return jsonify({
         'batch_id': batch_id,
         'created_at': batch_run.created_at.isoformat(),
@@ -5641,6 +5728,7 @@ def api_get_batch_forecast(batch_id):
         'buy_now_count': batch_run.buy_now_count,
         'review_count': batch_run.review_count,
         'do_not_buy_count': batch_run.do_not_buy_count,
+        'error_count': error_count,
         'page': page,
         'per_page': per_page,
         'total_pages': (total + per_page - 1) // per_page,
@@ -5677,18 +5765,32 @@ def export_batch_forecast(batch_id):
     
     data = []
     for item in items:
+        explain_data = item.get_explain()
+        reason_detail = explain_data[0] if explain_data else item.reason_summary
+        
+        suggested_action = 'REVIEW'
+        if item.decision == 'BUY_NOW':
+            suggested_action = 'BUY'
+        elif item.decision == 'DO_NOT_BUY':
+            suggested_action = 'NO_BUY'
+        elif item.decision == 'BLOCKED':
+            suggested_action = 'BLOCKED'
+        elif item.decision == 'ERROR':
+            suggested_action = 'ERROR'
+        
         data.append({
-            'SKU': str(item.sku),
-            'Producto': item.product_name,
-            'Categoría': item.category,
-            'Ciclo de Vida': item.lifecycle_status,
-            'Modelo Usado': item.model_used,
-            'Demanda Semanal': item.weekly_demand,
-            'Stock Total': item.total_stock,
-            'Compra Sugerida': item.suggested_purchase,
-            'Decisión': item.decision,
-            'Nivel Riesgo': item.risk_level,
-            'Razones': item.reason_summary
+            'sku': str(item.sku),
+            'product_name': item.product_name or '',
+            'category': item.category or '',
+            'weekly_demand': round(item.weekly_demand or 0, 2),
+            'total_stock': item.total_stock or 0,
+            'suggested_purchase_qty': item.suggested_purchase or 0,
+            'suggested_action': suggested_action,
+            'reason_code': item.reason_summary or '',
+            'reason_detail': reason_detail or '',
+            'lifecycle_status': item.lifecycle_status or '',
+            'model_used': item.model_used or '',
+            'risk_level': item.risk_level or ''
         })
     
     df = pd.DataFrame(data)
@@ -5817,8 +5919,11 @@ def api_forecast_category():
     
     # Map engine output to category response format
     recommendation = decision_result.recommendation
+    purchase_required_qty = max(0, deficit)
+    
+    # CONSISTENCY RULE: if purchase_qty <= 0, decision cannot be BUY_NOW
     if recommendation == 'BUY':
-        decision = 'BUY_NOW'
+        decision = 'BUY_NOW' if purchase_required_qty > 0 else 'DO_NOT_BUY'
     elif recommendation == 'NO_BUY':
         decision = 'DO_NOT_BUY'
     elif recommendation == 'REDISTRIBUTE':
@@ -5882,6 +5987,91 @@ def api_forecast_category():
     # SKU count in category
     sku_count = Product.query.filter_by(category=category).count()
     
+    # =========================================================================
+    # TOP 10 SHORTAGE RISK SKUs - SKUs with highest risk in this category
+    # =========================================================================
+    category_products = Product.query.filter_by(category=category).all()
+    top_shortage_skus = []
+    
+    if category_products:
+        product_ids = [p.id for p in category_products]
+        product_map = {p.id: p for p in category_products}
+        
+        # Get demand per SKU (last 4 weeks)
+        demand_4w_start = today - timedelta(weeks=4)
+        sku_demand_q = db.session.query(
+            SalesWeeklyAgg.product_id,
+            func.sum(SalesWeeklyAgg.units).label('units_4w')
+        ).filter(
+            SalesWeeklyAgg.product_id.in_(product_ids),
+            SalesWeeklyAgg.week_start >= demand_4w_start
+        ).group_by(SalesWeeklyAgg.product_id).all()
+        sku_demand_map = {r.product_id: r.units_4w or 0 for r in sku_demand_q}
+        
+        # Get stock per SKU (CD)
+        sku_cd_stock_q = db.session.query(
+            StockCD.product_id,
+            func.sum(StockCD.quantity).label('cd_qty')
+        ).filter(StockCD.product_id.in_(product_ids)).group_by(StockCD.product_id).all()
+        sku_cd_map = {r.product_id: r.cd_qty or 0 for r in sku_cd_stock_q}
+        
+        # Get stock per SKU (Stores)
+        sku_store_stock_q = db.session.query(
+            StockSnapshot.product_id,
+            func.sum(StockSnapshot.quantity).label('store_qty')
+        ).filter(StockSnapshot.product_id.in_(product_ids))
+        if store_id:
+            sku_store_stock_q = sku_store_stock_q.filter(StockSnapshot.store_id == store_id)
+        sku_store_stock_q = sku_store_stock_q.group_by(StockSnapshot.product_id).all()
+        sku_store_map = {r.product_id: r.store_qty or 0 for r in sku_store_stock_q}
+        
+        # Check for breakages using normalized alerts (consistent with alert override rules)
+        normalized_alerts = compute_alerts_normalized()
+        breakage_skus = {a.sku_id.upper() for a in normalized_alerts if a.alert_type == 'BREAKAGE'}
+        
+        # Calculate risk score for each SKU
+        sku_risk_data = []
+        for pid in product_ids:
+            p = product_map[pid]
+            demand_4w = sku_demand_map.get(pid, 0)
+            weekly_demand = demand_4w / 4.0 if demand_4w > 0 else 0
+            cd_stock = sku_cd_map.get(pid, 0)
+            store_stock = sku_store_map.get(pid, 0)
+            total_sku_stock = cd_stock + store_stock
+            
+            has_breakage = p.sku.upper() in breakage_skus
+            
+            # Risk score: higher demand, lower stock, breakage = higher score
+            if weekly_demand <= 0 and total_sku_stock == 0:
+                continue  # Skip dead SKUs with no stock
+            
+            woc = total_sku_stock / max(weekly_demand, 0.01) if weekly_demand > 0 else 999
+            
+            # Risk factors: low WOC, high demand, breakage
+            risk_score = 0
+            if has_breakage:
+                risk_score += 100
+            if woc < 2:
+                risk_score += 50
+            elif woc < 4:
+                risk_score += 20
+            risk_score += min(weekly_demand, 50)  # Cap demand contribution
+            
+            if risk_score > 0:
+                sku_risk_data.append({
+                    'sku': p.sku,
+                    'product_name': p.name or '',
+                    'weekly_demand': round(weekly_demand, 1),
+                    'total_stock': int(total_sku_stock),
+                    'woc': round(woc, 1),
+                    'has_breakage': has_breakage,
+                    'risk_score': risk_score
+                })
+        
+        # Sort by risk score descending, take top 10
+        sku_risk_data.sort(key=lambda x: x['risk_score'], reverse=True)
+        top_shortage_skus = sku_risk_data[:10]
+    
     # Log decision path for category forecast
     forecast_logger.info(f"[CAT:{category}] Path: {decision_result.decision_path} | Decision: {decision}")
     
@@ -5908,7 +6098,8 @@ def api_forecast_category():
         'explanation': explanation,
         'decision_path': decision_result.decision_path,
         'next_action': next_action,
-        'explain_bullets': explain_bullets
+        'explain_bullets': explain_bullets,
+        'top_shortage_skus': top_shortage_skus
     })
 
 
@@ -6035,9 +6226,16 @@ def api_forecast_category_batch():
         )
         
         recommendation = decision_result.recommendation
+        final_qty = decision_result.purchase_qty
+        
+        # CONSISTENCY RULE: if purchase_qty <= 0, decision cannot be BUY_NOW
         if recommendation == 'BUY':
-            decision = 'BUY_NOW'
-            buy_now_count += 1
+            if final_qty > 0:
+                decision = 'BUY_NOW'
+                buy_now_count += 1
+            else:
+                decision = 'DO_NOT_BUY'
+                do_not_buy_count += 1
         elif recommendation == 'NO_BUY':
             decision = 'DO_NOT_BUY'
             do_not_buy_count += 1

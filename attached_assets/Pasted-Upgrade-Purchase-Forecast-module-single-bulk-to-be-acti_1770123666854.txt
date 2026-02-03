@@ -1,0 +1,97 @@
+Upgrade Purchase Forecast module (single + bulk) to be actionable, fast, and cross-linked with Alerts / Slow Stock / Category Dashboard.
+
+SCOPE
+- Files: templates/purchase_forecast_v2.html, app.py routes for purchase_forecast_v2 (single + bulk), any helper functions used by forecast.
+- Keep existing business rules unless explicitly adjusted below.
+- No ERP integration.
+
+A) FIX NAVIGATION + DEEP LINKS (MUST)
+1) Forecast Single:
+- The buttons "View in Alerts" and "View in Slow Stock" must open the target module WITH filters pre-applied for the same SKU (and category if available).
+- Use query params like ?sku=...&category=... and implement reading them in Alerts and Slow Stock routes (if not present).
+- Same for "View in Category Dashboard": open category dashboard prefiltered to the SKU’s category (and highlight SKU row if possible).
+
+2) Forecast Export:
+- Fix 404. Implement /forecast/export (single) and /forecast/bulk/export (bulk) routes.
+- Export to CSV or XLSX (preferred) with consistent columns (see section E).
+- Ensure route names match template url_for endpoints.
+
+B) FORECAST LOGIC CORRECTIONS (MUST)
+1) Stock Total in Forecast Single:
+- The “Total Stock (CD + Stores)” card must always equal (stock_cd + sum(store_stock)) for that SKU.
+- Ensure it uses latest store stock snapshot and latest CD snapshot consistently.
+- If store stock missing, show 0 but keep label accurate.
+
+2) Purchase Decision Consistency:
+- The top-right badge (“Buy / Don’t Buy”) must match the suggested purchase quantity.
+- Rule: if suggested_purchase_qty <= 0 => badge “NO BUY” and suggested_purchase_qty must display 0 (not positive).
+- If there is broken stock / breakage condition, allow “NO BUY” only if total_stock covers horizon demand AND breakage stores do not require redistribution (otherwise recommend redistribute, not buy).
+
+3) Use Macro Sales as Source of Demand:
+- Forecast must use Macro Sales table (the same used by distribution/alerts), not the old sales upload table.
+- If SKU has no macro sales, fall back to category-based baseline demand (median/mean of category weekly demand) and mark as “category fallback”.
+
+C) CATEGORY FORECAST (NEW / REQUIRED)
+Add a “Forecast by Category” section in the Forecast module:
+- Input: category selector + horizon weeks + service level (optional) + lead time weeks.
+- Output:
+  - Total category weekly demand (sum of SKU weekly demand in category)
+  - Total stock (CD + Stores) for category
+  - Recommended action mix:
+    1) “Redistribute” (if stock exists but concentrated / breakages)
+    2) “Buy” (if category total stock < horizon demand + safety)
+    3) “No action”
+- Provide a Top 10 list within category:
+  - SKUs with highest shortage risk (demand high, stock low, breakage)
+  - Each row has quick actions: “Open SKU Forecast”, “View Alerts”, “Send to Slow Stock” (if no-movement + stock).
+
+D) BULK FORECAST IMPROVEMENTS (MUST)
+- Bulk input: list of SKUs (upload file or textarea).
+- For each SKU produce:
+  sku, product_name, category, weekly_demand, horizon_demand, stock_cd, stock_stores, total_stock, suggested_purchase_qty, suggested_action (BUY/REDISTRIBUTE/NO_ACTION), reason_summary.
+- Must process ALL SKUs requested (no silent drop). If some fail, include them with status=ERROR and reason.
+
+E) OUTPUT COLUMNS STANDARD (EXPORT + TABLE)
+Standardize columns for single/bulk exports:
+- sku
+- product_name
+- category
+- weekly_demand
+- horizon_weeks
+- horizon_demand
+- lead_time_weeks
+- safety_stock_units
+- stock_cd
+- stock_stores
+- total_stock
+- suggested_purchase_qty
+- suggested_action
+- reason_code (short)
+- reason_detail (human-friendly)
+
+F) UI / VISUAL POLISH (FASTDSO STYLE)
+1) Replace the “Why this recommendation?” box with a proper explanation:
+- Show 3 bullets max:
+  - Demand basis (macro / category fallback)
+  - Stock situation (total vs horizon)
+  - Proposed action (buy/redistribute/no action) and why
+2) Add small pills for:
+- source: “MACRO” / “CATEGORY FALLBACK”
+- action: “BUY” / “REDISTRIBUTE” / “NO ACTION”
+3) Bulk results table:
+- Add pagination (10 per page) consistent with dashboard tables.
+- Add search by SKU/name.
+4) Keep performance:
+- Use aggregated queries, avoid per-SKU N+1 queries (prefetch stocks and demand for all SKUs in bulk mode).
+
+G) TESTS / QUICK VALIDATION (NO EXTERNAL DATA)
+- Add minimal unit-like checks or debug logs:
+  - total_stock == stock_cd + stock_stores
+  - if suggested_purchase_qty > 0 then badge != “NO BUY”
+- Ensure routes don’t crash when category is NULL.
+
+Deliverables:
+- Updated templates + routes + exports working.
+- All links functional and filtered.
+- Category forecast visible and usable.
+- No 404s.

@@ -164,6 +164,9 @@
       <a href="/slow_stock" class="btn fcv2-btn-outline" id="btnSlowStock">
         <i class="bi bi-clock-history me-1"></i>Ver Stock Lento
       </a>
+      <a href="/dashboard_category" class="btn fcv2-btn-outline d-none" id="btnCategoryDash">
+        <i class="bi bi-folder me-1"></i>Ver en Dashboard Categoría
+      </a>
       <a href="/rebalancing" class="btn fcv2-btn-warning d-none" id="btnRebalance">
         <i class="bi bi-arrow-left-right me-1"></i>Redistribuir SKU
       </a>
@@ -265,14 +268,24 @@
           <div class="fcv2-kpi-label">No Comprar</div>
         </div>
       </div>
+      <div class="fcv2-kpi fcv2-hidden" id="batchKpiErrorCard" style="background: linear-gradient(135deg, #64748b 0%, #475569 100%);">
+        <div class="fcv2-kpi-icon"><i class="bi bi-question-circle-fill"></i></div>
+        <div class="fcv2-kpi-body">
+          <div class="fcv2-kpi-value" id="batchKpiError">—</div>
+          <div class="fcv2-kpi-label">No Encontrados</div>
+        </div>
+      </div>
     </div>
 
     <div class="fcv2-results-card fcv2-hidden" id="batchResultsCard">
       <div class="fcv2-results-header">
         <span><i class="bi bi-table me-2"></i>Resultados del Batch</span>
-        <a href="#" class="btn fcv2-btn-outline-sm" id="btnBatchExport">
-          <i class="bi bi-download me-1"></i>Exportar
-        </a>
+        <div class="fcv2-results-actions">
+          <input type="text" id="batchSearchInput" class="form-control form-control-sm" placeholder="Buscar SKU o producto..." style="width: 200px; display: inline-block;">
+          <a href="#" class="btn fcv2-btn-outline-sm ms-2" id="btnBatchExport">
+            <i class="bi bi-download me-1"></i>Exportar
+          </a>
+        </div>
       </div>
       <div class="fcv2-results-body">
         <table class="fcv2-table" id="batchTable">
@@ -446,6 +459,31 @@
       <a href="#" class="btn fcv2-btn-warning" id="catBtnRebalance">
         <i class="bi bi-arrow-left-right me-1"></i>Redistribuir Categoría
       </a>
+    </div>
+
+    <div class="fcv2-results-card fcv2-hidden" id="catTopShortageSKUs">
+      <div class="fcv2-results-header">
+        <span><i class="bi bi-exclamation-triangle me-2"></i>Top 10 SKUs con Mayor Riesgo de Quiebre</span>
+      </div>
+      <div class="fcv2-results-body">
+        <table class="fcv2-table" id="catShortageTable">
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Producto</th>
+              <th>Dem. Sem.</th>
+              <th>Stock Total</th>
+              <th>WOC</th>
+              <th>Quiebre</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="catShortageTableBody"></tbody>
+        </table>
+        <div class="fcv2-shortage-empty d-none" id="catShortageEmpty">
+          <i class="bi bi-check-circle text-success me-2"></i>No hay SKUs con riesgo crítico en esta categoría
+        </div>
+      </div>
     </div>
 
     <div id="catEmptyState" class="fcv2-empty-state">
@@ -724,9 +762,15 @@ document.addEventListener('DOMContentLoaded', function() {
     kpiAvgLast4.textContent = kpis.avg_last4.toLocaleString();
     kpiForecastTotal.textContent = kpis.forecast_total.toLocaleString();
     kpiStockCD.textContent = kpis.stock_cd.toLocaleString();
-    kpiSuggested.textContent = kpis.suggested_purchase.toLocaleString();
     
-    const decision = data.decision || 'REVIEW';
+    const suggestedPurchase = kpis.suggested_purchase || 0;
+    kpiSuggested.textContent = Math.max(0, suggestedPurchase).toLocaleString();
+    
+    let decision = data.decision || 'REVIEW';
+    
+    if (suggestedPurchase <= 0 && decision === 'BUY_NOW') {
+      decision = 'DO_NOT_BUY';
+    }
     
     if (decision === 'BUY_NOW') {
       purchaseHint.textContent = 'Comprar ahora';
@@ -743,10 +787,30 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   }
 
+  function formatExplanationPills(text) {
+    const pillMap = {
+      '[MACRO]': '<span class="explain-pill explain-pill-source">MACRO</span>',
+      '[CATEGORY_FALLBACK]': '<span class="explain-pill explain-pill-source">CATEGORÍA</span>',
+      '[OK]': '<span class="explain-pill explain-pill-ok">OK</span>',
+      '[CRÍTICO]': '<span class="explain-pill explain-pill-critical">CRÍTICO</span>',
+      '[BAJO]': '<span class="explain-pill explain-pill-low">BAJO</span>',
+      '[ALTO]': '<span class="explain-pill explain-pill-high">ALTO</span>',
+      '[COMPRAR]': '<span class="explain-pill explain-pill-buy">COMPRAR</span>',
+      '[REDISTRIBUIR]': '<span class="explain-pill explain-pill-redistribute">REDISTRIBUIR</span>',
+      '[NO_COMPRAR]': '<span class="explain-pill explain-pill-nobuy">NO COMPRAR</span>',
+      '[ERROR]': '<span class="explain-pill explain-pill-error">ERROR</span>'
+    };
+    let result = text;
+    for (const [bracket, pill] of Object.entries(pillMap)) {
+      result = result.replace(bracket, pill);
+    }
+    return result;
+  }
+
   function updateExplainability(data) {
     const bullets = data.explain_bullets || [];
     if (bullets.length > 0) {
-      explainList.innerHTML = bullets.map(b => '<li>' + b + '</li>').join('');
+      explainList.innerHTML = bullets.map(b => '<li>' + formatExplanationPills(b) + '</li>').join('');
     } else {
       explainList.innerHTML = '<li class="fcv2-explain-empty"><i class="bi bi-info-circle me-2"></i>Sin información adicional</li>';
     }
@@ -772,6 +836,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function updateActionButtons(sku, data) {
     const encodedSku = encodeURIComponent(sku);
+    const category = data && data.category ? encodeURIComponent(data.category) : '';
     const exportParams = new URLSearchParams({
       sku: sku,
       store: storeSelect.value,
@@ -781,8 +846,24 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     
     document.getElementById('btnExport').href = '/forecast/export?' + exportParams.toString();
-    document.getElementById('btnAlerts').href = '/alerts?sku=' + encodedSku;
-    document.getElementById('btnSlowStock').href = '/slow_stock?sku_search=' + encodedSku;
+    
+    let alertsUrl = '/alerts?sku=' + encodedSku;
+    if (category) alertsUrl += '&category=' + category;
+    document.getElementById('btnAlerts').href = alertsUrl;
+    
+    let slowStockUrl = '/slow_stock?sku_search=' + encodedSku;
+    if (category) slowStockUrl += '&category=' + category;
+    document.getElementById('btnSlowStock').href = slowStockUrl;
+    
+    const btnCategoryDash = document.getElementById('btnCategoryDash');
+    if (btnCategoryDash) {
+      if (category) {
+        btnCategoryDash.classList.remove('d-none');
+        btnCategoryDash.href = '/dashboard_category?category=' + category + '&sku_highlight=' + encodedSku;
+      } else {
+        btnCategoryDash.classList.add('d-none');
+      }
+    }
     
     const btnRebalance = document.getElementById('btnRebalance');
     const brokenStockFlag = data && data.broken_stock_flag;
@@ -930,6 +1011,24 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 
   btnRunBatch.addEventListener('click', runBatchForecast);
+  
+  const batchSearchInput = document.getElementById('batchSearchInput');
+  batchSearchInput.addEventListener('input', function() {
+    const query = this.value.trim().toLowerCase();
+    if (!allBatchResults.length) return;
+    
+    if (!query) {
+      renderBatchTable(showOnlyBroken ? allBatchResults.filter(r => r.broken_stock_flag) : allBatchResults);
+      return;
+    }
+    
+    const filtered = allBatchResults.filter(r => {
+      const matchSku = (r.sku || '').toLowerCase().includes(query);
+      const matchName = (r.product_name || '').toLowerCase().includes(query);
+      return matchSku || matchName;
+    });
+    renderBatchTable(showOnlyBroken ? filtered.filter(r => r.broken_stock_flag) : filtered);
+  });
 
   function runBatchForecast() {
     const formData = new FormData();
@@ -975,6 +1074,15 @@ document.addEventListener('DOMContentLoaded', function() {
       document.getElementById('batchKpiBuyNow').textContent = data.buy_now_count;
       document.getElementById('batchKpiReview').textContent = data.review_count;
       document.getElementById('batchKpiDoNotBuy').textContent = data.do_not_buy_count;
+      
+      const errorCount = data.error_count || 0;
+      const errorCard = document.getElementById('batchKpiErrorCard');
+      if (errorCount > 0) {
+        document.getElementById('batchKpiError').textContent = errorCount;
+        errorCard.classList.remove('fcv2-hidden');
+      } else {
+        errorCard.classList.add('fcv2-hidden');
+      }
 
       document.getElementById('btnBatchExport').href = '/forecast/batch/export/' + data.batch_id;
 
@@ -1005,9 +1113,11 @@ document.addEventListener('DOMContentLoaded', function() {
     batchTableBody.innerHTML = '';
     results.forEach(r => {
       const decisionClass = r.decision === 'BUY_NOW' ? 'fcv2-badge-buy' : 
-                            r.decision === 'REVIEW' ? 'fcv2-badge-review' : 'fcv2-badge-nobuy';
+                            r.decision === 'REVIEW' ? 'fcv2-badge-review' : 
+                            r.decision === 'ERROR' ? 'fcv2-badge-error' : 'fcv2-badge-nobuy';
       const decisionLabel = r.decision === 'BUY_NOW' ? 'Comprar' : 
-                            r.decision === 'REVIEW' ? 'Revisar' : 'No Comprar';
+                            r.decision === 'REVIEW' ? 'Revisar' : 
+                            r.decision === 'ERROR' ? 'Error' : 'No Comprar';
       
       const brokenBadge = r.broken_stock_flag ? 
         '<span class="badge bg-warning text-dark ms-1" title="Tiendas con quiebre"><i class="bi bi-exclamation-triangle-fill"></i></span>' : '';
@@ -1037,7 +1147,7 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('modalSku').textContent = 'SKU: ' + item.sku;
     document.getElementById('modalProduct').textContent = item.product_name;
     const bullets = item.explain_bullets || [];
-    document.getElementById('modalExplainList').innerHTML = bullets.map(b => '<li>' + b + '</li>').join('');
+    document.getElementById('modalExplainList').innerHTML = bullets.map(b => '<li>' + formatExplanationPills(b) + '</li>').join('');
     
     const modal = new bootstrap.Modal(document.getElementById('explainModal'));
     modal.show();
@@ -1053,6 +1163,15 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         renderBatchTable(data.results);
         renderPagination(batchId, data.page, data.total_pages);
+        
+        const errorCount = data.error_count || 0;
+        const errorCard = document.getElementById('batchKpiErrorCard');
+        if (errorCount > 0) {
+          document.getElementById('batchKpiError').textContent = errorCount;
+          errorCard.classList.remove('fcv2-hidden');
+        } else {
+          errorCard.classList.add('fcv2-hidden');
+        }
       })
       .catch(err => console.error('Pagination error:', err));
   }
@@ -1176,7 +1295,7 @@ document.addEventListener('DOMContentLoaded', function() {
         catExplainList.innerHTML = '';
         data.explain_bullets.forEach(bullet => {
           const li = document.createElement('li');
-          li.textContent = bullet;
+          li.innerHTML = formatExplanationPills(bullet);
           catExplainList.appendChild(li);
         });
         
@@ -1185,6 +1304,49 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('catBtnSlowStock').href = '/slow_stock?category=' + encodeURIComponent(category);
         document.getElementById('catBtnAlerts').href = '/alerts?category=' + encodeURIComponent(category);
         document.getElementById('catBtnRebalance').href = '/rebalancing?category=' + encodeURIComponent(category);
+        
+        // Render Top 10 Shortage SKUs
+        const shortageCard = document.getElementById('catTopShortageSKUs');
+        const shortageTableBody = document.getElementById('catShortageTableBody');
+        const shortageEmpty = document.getElementById('catShortageEmpty');
+        const shortageTable = document.getElementById('catShortageTable');
+        
+        if (data.top_shortage_skus && data.top_shortage_skus.length > 0) {
+          shortageCard.classList.remove('fcv2-hidden');
+          shortageTable.classList.remove('d-none');
+          shortageEmpty.classList.add('d-none');
+          shortageTableBody.innerHTML = '';
+          
+          data.top_shortage_skus.forEach(sku => {
+            const tr = document.createElement('tr');
+            const breakageBadge = sku.has_breakage ? '<span class="badge bg-danger ms-1">QUIEBRE</span>' : '';
+            const wocClass = sku.woc < 2 ? 'text-danger fw-bold' : (sku.woc < 4 ? 'text-warning' : '');
+            tr.innerHTML = `
+              <td><strong>${sku.sku}</strong></td>
+              <td>${sku.product_name}</td>
+              <td>${sku.weekly_demand.toLocaleString()}</td>
+              <td>${sku.total_stock.toLocaleString()}</td>
+              <td class="${wocClass}">${sku.woc}</td>
+              <td>${breakageBadge || '<span class="text-muted">—</span>'}</td>
+              <td>
+                <a href="/purchase_forecast_v2?sku=${encodeURIComponent(sku.sku)}" class="btn btn-sm fcv2-btn-outline-sm me-1" title="Abrir Forecast SKU">
+                  <i class="bi bi-box"></i>
+                </a>
+                <a href="/alerts?sku=${encodeURIComponent(sku.sku)}" class="btn btn-sm fcv2-btn-outline-sm me-1" title="Ver Alertas">
+                  <i class="bi bi-bell"></i>
+                </a>
+                <a href="/slow_stock?sku_search=${encodeURIComponent(sku.sku)}" class="btn btn-sm fcv2-btn-outline-sm" title="Ver en Stock Lento">
+                  <i class="bi bi-clock-history"></i>
+                </a>
+              </td>
+            `;
+            shortageTableBody.appendChild(tr);
+          });
+        } else {
+          shortageCard.classList.remove('fcv2-hidden');
+          shortageTable.classList.add('d-none');
+          shortageEmpty.classList.remove('d-none');
+        }
       })
       .catch(err => {
         btnRunCat.disabled = false;
