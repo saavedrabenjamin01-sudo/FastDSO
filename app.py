@@ -9090,7 +9090,8 @@ def compute_rebalancing_suggestions(
     destination='one',
     category=None,
     top_n=None,
-    product_ids_filter=None
+    product_ids_filter=None,
+    include_held=False
 ):
     """
     Compute store-to-store rebalancing suggestions.
@@ -9176,10 +9177,27 @@ def compute_rebalancing_suggestions(
         sales_rate_map[(pid, sid)] = rate
         stores_per_product_sales[pid].add(sid)
     
+    held_product_ids = set()
     if target_product_ids:
-        product_info = {p.id: (p.sku, p.name, p.category) for p in Product.query.filter(Product.id.in_(target_product_ids)).all()}
+        products_q = Product.query.filter(Product.id.in_(target_product_ids)).all()
     else:
-        product_info = {p.id: (p.sku, p.name, p.category) for p in Product.query.all()}
+        products_q = Product.query.all()
+    
+    product_info = {}
+    for p in products_q:
+        if p.is_on_hold and not include_held:
+            held_product_ids.add(p.id)
+            continue
+        product_info[p.id] = (p.sku, p.name, p.category)
+    
+    if held_product_ids:
+        log_audit(
+            action='redistribution.held_skus_excluded',
+            status='success',
+            message=f'Excluded {len(held_product_ids)} held SKUs from redistribution',
+            metadata={'count': len(held_product_ids)}
+        )
+    
     store_info = {s.id: s.name for s in Store.query.all()}
     all_store_ids = list(store_info.keys())
     
@@ -9376,6 +9394,15 @@ def rebalancing():
         
         store_filter = request.form.get('store_filter', '').strip()
         simulate = request.form.get('simulate') == '1'
+        include_held = request.form.get('include_held') == '1' and current_user.role == 'Admin'
+        
+        if include_held:
+            log_audit(
+                action='redistribution.include_held_override',
+                status='success',
+                message=f'Admin {current_user.username} enabled include_held for redistribution',
+                metadata={'user': current_user.username}
+            )
         
         scope = request.form.get('scope', 'sku').strip()
         destination = request.form.get('destination', 'one').strip()
@@ -9406,7 +9433,8 @@ def rebalancing():
             scope=scope,
             destination=destination,
             category=category,
-            top_n=top_n
+            top_n=top_n,
+            include_held=include_held
         )
         
         run_id = str(uuid.uuid4())

@@ -165,6 +165,12 @@
                 <input type="checkbox" name="simulate" value="1" id="simulateCheck">
                 <span><i class="bi bi-lightning me-1"></i>Simular</span>
               </label>
+              {% if current_user.role == 'Admin' %}
+              <label class="rebal-simulate-check ms-2" title="Incluir SKUs bloqueados (en hold)">
+                <input type="checkbox" name="include_held" value="1">
+                <span><i class="bi bi-unlock me-1"></i>Incluir HOLD</span>
+              </label>
+              {% endif %}
               <button type="submit" class="btn btn-sm rebal-btn-primary">
                 <i class="bi bi-play-circle me-1"></i>Generar
               </button>
