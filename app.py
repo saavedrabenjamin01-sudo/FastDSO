@@ -8073,6 +8073,9 @@ def runs():
     per_page = request.args.get('per_page', 10, type=int)
     search = (request.args.get('search') or '').strip()
     run_type_filter = (request.args.get('run_type') or '').strip()
+    
+    open_approval = request.args.get('open_approval') == '1'
+    approval_run_id = request.args.get('run_id', '').strip()
 
     per_page = per_page if per_page in [10, 25, 50] else 10
 
@@ -8104,6 +8107,16 @@ def runs():
 
     pending_approvals = Run.query.filter_by(status='PENDING_APPROVAL').order_by(Run.submitted_at.desc()).all() if current_user.has_permission('runs:approve') else []
     pending_count = len(pending_approvals)
+    
+    approval_modal_data = None
+    if open_approval and approval_run_id and current_user.has_permission('runs:submit'):
+        approval_run = Run.query.filter_by(run_id=approval_run_id).first()
+        if approval_run and approval_run.status in ['DRAFT', 'completed'] and approval_run.run_type == 'distribution':
+            approval_modal_data = {
+                'run_id': approval_run_id,
+                'folio': approval_run.folio or approval_run_id[:8],
+                'summary': compute_run_summary(approval_run_id)
+            }
 
     return render_template(
         'runs.html',
@@ -8115,7 +8128,8 @@ def runs():
         pending_approvals=pending_approvals,
         pending_count=pending_count,
         can_approve=current_user.has_permission('runs:approve'),
-        can_submit=current_user.has_permission('runs:submit')
+        can_submit=current_user.has_permission('runs:submit'),
+        approval_modal_data=approval_modal_data
     )
 
 
@@ -8232,6 +8246,56 @@ def change_run_status(run_id):
     
     flash(f'Estado de corrida cambiado a {new_status}.', 'success')
     return redirect(url_for('runs'))
+
+
+# ------------------ Run Summary Computation ------------------
+def compute_run_summary(run_id):
+    """
+    Compute summary for a distribution run for approval modal.
+    Returns: {sku_count, total_units, top_skus, stores_count, category}
+    """
+    predictions = (
+        db.session.query(
+            Prediction.product_id,
+            Product.sku,
+            Product.name,
+            db.func.sum(Prediction.quantity).label('total_qty')
+        )
+        .join(Product, Prediction.product_id == Product.id)
+        .filter(Prediction.run_id == run_id)
+        .filter(Prediction.quantity > 0)
+        .group_by(Prediction.product_id, Product.sku, Product.name)
+        .order_by(db.func.sum(Prediction.quantity).desc())
+        .all()
+    )
+    
+    if not predictions:
+        return {
+            'sku_count': 0,
+            'total_units': 0,
+            'top_skus': [],
+            'stores_count': 0,
+            'category': None
+        }
+    
+    total_units = sum(p.total_qty for p in predictions)
+    top_skus = [{'sku': p.sku, 'name': p.name[:30] + '...' if len(p.name) > 30 else p.name, 'qty': p.total_qty} for p in predictions[:5]]
+    
+    stores_count = db.session.query(db.func.count(db.func.distinct(Prediction.store_id))).filter(
+        Prediction.run_id == run_id,
+        Prediction.quantity > 0
+    ).scalar() or 0
+    
+    run = Run.query.filter_by(run_id=run_id).first()
+    category = run.categoria if run else None
+    
+    return {
+        'sku_count': len(predictions),
+        'total_units': total_units,
+        'top_skus': top_skus,
+        'stores_count': stores_count,
+        'category': category
+    }
 
 
 # ------------------ Run Workflow: Submit for Approval ------------------

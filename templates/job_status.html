@@ -56,6 +56,12 @@
       if (window.updateLoaderProgress) window.updateLoaderProgress(100);
       setTimeout(function() {
         if (window.hideLoaderModal) window.hideLoaderModal();
+        
+        if (jobType === 'generate_distribution' && data.result && data.result.run_id) {
+          window.location.href = '/runs?open_approval=1&run_id=' + encodeURIComponent(data.result.run_id);
+          return;
+        }
+        
         document.getElementById('result-card').classList.remove('d-none');
         document.getElementById('success-section').classList.remove('d-none');
         document.getElementById('success-message').textContent = data.message || 'El proceso ha finalizado correctamente.';

@@ -350,6 +350,93 @@
 {% endfor %}
 {% endif %}
 
+{% if approval_modal_data %}
+<div class="modal fade" id="approvalModal" tabindex="-1" aria-labelledby="approvalModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header" style="background: linear-gradient(135deg, #0d6efd 0%, #0b5ed7 100%); color: white;">
+        <h5 class="modal-title" id="approvalModalLabel"><i class="bi bi-send-check"></i> Enviar a Autorización</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <form id="approvalForm" method="post" action="{{ url_for('submit_for_approval', run_id=approval_modal_data.run_id) }}">
+        <div class="modal-body">
+          <div class="approval-summary-card mb-4">
+            <div class="approval-summary-header">
+              <i class="bi bi-box-seam"></i> Resumen de Distribución
+              <span class="approval-folio">{{ approval_modal_data.folio }}</span>
+            </div>
+            <div class="approval-summary-grid">
+              <div class="approval-kpi">
+                <div class="approval-kpi-value">{{ approval_modal_data.summary.sku_count }}</div>
+                <div class="approval-kpi-label">SKUs</div>
+              </div>
+              <div class="approval-kpi">
+                <div class="approval-kpi-value">{{ "{:,}".format(approval_modal_data.summary.total_units) }}</div>
+                <div class="approval-kpi-label">Unidades</div>
+              </div>
+              <div class="approval-kpi">
+                <div class="approval-kpi-value">{{ approval_modal_data.summary.stores_count }}</div>
+                <div class="approval-kpi-label">Tiendas</div>
+              </div>
+              {% if approval_modal_data.summary.category %}
+              <div class="approval-kpi">
+                <div class="approval-kpi-value approval-kpi-cat">{{ approval_modal_data.summary.category }}</div>
+                <div class="approval-kpi-label">Categoría</div>
+              </div>
+              {% endif %}
+            </div>
+            {% if approval_modal_data.summary.top_skus %}
+            <div class="approval-top-skus">
+              <div class="approval-top-title"><i class="bi bi-trophy"></i> Top 5 SKUs por cantidad</div>
+              <table class="table table-sm table-borderless mb-0">
+                <tbody>
+                  {% for sku in approval_modal_data.summary.top_skus %}
+                  <tr>
+                    <td class="text-muted" style="width:30px;">{{ loop.index }}.</td>
+                    <td><code>{{ sku.sku }}</code></td>
+                    <td class="text-truncate" style="max-width:200px;">{{ sku.name }}</td>
+                    <td class="text-end fw-semibold">{{ sku.qty }} u</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            {% endif %}
+          </div>
+          
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Nivel de Urgencia</label>
+            <div class="urgency-selector">
+              <label class="urgency-option urgency-low">
+                <input type="radio" name="urgency" value="LOW">
+                <span class="urgency-label"><i class="bi bi-clock"></i> Bajo</span>
+              </label>
+              <label class="urgency-option urgency-medium">
+                <input type="radio" name="urgency" value="MEDIUM" checked>
+                <span class="urgency-label"><i class="bi bi-hourglass-split"></i> Medio</span>
+              </label>
+              <label class="urgency-option urgency-urgent">
+                <input type="radio" name="urgency" value="URGENT">
+                <span class="urgency-label"><i class="bi bi-exclamation-triangle"></i> Urgente</span>
+              </label>
+            </div>
+          </div>
+          
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Observaciones (opcional)</label>
+            <textarea name="submit_note" class="form-control" rows="3" placeholder="Añade notas o comentarios para el autorizador..."></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal"><i class="bi bi-x-lg"></i> Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="submitApprovalBtn"><i class="bi bi-send-check"></i> Enviar a Autorización</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <script>
 function updatePerPage(value) {
   const url = new URL(window.location.href);
@@ -357,6 +444,112 @@ function updatePerPage(value) {
   url.searchParams.set('page', 1);
   window.location.href = url.toString();
 }
+
+{% if approval_modal_data %}
+document.addEventListener('DOMContentLoaded', function() {
+  var approvalModal = new bootstrap.Modal(document.getElementById('approvalModal'));
+  approvalModal.show();
+  
+  var url = new URL(window.location.href);
+  url.searchParams.delete('open_approval');
+  url.searchParams.delete('run_id');
+  window.history.replaceState({}, document.title, url.toString());
+});
+{% endif %}
 </script>
+
+<style>
+.approval-summary-card {
+  background: #f8f9fa;
+  border-radius: 12px;
+  padding: 1rem;
+  border: 1px solid #e9ecef;
+}
+.approval-summary-header {
+  font-weight: 600;
+  font-size: 1rem;
+  color: #495057;
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.approval-folio {
+  margin-left: auto;
+  background: #0d6efd;
+  color: white;
+  padding: 0.2rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+.approval-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+.approval-kpi {
+  text-align: center;
+  background: white;
+  padding: 0.75rem;
+  border-radius: 8px;
+  border: 1px solid #dee2e6;
+}
+.approval-kpi-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #0d6efd;
+}
+.approval-kpi-value.approval-kpi-cat {
+  font-size: 0.9rem;
+  color: #6c757d;
+}
+.approval-kpi-label {
+  font-size: 0.75rem;
+  color: #6c757d;
+  text-transform: uppercase;
+}
+.approval-top-skus {
+  background: white;
+  border-radius: 8px;
+  padding: 0.75rem;
+  border: 1px solid #dee2e6;
+}
+.approval-top-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #495057;
+  margin-bottom: 0.5rem;
+}
+.urgency-selector {
+  display: flex;
+  gap: 0.75rem;
+}
+.urgency-option {
+  flex: 1;
+  cursor: pointer;
+}
+.urgency-option input {
+  display: none;
+}
+.urgency-label {
+  display: block;
+  text-align: center;
+  padding: 0.75rem;
+  border-radius: 8px;
+  border: 2px solid #dee2e6;
+  transition: all 0.2s;
+}
+.urgency-low .urgency-label { border-color: #198754; color: #198754; }
+.urgency-medium .urgency-label { border-color: #fd7e14; color: #fd7e14; }
+.urgency-urgent .urgency-label { border-color: #dc3545; color: #dc3545; }
+.urgency-option input:checked + .urgency-label {
+  color: white;
+  transform: scale(1.02);
+}
+.urgency-low input:checked + .urgency-label { background: #198754; }
+.urgency-medium input:checked + .urgency-label { background: #fd7e14; }
+.urgency-urgent input:checked + .urgency-label { background: #dc3545; }
+</style>
 
 {% endblock %}

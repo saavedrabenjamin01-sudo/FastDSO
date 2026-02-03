@@ -19,6 +19,8 @@ def test_routes():
             ('/alerts', 'Alerts'),
             ('/', 'Dashboard'),
             ('/rebalancing', 'Rebalancing'),
+            ('/runs', 'Runs Center'),
+            ('/runs?open_approval=1&run_id=test-nonexistent', 'Runs with approval param'),
         ]
         
         all_passed = True
