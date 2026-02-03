@@ -64,10 +64,13 @@ Do not make changes to the folder `Excel tipo/`.
     - **Kanban Board**: 5-column workflow (APPROVED → IN_PROGRESS → PACKED → DISPATCHED → CLOSED)
     - **Plan Cards**: Display folio, urgency (LOW/MEDIUM/URGENT), SKU/unit/store counts, assigned operator
     - **Status Transitions**: Take (claim plan), Pack, Dispatch, Close actions with activity logging
+    - **Priority Blocking**: URGENT folios must reach DISPATCHED before MEDIUM/LOW can be actioned; MEDIUM blocks LOW. Visual banner shows blocking status and buttons are disabled for blocked plans
+    - **Close with Exceptions**: Modal for uploading exception items (not shipped/damaged/missing) as Excel/CSV. Exception items are returned to CD as PROBLEM stock (not eligible for distribution)
     - **Plan Details**: Line-by-line view with pagination, commercial/warehouse notes, activity timeline
     - **Picking Export**: Excel export with SKU, product, store, quantity preserving leading zeros
     - **Permissions**: `planner:view` for viewing, `planner:operate` for status changes (Admin/WarehouseOps only)
-    - **Models**: DistributionPlan, DistributionPlanLine, PlanActivityLog
+    - **Models**: DistributionPlan (with closed_by, exceptions_count, exceptions_file_name), DistributionPlanLine, PlanActivityLog
+    - **Problem Stock**: StockCD has quality_status (OK/PROBLEM) field; PROBLEM stock excluded from distribution but visible in Stock Query with badge
 - **Run Approval Workflow**: Multi-step authorization process for distribution runs:
     - **Workflow Statuses**: DRAFT → PENDING_APPROVAL → APPROVED/REJECTED
     - **Submit for Authorization**: CategoryManager can submit with urgency level (LOW/MEDIUM/URGENT) and observation note
