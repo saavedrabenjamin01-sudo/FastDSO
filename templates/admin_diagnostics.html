@@ -1,0 +1,206 @@
+{% extends 'base.html' %}
+{% block title %}Diagnósticos de Datos - FastDSO{% endblock %}
+{% block page_title %}Diagnósticos de Datos{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+  <div class="row mb-4">
+    <div class="col-12">
+      <div class="alert alert-info">
+        <i class="bi bi-info-circle me-2"></i>
+        Esta página muestra estadísticas de las fuentes de datos cargadas y la fecha de análisis calculada.
+      </div>
+    </div>
+  </div>
+
+  <div class="row mb-4">
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header bg-primary text-white">
+          <h6 class="mb-0"><i class="bi bi-graph-up me-2"></i>Ventas Macro (SalesWeeklyAgg)</h6>
+        </div>
+        <div class="card-body">
+          {% if diagnostics.macro_sales.has_data %}
+          <table class="table table-sm table-borderless mb-0">
+            <tr>
+              <td class="text-muted">Total registros:</td>
+              <td class="text-end fw-bold">{{ diagnostics.macro_sales.total_rows | default(0) | format_number }}</td>
+            </tr>
+            <tr>
+              <td class="text-muted">Fecha mínima:</td>
+              <td class="text-end">{{ diagnostics.macro_sales.min_week_start }}</td>
+            </tr>
+            <tr>
+              <td class="text-muted">Fecha máxima:</td>
+              <td class="text-end">{{ diagnostics.macro_sales.max_week_start }}</td>
+            </tr>
+            <tr>
+              <td class="text-muted">SKUs distintos:</td>
+              <td class="text-end">{{ diagnostics.macro_sales.distinct_skus | format_number }}</td>
+            </tr>
+            <tr>
+              <td class="text-muted">Tiendas distintas:</td>
+              <td class="text-end">{{ diagnostics.macro_sales.distinct_stores | format_number }}</td>
+            </tr>
+          </table>
+          {% else %}
+          <div class="text-center text-muted py-3">
+            <i class="bi bi-exclamation-triangle text-warning fs-3"></i>
+            <p class="mt-2 mb-0">Sin datos de ventas macro cargados</p>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header bg-success text-white">
+          <h6 class="mb-0"><i class="bi bi-shop me-2"></i>Stock Tiendas (StockSnapshot)</h6>
+        </div>
+        <div class="card-body">
+          {% if diagnostics.store_stock.total_rows > 0 %}
+          <table class="table table-sm table-borderless mb-0">
+            <tr>
+              <td class="text-muted">Total registros:</td>
+              <td class="text-end fw-bold">{{ diagnostics.store_stock.total_rows | format_number }}</td>
+            </tr>
+            <tr>
+              <td class="text-muted">Fecha mínima:</td>
+              <td class="text-end">{{ diagnostics.store_stock.min_date }}</td>
+            </tr>
+            <tr>
+              <td class="text-muted">Fecha máxima:</td>
+              <td class="text-end">{{ diagnostics.store_stock.max_date }}</td>
+            </tr>
+            <tr>
+              <td class="text-muted">SKUs distintos:</td>
+              <td class="text-end">{{ diagnostics.store_stock.distinct_skus | format_number }}</td>
+            </tr>
+            <tr>
+              <td class="text-muted">Tiendas distintas:</td>
+              <td class="text-end">{{ diagnostics.store_stock.distinct_stores | format_number }}</td>
+            </tr>
+          </table>
+          {% else %}
+          <div class="text-center text-muted py-3">
+            <i class="bi bi-exclamation-triangle text-warning fs-3"></i>
+            <p class="mt-2 mb-0">Sin datos de stock tiendas cargados</p>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header bg-warning text-dark">
+          <h6 class="mb-0"><i class="bi bi-box-seam me-2"></i>Stock CD (StockCD)</h6>
+        </div>
+        <div class="card-body">
+          {% if diagnostics.cd_stock.total_rows > 0 %}
+          <table class="table table-sm table-borderless mb-0">
+            <tr>
+              <td class="text-muted">Total registros:</td>
+              <td class="text-end fw-bold">{{ diagnostics.cd_stock.total_rows | format_number }}</td>
+            </tr>
+            <tr>
+              <td class="text-muted">Fecha mínima:</td>
+              <td class="text-end">{{ diagnostics.cd_stock.min_date }}</td>
+            </tr>
+            <tr>
+              <td class="text-muted">Fecha máxima:</td>
+              <td class="text-end">{{ diagnostics.cd_stock.max_date }}</td>
+            </tr>
+            <tr>
+              <td class="text-muted">SKUs distintos:</td>
+              <td class="text-end">{{ diagnostics.cd_stock.distinct_skus | format_number }}</td>
+            </tr>
+          </table>
+          {% else %}
+          <div class="text-center text-muted py-3">
+            <i class="bi bi-exclamation-triangle text-warning fs-3"></i>
+            <p class="mt-2 mb-0">Sin datos de stock CD cargados</p>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row mb-4">
+    <div class="col-md-6">
+      <div class="card">
+        <div class="card-header">
+          <h6 class="mb-0"><i class="bi bi-calendar-check me-2"></i>Fecha de Análisis Calculada</h6>
+        </div>
+        <div class="card-body">
+          <div class="d-flex align-items-center">
+            <div class="display-6 text-primary me-3">{{ diagnostics.analysis_end_date }}</div>
+            <div class="text-muted">
+              Esta fecha se usa como referencia para calcular ventanas de ventas en módulos como Redistribución, Stock Lento y Salud de Tiendas.
+            </div>
+          </div>
+          {% if diagnostics.macro_sales.has_data %}
+          <div class="alert alert-success mt-3 mb-0">
+            <i class="bi bi-check-circle me-2"></i>
+            Fecha basada en max(SalesWeeklyAgg.week_start) + 6 días
+          </div>
+          {% else %}
+          <div class="alert alert-warning mt-3 mb-0">
+            <i class="bi bi-exclamation-triangle me-2"></i>
+            Sin datos macro - usando fecha de hoy como fallback
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-6">
+      <div class="card">
+        <div class="card-header">
+          <h6 class="mb-0"><i class="bi bi-list-check me-2"></i>Muestra de Datos (Top 5 por Ventas)</h6>
+        </div>
+        <div class="card-body">
+          {% if diagnostics.sample_sales %}
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>SKU</th>
+                <th>Tienda</th>
+                <th class="text-end">Unidades</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for s in diagnostics.sample_sales %}
+              <tr>
+                <td><code>{{ s.sku }}</code></td>
+                <td>{{ s.store }}</td>
+                <td class="text-end">{{ s.units | format_number }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          {% else %}
+          <div class="text-center text-muted py-3">
+            <i class="bi bi-database-slash fs-3"></i>
+            <p class="mt-2 mb-0">Sin datos de muestra disponibles</p>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-12">
+      <a href="{{ url_for('admin_users') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left me-1"></i>Volver a Usuarios
+      </a>
+      <a href="{{ url_for('dashboard') }}" class="btn btn-outline-primary ms-2">
+        <i class="bi bi-house me-1"></i>Ir al Dashboard
+      </a>
+    </div>
+  </div>
+</div>
+{% endblock %}

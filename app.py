@@ -8820,6 +8820,75 @@ def admin_reset_password(user_id):
     return redirect(url_for('admin_users'))
 
 
+@app.route('/admin/diagnostics')
+@login_required
+@require_permission('admin:users')
+def admin_diagnostics():
+    """
+    Admin diagnostics page showing data source statistics.
+    Displays counts and date ranges for critical tables.
+    """
+    # Macro Sales (SalesWeeklyAgg)
+    macro_stats = get_macro_sales_stats()
+    
+    # Stock Store Snapshots
+    store_stock_count = db.session.query(db.func.count(StockSnapshot.id)).scalar() or 0
+    store_stock_min_date = db.session.query(db.func.min(StockSnapshot.as_of_date)).scalar()
+    store_stock_max_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
+    store_stock_skus = db.session.query(db.func.count(db.func.distinct(StockSnapshot.product_id))).scalar() or 0
+    store_stock_stores = db.session.query(db.func.count(db.func.distinct(StockSnapshot.store_id))).scalar() or 0
+    
+    # Stock CD Snapshots
+    cd_stock_count = db.session.query(db.func.count(StockCD.id)).scalar() or 0
+    cd_stock_min_date = db.session.query(db.func.min(StockCD.as_of_date)).scalar()
+    cd_stock_max_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar()
+    cd_stock_skus = db.session.query(db.func.count(db.func.distinct(StockCD.product_id))).scalar() or 0
+    
+    # Computed analysis end date
+    analysis_end = get_analysis_end_date()
+    
+    # Sample data check - get a sample SKU to show
+    sample_sales = None
+    if macro_stats['has_data']:
+        sample = db.session.query(
+            SalesWeeklyAgg.product_id,
+            Product.sku,
+            SalesWeeklyAgg.store_id,
+            Store.name,
+            db.func.sum(SalesWeeklyAgg.units).label('total_units')
+        ).join(Product, SalesWeeklyAgg.product_id == Product.id
+        ).join(Store, SalesWeeklyAgg.store_id == Store.id
+        ).group_by(SalesWeeklyAgg.product_id, Product.sku, SalesWeeklyAgg.store_id, Store.name
+        ).order_by(db.desc('total_units')
+        ).limit(5).all()
+        
+        sample_sales = [
+            {'sku': s.sku, 'store': s.name, 'units': s.total_units}
+            for s in sample
+        ]
+    
+    diagnostics = {
+        'macro_sales': macro_stats,
+        'store_stock': {
+            'total_rows': store_stock_count,
+            'min_date': store_stock_min_date,
+            'max_date': store_stock_max_date,
+            'distinct_skus': store_stock_skus,
+            'distinct_stores': store_stock_stores
+        },
+        'cd_stock': {
+            'total_rows': cd_stock_count,
+            'min_date': cd_stock_min_date,
+            'max_date': cd_stock_max_date,
+            'distinct_skus': cd_stock_skus
+        },
+        'analysis_end_date': analysis_end,
+        'sample_sales': sample_sales
+    }
+    
+    return render_template('admin_diagnostics.html', diagnostics=diagnostics)
+
+
 # ======================================================
 # AUDIT TRAIL
 # ======================================================
@@ -8904,6 +8973,105 @@ def get_category_list():
     return [c[0] for c in categories]
 
 
+def get_macro_sales_stats():
+    """
+    Get statistics about macro sales data (SalesWeeklyAgg).
+    Returns dict with counts and date ranges.
+    """
+    total_rows = db.session.query(db.func.count(SalesWeeklyAgg.id)).scalar() or 0
+    if total_rows == 0:
+        return {
+            'total_rows': 0,
+            'min_week_start': None,
+            'max_week_start': None,
+            'distinct_skus': 0,
+            'distinct_stores': 0,
+            'has_data': False
+        }
+    
+    min_week = db.session.query(db.func.min(SalesWeeklyAgg.week_start)).scalar()
+    max_week = db.session.query(db.func.max(SalesWeeklyAgg.week_start)).scalar()
+    distinct_skus = db.session.query(db.func.count(db.func.distinct(SalesWeeklyAgg.product_id))).scalar() or 0
+    distinct_stores = db.session.query(db.func.count(db.func.distinct(SalesWeeklyAgg.store_id))).scalar() or 0
+    
+    return {
+        'total_rows': total_rows,
+        'min_week_start': min_week,
+        'max_week_start': max_week,
+        'distinct_skus': distinct_skus,
+        'distinct_stores': distinct_stores,
+        'has_data': total_rows > 0
+    }
+
+
+def get_analysis_end_date():
+    """
+    Get the canonical end date for sales analysis.
+    Uses max(SalesWeeklyAgg.week_start) if available, else falls back to today.
+    This ensures analysis windows align with actual loaded data.
+    """
+    macro_max = db.session.query(db.func.max(SalesWeeklyAgg.week_start)).scalar()
+    if macro_max:
+        # Add 6 days to get end of that week
+        return macro_max + timedelta(days=6)
+    return date.today()
+
+
+def get_weekly_sales(product_id=None, store_id=None, weeks=4, end_date=None, category=None):
+    """
+    Unified weekly sales data retrieval from SalesWeeklyAgg (Macro Sales).
+    
+    Args:
+        product_id: Filter to specific product (optional)
+        store_id: Filter to specific store (optional)
+        weeks: Number of weeks to look back (default 4)
+        end_date: Analysis end date (default: get_analysis_end_date())
+        category: Filter to specific category (optional)
+    
+    Returns:
+        List of dicts with product_id, store_id, week_start, units, and computed weekly_rate.
+        Or aggregated dict if product_id and store_id are both specified.
+    """
+    if end_date is None:
+        end_date = get_analysis_end_date()
+    
+    # Compute window start (Monday of N weeks ago)
+    window_start = end_date - timedelta(weeks=weeks)
+    window_start = window_start - timedelta(days=window_start.weekday())
+    
+    query = db.session.query(
+        SalesWeeklyAgg.product_id,
+        SalesWeeklyAgg.store_id,
+        db.func.sum(SalesWeeklyAgg.units).label('total_units'),
+        db.func.count(db.func.distinct(SalesWeeklyAgg.week_start)).label('weeks_count')
+    ).filter(
+        SalesWeeklyAgg.week_start >= window_start,
+        SalesWeeklyAgg.week_start <= end_date
+    )
+    
+    if product_id is not None:
+        query = query.filter(SalesWeeklyAgg.product_id == product_id)
+    if store_id is not None:
+        query = query.filter(SalesWeeklyAgg.store_id == store_id)
+    if category:
+        query = query.filter(SalesWeeklyAgg.category == category)
+    
+    query = query.group_by(SalesWeeklyAgg.product_id, SalesWeeklyAgg.store_id)
+    
+    results = []
+    for row in query.all():
+        weekly_rate = row.total_units / max(row.weeks_count, 1) if row.weeks_count else 0
+        results.append({
+            'product_id': row.product_id,
+            'store_id': row.store_id,
+            'total_units': row.total_units,
+            'weeks_count': row.weeks_count,
+            'weekly_rate': weekly_rate
+        })
+    
+    return results
+
+
 def fetch_category_skus(category, top_n=None, weeks_window=4):
     """
     Fetch SKUs for a category, optionally limited to Top N by total demand.
@@ -8913,8 +9081,8 @@ def fetch_category_skus(category, top_n=None, weeks_window=4):
     if not category:
         return []
     
-    today = date.today()
-    window_start = today - timedelta(days=weeks_window * 7)
+    analysis_end = get_analysis_end_date()
+    window_start = analysis_end - timedelta(days=weeks_window * 7)
     window_start = window_start - timedelta(days=window_start.weekday())
     
     product_ids = [p.id for p in Product.query.filter(Product.category == category).all()]
@@ -8953,8 +9121,8 @@ def compute_blended_demand(product_id, store_id, weeks_window=4, category=None):
     Uses SalesWeeklyAgg as the single source of truth.
     Returns demand_weekly (float).
     """
-    today = date.today()
-    window_start = today - timedelta(days=weeks_window * 7)
+    analysis_end = get_analysis_end_date()
+    window_start = analysis_end - timedelta(days=weeks_window * 7)
     window_start = window_start - timedelta(days=window_start.weekday())
     
     sku_sales = (
@@ -9144,11 +9312,12 @@ def compute_rebalancing_suggestions(
     
     alerts_logger.info(f"Redistribution: {len(alert_sources)} OVERSTOCK sources, {len(alert_destinations)} BREAKAGE destinations from alerts")
     
-    today = date.today()
-    window_start_week = today - timedelta(days=weeks_window * 7)
+    # Use analysis end date from macro sales instead of today to align with loaded data
+    analysis_end = get_analysis_end_date()
+    window_start_week = analysis_end - timedelta(days=weeks_window * 7)
     window_start_week = window_start_week - timedelta(days=window_start_week.weekday())
     
-    app.logger.info(f"Redistribution using SalesWeeklyAgg from {window_start_week} to {today}, scope={scope}, destination={destination}")
+    app.logger.info(f"Redistribution using SalesWeeklyAgg from {window_start_week} to {analysis_end}, scope={scope}, destination={destination}")
     
     if scope == 'category' and category:
         target_product_ids = fetch_category_skus(category, top_n, weeks_window)
@@ -10708,7 +10877,8 @@ def compute_slow_stock_analysis(params=None):
     alert_eligible_skus = get_slow_stock_eligible_skus()
     alerts_logger.info(f"Slow Stock Analysis: {len(alert_eligible_skus)} SKUs eligible via NO_MOVEMENT alerts")
     
-    today = date.today()
+    # Use analysis end date from macro sales instead of today
+    analysis_end = get_analysis_end_date()
     
     # Get latest stock snapshots
     latest_store_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
@@ -10739,10 +10909,10 @@ def compute_slow_stock_analysis(params=None):
     
     # Compute sales rates from SalesWeeklyAgg (Macro Sales)
     recent_window = params['RECENT_WINDOW_WEEKS']
-    window_start_week = today - timedelta(weeks=recent_window)
+    window_start_week = analysis_end - timedelta(weeks=recent_window)
     window_start_week = window_start_week - timedelta(days=window_start_week.weekday())
     
-    app.logger.info(f"Slow Stock using SalesWeeklyAgg from {window_start_week} to {today}")
+    app.logger.info(f"Slow Stock using SalesWeeklyAgg from {window_start_week} to {analysis_end}")
     
     # Sales rate per SKU-store from SalesWeeklyAgg
     sales_query = db.session.query(
@@ -11940,12 +12110,13 @@ def compute_store_health_index(weights=None, sku_scope='core', category_filter=N
         return {'error': 'Sin tiendas o productos registrados', 'stores': []}
     
     # Build SKU scope based on selected mode
-    today = date.today()
+    # Use analysis end date from macro sales instead of today
+    analysis_end = get_analysis_end_date()
     scope_window_days = 90
     scope_runs_count = 5
     
     # Get SKUs with global sales in last N days - prefer SalesWeeklyAgg (macro layer) if available
-    sales_cutoff = today - timedelta(days=scope_window_days)
+    sales_cutoff = analysis_end - timedelta(days=scope_window_days)
     skus_with_sales = set()
     
     macro_count = db.session.query(func.count(SalesWeeklyAgg.id)).scalar() or 0
@@ -12063,9 +12234,11 @@ def compute_store_health_index(weights=None, sku_scope='core', category_filter=N
             store_stock[ss.store_id] = {}
         store_stock[ss.store_id][ss.product_id] = ss.quantity
     
-    today = date.today()
-    cutoff_week = today - timedelta(weeks=time_window)
+    # Use analysis_end (already set above) for sales window
+    cutoff_week = analysis_end - timedelta(weeks=time_window)
     cutoff_week = cutoff_week - timedelta(days=cutoff_week.weekday())
+    
+    app.logger.info(f"Store Health using SalesWeeklyAgg from {cutoff_week} to {analysis_end}")
     
     sales_base_query = db.session.query(
         SalesWeeklyAgg.store_id,

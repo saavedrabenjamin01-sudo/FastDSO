@@ -1,0 +1,56 @@
+Multiple modules (Rebalancing, Store Health, Slow/Dead Stock) are behaving as if Macro Sales has no data:
+- Store Health says all stores healthy AND “no sales” even though Macro Sales was loaded.
+- Slow Stock shows no suggestions.
+- Rebalancing breaks / returns 0 suggestions.
+
+This strongly suggests modules are reading the wrong sales table or the weekly aggregation table is empty/out-of-sync.
+
+Please do the following, in this exact order, without changing business logic yet (only data sourcing & correctness):
+
+1) Identify the canonical macro sales table/model used by the “Ventas Macro” upload (e.g., MacroSale / MacroSales / SalesMacro).
+   - Confirm which columns exist: sku, store, date, quantity, category, DUV, DUC.
+   - Add a small helper query in app.py that prints:
+     - total rows in MacroSales
+     - min(date), max(date)
+     - distinct sku count
+     - distinct store count
+
+2) Identify whether SalesWeeklyAgg is:
+   a) populated on macro upload, or
+   b) populated lazily elsewhere, or
+   c) not used consistently.
+   Add debug prints:
+     - total rows in SalesWeeklyAgg
+     - min(week_start), max(week_start)
+     - sample rows for a known sku+store
+
+3) Unify data sourcing:
+   Create ONE function (e.g., get_weekly_sales(sku, store=None, weeks=N, end_date=today)) that returns weekly units from Macro Sales (or SalesWeeklyAgg if it is populated and consistent).
+   Then refactor these modules to ONLY use this function:
+     - store_health
+     - slow_stock
+     - rebalancing
+     - alerts
+     - forecast (if it relies on macro)
+
+4) Fix “no sales” false negatives:
+   Ensure the end_date used is max(macro_sales.date) (latest loaded macro date), not datetime.utcnow() blindly.
+   Example:
+     macro_end = db.session.query(func.max(MacroSales.date)).scalar()
+     analysis_end = macro_end or date.today()
+
+5) Add a lightweight diagnostics page for admins (/admin/diagnostics):
+   Show counts and date ranges for:
+     - MacroSales
+     - SalesWeeklyAgg
+     - StockStoreSnapshot
+     - StockCDSnapshot
+   And show the computed analysis_end date.
+   This page must be fast and protected by admin permission.
+
+6) After changes, verify with 2 checks:
+   - Store Health: should no longer say “no sales” if MacroSales has rows.
+   - Slow Stock: should show at least some results when there is aged inventory.
+   - Rebalancing: should produce suggestions when there is sales + stock imbalance.
+
+Do NOT change scoring thresholds, WOC rules, or ranking logic yet. Only fix data source consistency and analysis_end date selection.
