@@ -117,6 +117,18 @@ db = SQLAlchemy(app)  # ✅ si en tu proyecto aún no existe db más abajo
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
+# ------------------ Jinja Filters ------------------
+def format_number(value):
+    try:
+        return f"{int(value):,}".replace(",", ".")
+    except Exception:
+        try:
+            return f"{float(value):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        except Exception:
+            return value
+
+app.jinja_env.filters["format_number"] = format_number
+
 # ------------------ Global AJAX Error Handler ------------------
 from werkzeug.exceptions import HTTPException
 
