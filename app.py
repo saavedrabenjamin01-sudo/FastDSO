@@ -9640,6 +9640,9 @@ def rebalancing():
         by_destination[dest]['units'] += s.get('qty', 0)
         by_destination[dest]['items'].append(s)
     
+    # Pre-sort destinations by units (descending) to avoid Jinja dictsort on dict values
+    sorted_dests = sorted(by_destination.items(), key=lambda kv: kv[1].get('units', 0), reverse=True)
+    
     return render_template(
         'rebalancing.html',
         stores=stores,
@@ -9647,6 +9650,7 @@ def rebalancing():
         suggestions=suggestions_page,
         all_suggestions=suggestions,
         by_destination=by_destination,
+        sorted_dests=sorted_dests,
         sug_pagination=sug_pagination,
         kpis=kpis,
         run_info=run_info,

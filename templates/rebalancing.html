@@ -503,7 +503,6 @@
         <div class="rebal-summary-block">
           <h6><i class="bi bi-shop-window me-2"></i>Top Tiendas Destino</h6>
           <ul class="rebal-summary-list">
-            {% set sorted_dests = by_destination | dictsort(false, 'value', reverse=true) %}
             {% for dest, data in sorted_dests[:5] %}
             <li>
               <span class="badge-receiver">{{ dest }}</span>
