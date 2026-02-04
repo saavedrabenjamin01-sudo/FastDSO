@@ -51,6 +51,8 @@ Do not make changes to the folder `Excel tipo/`.
 - **In-app Alerts Module**: Proactive alerts for conditions such as projected stockouts, overstock, silent SKUs, and broken stock.
 - **Explainability Layer**: Provides transparent explanations for distribution and forecast suggestions.
 - **Macro Sales Layer**: Offers full catalog visibility through the `SalesWeeklyAgg` model for aggregated weekly sales.
+- **Data Sourcing Consistency**: All analysis modules (Rebalancing, Slow Stock, Store Health) use `get_analysis_end_date()` to derive the analysis window from `max(SalesWeeklyAgg.week_start)` instead of `date.today()`, ensuring alignment with loaded data.
+- **Admin Diagnostics**: `/admin/diagnostics` page displays data source statistics (counts, date ranges) for MacroSales, StockSnapshot, and StockCD tables.
 - **SKU Lifecycle Layer**: Tracks global and store-level last sale dates for faster alert computation.
 - **Category-Based Cold Start**: Provides distribution suggestions for new SKUs using category sales data.
 - **Dashboard por Categoría**: An executive dashboard for category-level analytics.
