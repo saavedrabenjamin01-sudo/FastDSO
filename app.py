@@ -9275,9 +9275,10 @@ def compute_rebalancing_suggestions(
                 alerts_logger.info(f"[{sku_str}] Redistribution: BREAKAGE alert adds receiver store_id={sd['store_id']}")
         def receiver_sort_key(x):
             p = x.get('priority')
+            sid = x.get('store_id', 0)
             if isinstance(p, tuple):
-                return (float(p[0]) if p[0] is not None else 0.0, float(p[1]) if len(p) > 1 and p[1] is not None else 0.0)
-            return (float(p) if p is not None else 0.0, 0.0)
+                return (float(p[0]) if p[0] is not None else 0.0, float(p[1]) if len(p) > 1 and p[1] is not None else 0.0, sid)
+            return (float(p) if p is not None else 0.0, 0.0, sid)
         receivers.sort(key=receiver_sort_key, reverse=True)
         
         donors = []
@@ -9301,7 +9302,8 @@ def compute_rebalancing_suggestions(
             p = x.get('priority')
             if p is None:
                 p = x.get('give', 0)
-            return float(p) if p is not None else 0.0
+            sid = x.get('store_id', 0)
+            return (float(p) if p is not None else 0.0, sid)
         donors.sort(key=donor_sort_key, reverse=True)
         
         for receiver in receivers:
@@ -9368,7 +9370,10 @@ def compute_rebalancing_suggestions(
     
     def suggestion_sort_key(x):
         score = x.get('score')
-        return float(score) if score is not None else 0.0
+        pid = x.get('product_id', 0)
+        from_sid = x.get('from_store_id', 0)
+        to_sid = x.get('to_store_id', 0)
+        return (float(score) if score is not None else 0.0, pid, from_sid, to_sid)
     suggestions.sort(key=suggestion_sort_key, reverse=True)
     return suggestions
 
