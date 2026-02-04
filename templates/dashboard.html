@@ -342,6 +342,70 @@
   </div>
 </div>
 
+{# Approval Modal - shown after distribution generation #}
+<div class="modal fade" id="approvalModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-primary text-white">
+        <h5 class="modal-title"><i class="bi bi-send-check me-2"></i>Enviar a Autorización</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <form method="POST" action="" id="approvalForm">
+        <div class="modal-body">
+          <div class="alert alert-success mb-3">
+            <i class="bi bi-check-circle me-2"></i>
+            <strong>Distribución generada exitosamente</strong>
+            <div class="small mt-1 text-muted" id="modalRunId">ID: {{ request.args.get('modal_run_id', '')[:8] if request.args.get('modal_run_id') else '' }}...</div>
+          </div>
+          
+          <div class="row mb-3 text-center">
+            <div class="col-4">
+              <div class="border rounded p-2">
+                <div class="fs-4 fw-bold text-primary" id="modalUnits">{{ request.args.get('modal_units', 0)|int|format_number if request.args.get('modal_units') else '0' }}</div>
+                <div class="small text-muted">Unidades</div>
+              </div>
+            </div>
+            <div class="col-4">
+              <div class="border rounded p-2">
+                <div class="fs-4 fw-bold text-primary" id="modalSkus">{{ request.args.get('modal_skus', 0) }}</div>
+                <div class="small text-muted">SKUs</div>
+              </div>
+            </div>
+            <div class="col-4">
+              <div class="border rounded p-2">
+                <div class="fs-4 fw-bold text-primary" id="modalStores">{{ request.args.get('modal_stores', 0) }}</div>
+                <div class="small text-muted">Tiendas</div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Urgencia</label>
+            <select class="form-select" name="urgency" required>
+              <option value="LOW">Baja</option>
+              <option value="MEDIUM" selected>Media</option>
+              <option value="URGENT">Urgente</option>
+            </select>
+          </div>
+          
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Comentario (opcional)</label>
+            <textarea class="form-control" name="submit_note" rows="2" placeholder="Notas para el aprobador..."></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
+            <i class="bi bi-clock me-1"></i>No ahora
+          </button>
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-send me-1"></i>Enviar a autorización
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 {# Plotly CDN #}
 <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
 
@@ -354,10 +418,41 @@ function updateParam(param, value, resetPageParam) {
 }
 
 let explainModal = null;
+let approvalModal = null;
+
 document.addEventListener('DOMContentLoaded', function() {
   const modalEl = document.getElementById('explainModal');
   if (modalEl && typeof bootstrap !== 'undefined') {
     explainModal = new bootstrap.Modal(modalEl);
+  }
+  
+  // Initialize approval modal
+  const approvalModalEl = document.getElementById('approvalModal');
+  if (approvalModalEl && typeof bootstrap !== 'undefined') {
+    approvalModal = new bootstrap.Modal(approvalModalEl);
+    
+    // Auto-open if approval_modal query param is set
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('approval_modal') === '1') {
+      const modalRunId = urlParams.get('modal_run_id') || '';
+      
+      // Set form action dynamically
+      const approvalForm = document.getElementById('approvalForm');
+      if (approvalForm && modalRunId) {
+        approvalForm.action = '/runs/' + modalRunId + '/submit_for_approval';
+      }
+      
+      approvalModal.show();
+      
+      // Clean URL after showing modal
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete('approval_modal');
+      cleanUrl.searchParams.delete('modal_run_id');
+      cleanUrl.searchParams.delete('modal_units');
+      cleanUrl.searchParams.delete('modal_skus');
+      cleanUrl.searchParams.delete('modal_stores');
+      window.history.replaceState({}, '', cleanUrl.toString());
+    }
   }
   
   // Build charts from page data

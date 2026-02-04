@@ -7177,15 +7177,26 @@ def upload():
             
             msg = f'Distribución generada: {n_preds} predicciones para {len(sku_list)} SKUs ({total_units:,} unidades)'
             
+            num_stores = db.session.query(func.count(func.distinct(Prediction.store_id))).filter(
+                Prediction.run_id == run_id,
+                Prediction.quantity > 0
+            ).scalar() or 0
+            num_skus = db.session.query(func.count(func.distinct(Prediction.product_id))).filter(
+                Prediction.run_id == run_id,
+                Prediction.quantity > 0
+            ).scalar() or 0
+            
             if is_ajax:
                 return jsonify({
                     'ok': True,
                     'message': msg,
                     'category': 'success',
-                    'redirect_url': url_for('dashboard')
+                    'redirect_url': url_for('dashboard', approval_modal=1, modal_run_id=run_id, 
+                                           modal_units=total_units, modal_skus=num_skus, modal_stores=num_stores)
                 })
             flash(msg, 'success')
-            return redirect(url_for('dashboard'))
+            return redirect(url_for('dashboard', approval_modal=1, modal_run_id=run_id,
+                                   modal_units=total_units, modal_skus=num_skus, modal_stores=num_stores))
             
         except Exception as e:
             db.session.rollback()
@@ -9250,7 +9261,12 @@ def compute_rebalancing_suggestions(
                     'alert_flagged': True
                 })
                 alerts_logger.info(f"[{sku_str}] Redistribution: BREAKAGE alert adds receiver store_id={sd['store_id']}")
-        receivers.sort(key=lambda x: x['priority'], reverse=True)
+        def receiver_sort_key(x):
+            p = x.get('priority')
+            if isinstance(p, tuple):
+                return (float(p[0]) if p[0] is not None else 0.0, float(p[1]) if len(p) > 1 and p[1] is not None else 0.0)
+            return (float(p) if p is not None else 0.0, 0.0)
+        receivers.sort(key=receiver_sort_key, reverse=True)
         
         donors = []
         for sd in store_data:
@@ -9269,7 +9285,12 @@ def compute_rebalancing_suggestions(
                     })
                     if is_overstock_source:
                         alerts_logger.info(f"[{sku_str}] Redistribution: OVERSTOCK alert adds donor store_id={sd['store_id']}")
-        donors.sort(key=lambda x: x.get('priority', x['give']), reverse=True)
+        def donor_sort_key(x):
+            p = x.get('priority')
+            if p is None:
+                p = x.get('give', 0)
+            return float(p) if p is not None else 0.0
+        donors.sort(key=donor_sort_key, reverse=True)
         
         for receiver in receivers:
             if destination == 'one' and store_filter and store_info.get(receiver['store_id']) != store_filter:
@@ -9333,7 +9354,10 @@ def compute_rebalancing_suggestions(
         if len(suggestions) >= REBALANCING_MAX_ROWS:
             break
     
-    suggestions.sort(key=lambda x: x['score'], reverse=True)
+    def suggestion_sort_key(x):
+        score = x.get('score')
+        return float(score) if score is not None else 0.0
+    suggestions.sort(key=suggestion_sort_key, reverse=True)
     return suggestions
 
 
@@ -12153,31 +12177,43 @@ def compute_store_health_index(weights=None, sku_scope='core', category_filter=N
         
         suggestions = []
         if break_rate > 10 or len(break_skus) >= 3:
+            action_params = f'dest_store={store.name}'
+            if category_filter:
+                action_params += f'&category={category_filter}'
+            action_params += '&mode=auto'
             suggestions.append({
                 'type': 'REPLENISH',
                 'priority': 1,
                 'title': 'Reabastecer / Distribuir',
                 'description': f'{len(break_skus)} SKUs sin stock con demanda activa',
                 'skus': break_skus[:5],
-                'action_url': f'/forecast?store={sid}' + (f'&category={category_filter}' if category_filter else '')
+                'action_url': f'/rebalancing?{action_params}'
             })
         if overstock_rate > 15 or len(overstock_skus) >= 5:
+            action_params = f'from_store={store.name}'
+            if category_filter:
+                action_params += f'&category={category_filter}'
+            action_params += '&mode=auto'
             suggestions.append({
                 'type': 'REDISTRIBUTE',
                 'priority': 2,
                 'title': 'Redistribuir (tienda donante)',
                 'description': f'{len(overstock_skus)} SKUs con sobrestock',
                 'skus': overstock_skus[:5],
-                'action_url': f'/rebalancing?from_store={sid}' + (f'&category={category_filter}' if category_filter else '')
+                'action_url': f'/rebalancing?{action_params}'
             })
         if no_movement_rate > 20 or len(no_movement_skus) >= 10:
+            action_params = f'store={store.name}'
+            if category_filter:
+                action_params += f'&category={category_filter}'
+            action_params += '&flag=no_movement'
             suggestions.append({
                 'type': 'SLOW_STOCK',
                 'priority': 3,
                 'title': 'Revisar stock sin movimiento',
                 'description': f'{len(no_movement_skus)} SKUs con stock pero sin ventas',
                 'skus': no_movement_skus[:10],
-                'action_url': f'/slow_stock?store={sid}' + (f'&category={category_filter}' if category_filter else '')
+                'action_url': f'/slow_stock?{action_params}'
             })
         
         suggestions.sort(key=lambda x: x['priority'])

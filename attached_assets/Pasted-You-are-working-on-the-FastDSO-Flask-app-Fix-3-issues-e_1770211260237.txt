@@ -1,0 +1,105 @@
+You are working on the FastDSO Flask app. Fix 3 issues end-to-end (backend + templates) without breaking existing flows.
+
+========================
+(1) REDISTRIBUTION CRASH: TypeError: '<' not supported between instances of 'dict' and 'dict'
+========================
+This happens when generating redistribution suggestions and also when other modules call redistribution.
+
+Root cause: somewhere in the redistribution pipeline you are sorting or comparing dictionaries directly (e.g. sorted(list_of_dicts) or min/max over dict items) which is illegal in Python 3. Fix by sorting using an explicit key function and never comparing dicts.
+
+Actions:
+- Search for any "sorted(" or ".sort(" or "min(" or "max(" in the redistribution logic that operates on dict objects (likely lists like suggestions/rows/candidates).
+- Replace with explicit sort keys. Examples:
+  - sorted(rows, key=lambda r: (r.get("priority", 0), r.get("sku",""), r.get("store","")))
+  - sorted(candidates, key=lambda c: float(c.get("score", 0.0)), reverse=True)
+- Ensure all dict fields used in sort are scalar (int/float/str). Convert safely:
+  - safe_int = int(x) if x not in (None,"") else 0
+  - safe_float similarly
+- Add a guard to avoid None types in keys.
+
+Add minimal debug logging (behind a flag):
+- In redistribution route, log sizes and the first 3 items of the list BEFORE sorting (but do not crash).
+- If there is a "reason" object stored as dict, do not sort by it directly; extract a scalar reason_code string.
+
+Deliverable:
+- After fix, generating a redistribution suggestion must work without TypeError.
+- Any module calling redistribution must not crash.
+
+========================
+(2) STORE HEALTH ACTIONS: Not Found + missing filtering
+========================
+Two problems:
+- Some action buttons link to endpoints that don't exist (Not Found).
+- "Review no-movement stock" links to Stock Lento but does not pass any filter so user lands on generic page.
+
+Actions:
+- In store_health template and routes, ensure all action buttons point to valid endpoints:
+  - If the intended endpoint is 'rebalancing' or 'rebalancing_page', use url_for with the correct name (check app.py for actual function name).
+  - If the intended endpoint is 'stock_slow'/'stock_lento', ensure url_for matches the real endpoint.
+- Add query parameters so actions open the correct context:
+  - For "Review no-movement stock": link to stock slow module with prefilled filters:
+    - category (if available)
+    - store (if available)
+    - reason=NO_MOVEMENT
+  Example: url_for('stock_slow', store=store_name, category=category, flag='no_movement')
+- For "Replenish/Distribute" action: link to redistribution module with params:
+  - dest_store=the store in context
+  - category=category in context
+  - mode='auto'
+  Example: url_for('rebalancing', dest_store=store_name, category=category, mode='auto')
+
+Deliverable:
+- Clicking any suggested action from Store Health must never 404.
+- "Review stock no movement" must land on Stock Lento already filtered.
+- "Redistribute" must open redistribution module with destination store & category prefilled.
+
+========================
+(3) DISTRIBUTION GENERATOR: Must show Authorization popup immediately after generation
+========================
+Current behavior: it silently sends the request to Centro de Corridas. We need an immediate UI popup after distribution is generated, asking to send for approval with urgency + comment.
+
+Required behavior:
+- User generates distribution (run created in DB).
+- Immediately after completion, show a Bootstrap modal ("Send for approval") with:
+  - urgency (low/medium/urgent)
+  - comment textarea
+  - read-only summary (folio/run_id, total units, #skus, #stores)
+  - CTA button: "Send for approval"
+  - Secondary: "Not now"
+
+Implementation approach:
+- On successful POST that creates the distribution run:
+  - Do NOT redirect straight to dashboard without context.
+  - Redirect to dashboard with a query flag like ?approval_modal=1&run_id=<id>
+  OR render dashboard directly with context variable show_approval_modal=True and modal_run_id.
+- In dashboard.html:
+  - Add the modal markup once.
+  - On page load, if show_approval_modal (or approval_modal query param), auto-open modal via JS.
+- Create a POST endpoint (e.g. /runs/<run_id>/request-approval) that:
+  - stores urgency + comment in DistributionRun (or ApprovalRequest table if exists)
+  - sets run.status = 'PENDING_APPROVAL'
+  - writes to audit trail
+  - flashes success
+  - redirects back to runs center or dashboard.
+
+Also:
+- Ensure summary numbers come from DB for that run:
+  - total units (SUM prediction.quantity where run_id)
+  - skus count (COUNT DISTINCT product_id where quantity>0)
+  - stores count (COUNT DISTINCT store_id where quantity>0)
+- Only include quantity>0.
+
+Deliverable:
+- After generating distribution, the approval modal must open automatically every time.
+- Submitting it updates run.status and appears in Centro de Corridas as pending approval.
+
+========================
+Constraints
+========================
+- Do not change business logic of forecasting/distribution besides fixing the dict sort crash.
+- Keep existing templates and routes working.
+- Use existing Bootstrap 5.
+- Ensure all links are correct with url_for using actual endpoint names.
+- Provide final changed files list and brief notes.
+
+Now implement these fixes.
