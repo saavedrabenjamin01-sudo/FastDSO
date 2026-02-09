@@ -54,7 +54,7 @@ Do not make changes to the folder `Excel tipo/`.
 - **Data Sourcing Consistency**: All analysis modules (Rebalancing, Slow Stock, Store Health) use `get_analysis_end_date()` to derive the analysis window from `max(SalesWeeklyAgg.week_start)` instead of `date.today()`, ensuring alignment with loaded data.
 - **Admin Diagnostics**: `/admin/diagnostics` page displays data source statistics (counts, date ranges) for MacroSales, StockSnapshot, and StockCD tables.
 - **SKU Lifecycle Layer**: Tracks global and store-level last sale dates for faster alert computation.
-- **Category-Based Cold Start**: Provides distribution suggestions for new SKUs using category sales data.
+- **Category-Based Cold Start**: Provides distribution suggestions for new SKUs using category sales data. The upload flow always proceeds to generation (no dead-end). A `/generate_from_pending` CTA route handles pending SKUs from session. Category is always updated from request files (normalized whitespace).
 - **Dashboard por Categoría**: An executive dashboard for category-level analytics.
 
 ## External Dependencies
