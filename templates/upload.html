@@ -121,9 +121,17 @@
     <div class="col-12 col-lg-4">
       {% if pending_skus and pending_skus|length > 0 %}
       <div class="upload-sidecard border-warning">
-        <div class="upload-sidecard-title text-warning"><i class="bi bi-hourglass-split me-2"></i>SKUs pendientes</div>
-        <p class="small text-muted mb-2">Se han cargado {{ pending_skus|length }} SKUs para distribución.</p>
-        <p class="small mb-0">El siguiente paso generará distribución desde ventas macro.</p>
+        <div class="upload-sidecard-title text-warning"><i class="bi bi-box-arrow-right me-2"></i>SKUs listos para generar</div>
+        <p class="small text-muted mb-2">{{ pending_skus|length }} SKU(s) cargados. Modelo: <strong>{{ pending_mode or 'sma3_min3' }}</strong></p>
+        {% if pending_meta and pending_meta.get('folio') %}
+        <p class="small text-muted mb-2">Folio: {{ pending_meta.get('folio') }}</p>
+        {% endif %}
+        <form method="POST" action="{{ url_for('generate_from_pending') }}" id="pendingGenForm">
+          <button type="submit" class="btn btn-warning btn-sm w-100 fw-bold" id="btnGeneratePending">
+            <i class="bi bi-play-fill me-1"></i>Generar distribución ahora ({{ pending_skus|length }} SKUs)
+          </button>
+        </form>
+        <p class="small text-muted mt-2 mb-0">SKUs nuevos sin historial usarán cold start por categoría.</p>
       </div>
       {% endif %}
 

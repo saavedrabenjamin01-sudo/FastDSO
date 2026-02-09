@@ -1,0 +1,43 @@
+You are working on FastDSO (Flask + SQLAlchemy). The Distribution Generator now shows:
+"Pending SKUs... loaded 1 SKU(s). Next step will generate distribution from macro sales."
+This did not appear before, and for NEW SKUs (no sales history) it should generate a distribution using category-weighted macro sales (cold_start_category), but currently it does not.
+
+TASK: Fix the Distribution Generator end-to-end so that NEW SKUs always produce distribution via cold_start_category, even in the new "pending SKUs" two-step flow.
+
+Acceptance criteria:
+1) When uploading a Distribution Request with a SKU that has no MacroSales history, the system must STILL generate predictions in the same run, using category-based store ranking (cold_start_category) and stock constraints.
+2) The UI must not stop at "pending SKUs" without generating. Either auto-run generation after upload or present an explicit "Generate distribution now" CTA that works.
+3) The generated run must be linked to DistributionRun/run_id and appear in Dashboard/Runs normally.
+4) Logging: print a short debug summary for the request: SKUs total, SKUs sales-based, SKUs cold_start_category, SKUs skipped (and why).
+5) Do NOT require store/date/qty columns in the Distribution Request. The request only contains sku, product_name, category (optional but strongly recommended).
+
+Implementation details:
+A) Locate the Distribution Request upload route (formerly sales upload) and the two-step "pending SKUs" flow. Identify where request SKUs are stored (session/table). Identify where distribution generation actually happens.
+B) Ensure category is available for each request SKU:
+   - If category is provided in the request file, normalize it (strip, collapse spaces) and persist it:
+     - If Product model has category, update product.category.
+     - If not, store category alongside the request SKU in a request table/session.
+   - If category is missing, mark SKU as skipped with reason NO_CATEGORY (do not crash).
+C) In the generation step, for each SKU:
+   - Determine if MacroSales has sku-level sales in the chosen horizon (e.g., last N weeks).
+     - If yes => use existing SMA model logic.
+     - If no => cold_start_category:
+         1) Build store ranking by category using MacroSales totals (or recent window) at store level for that category.
+         2) Allocate minimal units per eligible store (min_fill) respecting CD stock and store max WOC/target WOC logic.
+         3) Default top N stores for cold start should be configurable; use TOP_N_COLD_START=20.
+D) IMPORTANT: If the request contains ONLY 1 new SKU, the result must still produce predictions > 0 (as long as CD stock > 0).
+E) Fix the UI message:
+   - Replace the ambiguous "Next step will generate..." with either:
+     - automatic redirect to generation endpoint, OR
+     - show a clear button "Generate distribution now" and a small summary (SKU count, model).
+F) Add a small admin/debug endpoint or console logs to confirm cold start usage.
+
+Deliverables:
+1) Code changes (routes + generation logic) implementing the above.
+2) Update the template for Distribution Generator so the flow is clear (no dead end).
+3) Add debug logs showing how many SKUs used cold_start_category vs sales-based.
+
+After implementing, run a quick local test:
+- MacroSales loaded with a category that exists (e.g., "Consolas").
+- Distribution request with one NEW SKU category="Consolas" and CD stock available.
+- Confirm predictions are created and appear in dashboard/runs, and logs show cold_start_category=1.

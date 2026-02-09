@@ -1230,7 +1230,7 @@ def generate_predictions(
     
     if categories_in_scope:
         from datetime import timedelta
-        cutoff_date = date.today() - timedelta(weeks=12)
+        cutoff_date = get_analysis_end_date() - timedelta(weeks=12)
         cat_agg = (
             db.session.query(
                 SalesWeeklyAgg.category,
@@ -1605,7 +1605,8 @@ def generate_predictions(
             .all()
         )
         
-        cold_start_window = date.today() - timedelta(weeks=COLD_START_WINDOW_WEEKS)
+        cold_start_end_legacy = get_analysis_end_date()
+        cold_start_window = cold_start_end_legacy - timedelta(weeks=COLD_START_WINDOW_WEEKS)
         
         category_store_rates = defaultdict(lambda: defaultdict(float))
         cat_agg_query = (
@@ -1966,7 +1967,7 @@ def generate_predictions_from_macro(
     
     if categories_in_scope:
         from datetime import timedelta
-        cutoff_date = date.today() - timedelta(weeks=12)
+        cutoff_date = get_analysis_end_date() - timedelta(weeks=12)
         cat_agg = (
             db.session.query(
                 SalesWeeklyAgg.category,
@@ -2266,7 +2267,8 @@ def generate_predictions_from_macro(
     COLD_START_WINDOW_WEEKS = 12
     MAX_CAT_WOC = 6.0
     
-    cold_start_window = date.today() - timedelta(weeks=COLD_START_WINDOW_WEEKS)
+    cold_start_end = get_analysis_end_date()
+    cold_start_window = cold_start_end - timedelta(weeks=COLD_START_WINDOW_WEEKS)
     
     cold_start_candidates = []
     cold_start_no_category = []
@@ -7126,8 +7128,8 @@ def upload():
                         if not product.name or product.name == sku_val:
                             product.name = str(row['product_name']).strip()
                     if has_category and pd.notna(row.get('category')) and str(row['category']).strip():
-                        cat_val = str(row['category']).strip()
-                        if cat_val not in ['', 'nan', 'None', 'NaN'] and not product.category:
+                        cat_val = ' '.join(str(row['category']).strip().split())
+                        if cat_val not in ['', 'nan', 'None', 'NaN']:
                             product.category = cat_val
                 else:
                     new_prod = Product(sku=sku_val)
@@ -7136,7 +7138,7 @@ def upload():
                     else:
                         new_prod.name = sku_val
                     if has_category and pd.notna(row.get('category')) and str(row['category']).strip():
-                        cat_val = str(row['category']).strip()
+                        cat_val = ' '.join(str(row['category']).strip().split())
                         if cat_val not in ['', 'nan', 'None', 'NaN']:
                             new_prod.category = cat_val
                     db.session.add(new_prod)
@@ -7154,21 +7156,29 @@ def upload():
             
             macro_count = db.session.query(func.count(SalesWeeklyAgg.id)).scalar() or 0
             if macro_count == 0:
-                session['distribution_request_skus'] = sku_list
-                session['distribution_request_mode'] = analysis_mode
-                session['distribution_request_meta'] = meta
-                
-                msg = f'Archivo cargado: {len(sku_list)} SKUs. No hay ventas macro cargadas. Carga ventas macro primero.'
-                
-                if is_ajax:
-                    return jsonify({
-                        'ok': True,
-                        'message': msg,
-                        'category': 'warning',
-                        'redirect_url': url_for('upload')
-                    })
-                flash(msg, 'warning')
-                return redirect(url_for('upload'))
+                print(f"[DISTRIBUTION WARNING] No macro sales loaded. Cold start will not work without category sales data.")
+            
+            print(f"[DISTRIBUTION REQUEST] === UPLOAD SUMMARY ===")
+            print(f"[DISTRIBUTION REQUEST] SKUs total: {len(sku_list)}")
+            skus_with_macro = set()
+            skus_cold_start = set()
+            skus_no_category = set()
+            for s in sku_list:
+                prod = Product.query.filter_by(sku=s).first()
+                if not prod:
+                    continue
+                has_macro = db.session.query(SalesWeeklyAgg.id).filter(SalesWeeklyAgg.product_id == prod.id).first() is not None
+                if has_macro:
+                    skus_with_macro.add(s)
+                elif prod.category and prod.category.strip():
+                    skus_cold_start.add(s)
+                else:
+                    skus_no_category.add(s)
+            print(f"[DISTRIBUTION REQUEST] SKUs sales-based: {len(skus_with_macro)}")
+            print(f"[DISTRIBUTION REQUEST] SKUs cold_start_category: {len(skus_cold_start)}")
+            print(f"[DISTRIBUTION REQUEST] SKUs skipped (no category): {len(skus_no_category)}")
+            if skus_no_category:
+                print(f"[DISTRIBUTION REQUEST] Skipped SKUs: {list(skus_no_category)[:10]}")
             
             run_id, n_preds, total_units = generate_predictions_from_macro(
                 scope_skus=sku_list,
@@ -7222,7 +7232,77 @@ def upload():
             return redirect(url_for('upload'))
 
     pending_skus = session.get('distribution_request_skus', [])
-    return render_template('upload.html', require_stock_confirm=require_stock_confirm, pending_skus=pending_skus)
+    pending_mode = session.get('distribution_request_mode', 'sma3_min3')
+    pending_meta = session.get('distribution_request_meta', {})
+    return render_template('upload.html', require_stock_confirm=require_stock_confirm, 
+                           pending_skus=pending_skus, pending_mode=pending_mode, pending_meta=pending_meta)
+
+
+@app.route('/generate_from_pending', methods=['POST'])
+@login_required
+@require_permission('sales:upload')
+def generate_from_pending():
+    """Generate distribution from pending SKUs stored in session."""
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+    
+    sku_list = session.get('distribution_request_skus', [])
+    analysis_mode = session.get('distribution_request_mode', 'sma3_min3')
+    meta = session.get('distribution_request_meta', {})
+    
+    if not sku_list:
+        if is_ajax:
+            return jsonify({'ok': False, 'message': 'No hay SKUs pendientes para generar.', 'category': 'warning'}), 400
+        flash('No hay SKUs pendientes para generar.', 'warning')
+        return redirect(url_for('upload'))
+    
+    user_id = current_user.id if current_user.is_authenticated else None
+    
+    print(f"[DISTRIBUTION REQUEST] === GENERATE FROM PENDING ===")
+    print(f"[DISTRIBUTION REQUEST] SKUs total: {len(sku_list)}")
+    print(f"[DISTRIBUTION REQUEST] Mode: {analysis_mode}")
+    
+    try:
+        run_id, n_preds, total_units = generate_predictions_from_macro(
+            scope_skus=sku_list,
+            mode=analysis_mode,
+            meta=meta,
+            user_id=user_id,
+            include_held=False
+        )
+        
+        session.pop('distribution_request_skus', None)
+        session.pop('distribution_request_mode', None)
+        session.pop('distribution_request_meta', None)
+        
+        msg = f'Distribución generada: {n_preds} predicciones para {len(sku_list)} SKUs ({total_units:,} unidades)'
+        
+        num_stores = db.session.query(func.count(func.distinct(Prediction.store_id))).filter(
+            Prediction.run_id == run_id,
+            Prediction.quantity > 0
+        ).scalar() or 0
+        num_skus = db.session.query(func.count(func.distinct(Prediction.product_id))).filter(
+            Prediction.run_id == run_id,
+            Prediction.quantity > 0
+        ).scalar() or 0
+        
+        if is_ajax:
+            return jsonify({
+                'ok': True,
+                'message': msg,
+                'category': 'success',
+                'redirect_url': url_for('dashboard', approval_modal=1, modal_run_id=run_id,
+                                       modal_units=total_units, modal_skus=num_skus, modal_stores=num_stores)
+            })
+        flash(msg, 'success')
+        return redirect(url_for('dashboard', approval_modal=1, modal_run_id=run_id,
+                               modal_units=total_units, modal_skus=num_skus, modal_stores=num_stores))
+    
+    except Exception as e:
+        db.session.rollback()
+        if is_ajax:
+            return jsonify({'ok': False, 'message': f'Error generando distribución: {str(e)[:200]}', 'category': 'danger'}), 400
+        flash(f'Error generando distribución: {str(e)[:200]}', 'danger')
+        return redirect(url_for('upload'))
 
 
 @app.route('/sales_macro_upload', methods=['GET', 'POST'])
