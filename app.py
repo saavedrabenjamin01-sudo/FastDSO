@@ -2243,35 +2243,20 @@ def generate_predictions_from_macro(
     skus_with_predictions = {it['sku'] for it in final_preds if it.get('suggested', 0) > 0}
     skus_without_macro_sales = scope_skus_set - skus_with_sales_estimation
     
-    latest_stock_date_for_sku_check = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
-    skus_with_any_store_stock = set()
-    if latest_stock_date_for_sku_check:
-        store_stock_by_sku = (
-            db.session.query(StockSnapshot.product_id, func.sum(StockSnapshot.quantity))
-            .filter(StockSnapshot.as_of_date == latest_stock_date_for_sku_check)
-            .filter(StockSnapshot.product_id.in_(product_ids))
-            .group_by(StockSnapshot.product_id)
-            .all()
-        )
-        pid_to_sku = {p.id: sku for sku, p in product_map.items()}
-        for pid, total_stock in store_stock_by_sku:
-            if total_stock and total_stock > 0:
-                sku_val = pid_to_sku.get(pid)
-                if sku_val:
-                    skus_with_any_store_stock.add(sku_val)
-    
-    skus_eligible_for_cold_start = skus_without_macro_sales - skus_with_any_store_stock
+    skus_eligible_for_cold_start = skus_without_macro_sales
     
     COLD_START_MIN_FILL = 2
     COLD_START_TOP_STORES = 20
     COLD_START_WINDOW_WEEKS = 12
     MAX_CAT_WOC = 6.0
+    COLD_START_TARGET_WOC = 2.0
     
     cold_start_end = get_analysis_end_date()
     cold_start_window = cold_start_end - timedelta(weeks=COLD_START_WINDOW_WEEKS)
     
     cold_start_candidates = []
     cold_start_no_category = []
+    cold_start_store_skips = defaultdict(int)
     
     if skus_eligible_for_cold_start:
         import math
@@ -2360,44 +2345,65 @@ def generate_predictions_from_macro(
             eligible_stores = []
             for store_id, cat_sales_rate in cat_rates.items():
                 if cat_sales_rate <= 0:
+                    cold_start_store_skips['NO_CAT_RATE'] += 1
                     continue
                 store_stock = store_stock_map.get((prod.id, store_id), 0)
-                if store_stock > 0:
+                target_units = math.ceil(cat_sales_rate * COLD_START_TARGET_WOC)
+                need = max(target_units - store_stock, 0)
+                if need <= 0:
+                    cold_start_store_skips['STOCK_COVERS'] += 1
                     continue
                 cat_stock = cat_stock_by_store.get(store_id, 0)
                 cat_woc = cat_stock / max(cat_sales_rate, 1)
                 if cat_woc > MAX_CAT_WOC:
+                    cold_start_store_skips['AT_CAT_TARGET'] += 1
                     continue
-                eligible_stores.append((store_id, cat_sales_rate))
+                eligible_stores.append((store_id, cat_sales_rate, store_stock, need))
             
             top_stores = sorted(eligible_stores, key=lambda x: x[1], reverse=True)[:COLD_START_TOP_STORES]
             
             if not top_stores:
+                cold_start_no_category.append({
+                    "sku": sku,
+                    "product_id": prod.id,
+                    "reason": "NO_ELIGIBLE_STORES"
+                })
                 continue
             
             available_cd = cd_remaining_after_base.get(prod.id, cd_stock.get(prod.id))
             if available_cd is None or available_cd <= 0:
+                cold_start_no_category.append({
+                    "sku": sku,
+                    "product_id": prod.id,
+                    "reason": "NO_CD_STOCK"
+                })
                 continue
             
             budget = int(available_cd)
             n_stores = len(top_stores)
             
             store_list = []
-            for store_id, cat_sales_rate in top_stores:
-                rate = cat_sales_rate
-                max_alloc_woc = math.ceil(MAX_WOC_CAP * rate) if rate > 0 else COLD_START_MIN_FILL
-                max_cap = min(max_alloc_woc, MAX_UNITS_PER_STORE_EVENT)
+            for store_id, cat_sales_rate, current_stock, need in top_stores:
+                effective_cap = min(need, MAX_UNITS_PER_STORE_EVENT)
+                if effective_cap <= 0:
+                    continue
                 store_list.append({
                     'store_id': store_id,
                     'cat_sales_rate': cat_sales_rate,
-                    'max_cap': max_cap,
+                    'max_cap': effective_cap,
+                    'current_stock': current_stock,
+                    'need': need,
                     'allocated': 0
                 })
+            
+            if not store_list:
+                continue
             
             for s in store_list:
                 if budget <= 0:
                     break
-                give = min(COLD_START_MIN_FILL, s['max_cap'], budget)
+                min_give = min(COLD_START_MIN_FILL, s['max_cap'])
+                give = min(min_give, budget)
                 s['allocated'] = give
                 budget -= give
             
@@ -2411,16 +2417,17 @@ def generate_predictions_from_macro(
                         s['allocated'] += give
                         budget -= give
             
-            for _ in range(n_stores):
+            n_stores_final = len(store_list)
+            for _ in range(n_stores_final):
                 changed = False
-                for i in range(n_stores - 1):
+                for i in range(n_stores_final - 1):
                     hi = store_list[i]
                     lo = store_list[i + 1]
                     if hi['allocated'] < lo['allocated']:
                         diff = lo['allocated'] - hi['allocated']
                         room_hi = hi['max_cap'] - hi['allocated']
                         if room_hi > 0:
-                            transfer = min(diff, room_hi, lo['allocated'] - COLD_START_MIN_FILL) if lo['allocated'] > COLD_START_MIN_FILL else 0
+                            transfer = min(diff, room_hi, lo['allocated'] - 1) if lo['allocated'] > 1 else 0
                             if transfer > 0:
                                 hi['allocated'] += transfer
                                 lo['allocated'] -= transfer
@@ -2446,7 +2453,8 @@ def generate_predictions_from_macro(
                         "suggested": suggested,
                         "model_name": f"COLD_START_CATEGORY ({category})",
                         "category": category,
-                        "cat_sales_rate": s['cat_sales_rate']
+                        "cat_sales_rate": s['cat_sales_rate'],
+                        "stock_store_used": s['current_stock'],
                     })
             
             cd_remaining_after_base[prod.id] = max(int(available_cd) - total_allocated, 0)
@@ -2464,9 +2472,13 @@ def generate_predictions_from_macro(
     print(f"[DISTRIBUTION DEBUG] Scope SKUs: {len(scope_skus_set)}")
     print(f"[DISTRIBUTION DEBUG] SKUs with macro sales data: {len(skus_with_sales_estimation)}")
     print(f"[DISTRIBUTION DEBUG] SKUs without macro sales: {len(skus_without_macro_sales)}")
-    print(f"[DISTRIBUTION DEBUG] SKUs with any store stock: {len(skus_with_any_store_stock)}")
-    print(f"[DISTRIBUTION DEBUG] SKUs eligible for cold start (no sales AND no stock): {len(skus_eligible_for_cold_start)}")
-    print(f"[DISTRIBUTION DEBUG] SKUs skipped (no category): {len(cold_start_no_category)}")
+    print(f"[DISTRIBUTION DEBUG] eligible_for_cold_start: {len(skus_eligible_for_cold_start)} (no sales)")
+    print(f"[DISTRIBUTION DEBUG] SKUs skipped (no category / no cat sales / no CD): {len(cold_start_no_category)}")
+    if cold_start_no_category:
+        for skip in cold_start_no_category[:10]:
+            print(f"[DISTRIBUTION DEBUG]   skip: sku={skip['sku']} reason={skip['reason']}")
+    if cold_start_store_skips:
+        print(f"[DISTRIBUTION DEBUG] Cold start store-level skips: {dict(cold_start_store_skips)}")
     print(f"[DISTRIBUTION DEBUG] Final predictions: {len(final_preds)} ({sales_based_used} sales-based, {cold_start_used} cold start)")
     print(f"[DISTRIBUTION DEBUG] Total units: {total_units}")
     print(f"[DISTRIBUTION DEBUG] Capped rows (hit MAX_UNITS limit): {capped_rows}")
