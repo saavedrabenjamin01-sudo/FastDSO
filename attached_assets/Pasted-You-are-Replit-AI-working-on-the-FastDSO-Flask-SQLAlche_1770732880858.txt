@@ -1,0 +1,166 @@
+You are Replit AI working on the FastDSO Flask + SQLAlchemy app. Implement the inventory architecture upgrade to support “no more full reloads” while KEEPING all existing snapshot tables and flows working.
+
+GOAL
+- Keep current snapshot tables (CD + stores) as baseline “photos”.
+- Add a movement ledger (“inventory_event”) and a baseline pointer (“inventory_baseline”) to compute operational stock = latest snapshot + deltas.
+- Integrate events into existing flows:
+  1) Stock CD upload mode “append” => creates CD_RECEIPT events (deltas), without zeroing other SKUs or losing dates.
+  2) Sales Macro upload => creates STORE_SALE events per store+sku+date (negative deltas) instead of trying to rewrite store snapshot.
+  3) FastPlanner close/dispatch => creates STORE_RECEIPT events (positive deltas to store) based on what was actually dispatched; and for incident lines, create HOLD events and mark products blocked.
+  4) Stock queries and downstream modules (Distribution, Store Health, Stock Slow, Alerts, Forecast) must read “operational stock” derived from snapshot+events, not raw snapshot only.
+
+CONSTRAINTS
+- Do NOT delete/rename existing tables or break current pages.
+- Add new tables with migrations logic that works with SQLite (no Alembic required, but acceptable if already used). If no migrations, add a safe “ensure_schema()” that creates missing tables/columns at app startup.
+- Keep performance: add indexes on new tables.
+- Provide clear helper functions for stock calculations, used everywhere.
+- Avoid big UI changes in this task. Focus on correctness + integration.
+- Add logs for critical steps.
+
+STEP 1 — CREATE NEW MODELS/TABLES
+Add SQLAlchemy models (or raw table creation) for:
+A) inventory_baseline
+- id PK
+- scope TEXT (values: 'cd' or 'store')
+- baseline_date DATE (or TEXT ISO)
+- snapshot_id INTEGER nullable
+- created_at DATETIME
+
+B) inventory_event
+- id PK
+- event_type TEXT (CD_RECEIPT, CD_ADJUSTMENT, STORE_SALE, STORE_RECEIPT, PLANNER_INCIDENT_TO_HOLD, HOLD_RELEASE_TO_CD)
+- event_date DATE/TEXT ISO
+- product_id INTEGER NOT NULL
+- store_id INTEGER NULL (NULL means CD)
+- qty_delta INTEGER NOT NULL (positive or negative)
+- ref_type TEXT NULL (e.g., 'stock_cd_upload', 'macro_sales_upload', 'planner_close')
+- ref_id TEXT NULL (e.g., batch_id, run_id)
+- note TEXT NULL
+- created_by_user_id INTEGER NULL
+- created_at DATETIME
+
+Indexes:
+- (product_id, store_id, event_date)
+- (ref_type, ref_id)
+- (event_type, event_date)
+
+C) product_hold (if not existing)
+- id PK
+- product_id INTEGER NOT NULL
+- is_active BOOLEAN default True
+- reason TEXT
+- observation TEXT
+- created_by_user_id
+- created_at
+- resolved_by_user_id
+- resolved_at
+
+Also add OPTIONAL quick flags in Product model if acceptable:
+- eligible_for_distribution BOOLEAN default True
+- risk_score FLOAT nullable
+- risk_reason TEXT nullable
+If these columns already exist or were attempted before, ensure schema matches without breaking.
+
+STEP 2 — SAFE SCHEMA BOOTSTRAP
+Implement a function ensure_schema() executed on startup (inside app.app_context()) that:
+- checks for the existence of new tables and creates them if missing.
+- checks for missing columns in Product needed for holds/flags and adds them via ALTER TABLE when possible (SQLite).
+- inserts default rows into inventory_baseline if missing:
+  - scope='cd' baseline_date = latest stock_cd_snapshot date (or today if none)
+  - scope='store' baseline_date = latest store_stock_snapshot date (or today if none)
+
+STEP 3 — CORE STOCK COMPUTATION HELPERS
+Create a module or functions:
+- get_cd_operational_stock(product_id, as_of_date=today) -> int
+- get_store_operational_stock(store_id, product_id, as_of_date=today) -> int
+- get_cd_operational_stock_bulk(product_ids, as_of_date) -> dict[product_id]=qty
+- get_store_operational_stock_bulk(store_ids, product_ids, as_of_date) -> dict[(store_id,product_id)]=qty
+
+Logic:
+- find baseline_date for scope (cd or store).
+- get latest snapshot quantity on/before baseline_date for the (product) or (store,product).
+- add sum(qty_delta) from inventory_event where:
+  - store_id is NULL for CD stock
+  - store_id matches for store stock
+  - event_date >= baseline_date and event_date <= as_of_date
+Return max(qty,0) to avoid negative.
+
+STEP 4 — INTEGRATE INTO CD STOCK UPLOAD (APPEND FIX)
+In upload_stock_cd route:
+- For mode='append' (sumar al stock actual):
+  - DO NOT touch existing snapshots.
+  - For each sku row in file, create inventory_event:
+    event_type='CD_RECEIPT'
+    store_id=NULL
+    qty_delta=+quantity
+    event_date = fecha_doc if provided else today
+    ref_type='stock_cd_upload'
+    ref_id = generated batch_id (uuid)
+    note = optional observation text (add a new optional form field “observation”)
+  - Keep date integrity.
+- For replace_today/replace_all keep snapshot behavior (existing), but after snapshot write, update inventory_baseline(scope='cd') baseline_date = that snapshot_date (and optionally clear events older than baseline only if explicitly requested; default: do nothing).
+- Ensure existing bug is fixed: append must not set other SKUs to 0 and must not remove dates.
+
+STEP 5 — INTEGRATE INTO SALES MACRO UPLOAD
+In macro sales upload:
+- After parsing file, for each row create inventory_event:
+  event_type='STORE_SALE'
+  store_id = store.id
+  qty_delta = -quantity
+  event_date = row date
+  ref_type='macro_sales_upload'
+  ref_id=batch_id
+- DO NOT modify store snapshots directly.
+- Ensure aggregation or batch insert for performance (commit once).
+- Keep the existing SalesWeeklyAgg build if you have it; but ensure stock modules use operational stock helpers.
+
+STEP 6 — FASTPLANNER CLOSE/DISPATCH EVENTING + INCIDENTS
+When a run/folio is marked “DISPATCHED/CLOSED” in FastPlanner:
+- Determine dispatched qty per store+sku from final pick/dispatch lines (existing data).
+- Create inventory_event per line:
+  event_type='STORE_RECEIPT'
+  store_id=destination store
+  qty_delta=+qty_dispatched
+  event_date=today
+  ref_type='planner_close'
+  ref_id=run_id
+- For incident excel upload (sku, product, qty_not_dispatched, observation):
+  - Create inventory_event:
+    event_type='PLANNER_INCIDENT_TO_HOLD'
+    store_id=NULL (CD side)
+    qty_delta = 0 (or -qty if you keep CD “available” separate; simplest: set product_hold active + store receipt already only for dispatched)
+    note includes reason+observation
+  - Create/activate product_hold for those products with reason='PLANNER_INCIDENT' and observation.
+- Add a visible indicator across the app:
+  - In stock_query and any product display, show “Blocked/Hold” badge if product_hold.is_active is true, and/or Product.eligible_for_distribution=False.
+  - Ensure distribution generator excludes blocked products by default (unless admin overrides).
+
+STEP 7 — UPDATE ALL STOCK READS TO USE OPERATIONAL STOCK
+Search the code where it uses store_stock_snapshot or stock_cd_snapshot quantities directly for “current stock”.
+Update to use operational stock helper functions for:
+- distribution generation
+- store health
+- stock slow
+- alerts
+- forecast (single and bulk)
+- redistribution suggestions
+Keep snapshots only as baseline and for historical views.
+
+STEP 8 — TESTS / DEBUG
+Add a small dev-only route or CLI command (optional) to print operational stock for a sku in CD and a store, to validate deltas.
+Add logs:
+- on append CD upload: number of events created
+- on macro sales upload: number of events created
+- on planner close: number of receipt events + hold activations
+
+DELIVERABLES
+- Code changes in app.py/models as needed + any helper module.
+- No UI breaking changes.
+- Confirm the previous append bug is fixed.
+- Confirm modules still run with existing snapshots even if events table is empty.
+
+After implementing, provide a short “How to use” summary in comments (not user-facing):
+- When to use snapshot uploads vs append deltas
+- What creates events and when
+
+Proceed to implement now, making minimal disruptive changes and keeping the app stable.

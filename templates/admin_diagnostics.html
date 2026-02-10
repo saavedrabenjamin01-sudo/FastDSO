@@ -192,6 +192,59 @@
     </div>
   </div>
 
+  <div class="row mb-4">
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header bg-dark text-white">
+          <h6 class="mb-0"><i class="bi bi-journal-text me-2"></i>Ledger de Inventario Operacional</h6>
+        </div>
+        <div class="card-body">
+          <table class="table table-sm table-borderless mb-0">
+            <tr>
+              <td class="text-muted">Total eventos:</td>
+              <td class="text-end fw-bold">{{ diagnostics.inventory_ledger.total_events | format_number }}</td>
+            </tr>
+            <tr>
+              <td class="text-muted">Baseline CD:</td>
+              <td class="text-end">{{ diagnostics.inventory_ledger.cd_baseline_date or 'Sin baseline' }}</td>
+            </tr>
+            <tr>
+              <td class="text-muted">Baseline Tiendas:</td>
+              <td class="text-end">{{ diagnostics.inventory_ledger.store_baseline_date or 'Sin baseline' }}</td>
+            </tr>
+            <tr>
+              <td class="text-muted">Holds activos:</td>
+              <td class="text-end">{{ diagnostics.inventory_ledger.active_holds }}</td>
+            </tr>
+          </table>
+          {% if diagnostics.inventory_ledger.event_types %}
+          <hr class="my-2">
+          <small class="text-muted d-block mb-1">Eventos por tipo:</small>
+          {% for etype, ecount in diagnostics.inventory_ledger.event_types.items() %}
+          <span class="badge bg-secondary me-1 mb-1">{{ etype }}: {{ ecount }}</span>
+          {% endfor %}
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header bg-info text-white">
+          <h6 class="mb-0"><i class="bi bi-bug me-2"></i>Debug Stock Operacional</h6>
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-2">Consulta el stock operacional vs snapshot para un SKU específico.</p>
+          <form id="opStockDebugForm" class="d-flex gap-2">
+            <input type="text" id="debugSku" class="form-control form-control-sm" placeholder="Ingrese SKU...">
+            <button type="submit" class="btn btn-sm btn-info text-white">Consultar</button>
+          </form>
+          <div id="opStockResult" class="mt-2" style="max-height: 200px; overflow-y: auto; font-size: 0.8rem;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="row">
     <div class="col-12">
       <a href="{{ url_for('admin_users') }}" class="btn btn-outline-secondary">
@@ -203,4 +256,46 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('opStockDebugForm').addEventListener('submit', function(e) {
+  e.preventDefault();
+  var sku = document.getElementById('debugSku').value.trim();
+  if (!sku) return;
+  var resultDiv = document.getElementById('opStockResult');
+  resultDiv.innerHTML = '<span class="text-muted">Consultando...</span>';
+  fetch('/admin/operational_stock_debug?sku=' + encodeURIComponent(sku))
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.error) {
+        resultDiv.innerHTML = '<span class="text-danger">' + data.error + '</span>';
+        return;
+      }
+      var html = '<strong>CD:</strong> Snapshot=' + data.cd_stock.snapshot_qty +
+        ' | Operacional=' + data.cd_stock.operational_qty +
+        ' | Δ=' + data.cd_stock.delta + '<br>';
+      if (data.store_comparison.length > 0) {
+        html += '<strong>Tiendas con stock:</strong><br>';
+        html += '<table class="table table-sm table-bordered mb-0"><thead><tr><th>Tienda</th><th>Snap</th><th>Op</th><th>Δ</th></tr></thead><tbody>';
+        data.store_comparison.forEach(function(s) {
+          var cls = s.delta !== 0 ? 'table-warning' : '';
+          html += '<tr class="' + cls + '"><td>' + s.store + '</td><td>' + s.snapshot_qty + '</td><td>' + s.operational_qty + '</td><td>' + s.delta + '</td></tr>';
+        });
+        html += '</tbody></table>';
+      }
+      if (data.cd_events.length > 0) {
+        html += '<strong>Últimos eventos CD:</strong><br>';
+        data.cd_events.forEach(function(ev) {
+          html += '<small>' + ev.type + ' ' + ev.date + ' qty=' + ev.qty_delta + '</small><br>';
+        });
+      }
+      resultDiv.innerHTML = html;
+    })
+    .catch(function(err) {
+      resultDiv.innerHTML = '<span class="text-danger">Error: ' + err.message + '</span>';
+    });
+});
+</script>
 {% endblock %}

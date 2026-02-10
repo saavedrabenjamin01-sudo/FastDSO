@@ -702,6 +702,243 @@ class PlanActivityLog(db.Model):
     user = db.relationship('User')
 
 
+# ------------------ Inventory Ledger Models ------------------
+INVENTORY_EVENT_TYPES = [
+    'CD_RECEIPT', 'CD_ADJUSTMENT',
+    'STORE_SALE', 'STORE_RECEIPT',
+    'PLANNER_INCIDENT_TO_HOLD', 'HOLD_RELEASE_TO_CD'
+]
+
+class InventoryBaseline(db.Model):
+    __tablename__ = 'inventory_baseline'
+    id = db.Column(db.Integer, primary_key=True)
+    scope = db.Column(db.String(10), nullable=False)
+    baseline_date = db.Column(db.Date, nullable=False)
+    snapshot_id = db.Column(db.Integer, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+
+class InventoryEvent(db.Model):
+    __tablename__ = 'inventory_event'
+    id = db.Column(db.Integer, primary_key=True)
+    event_type = db.Column(db.String(40), nullable=False, index=True)
+    event_date = db.Column(db.Date, nullable=False)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=True)
+    qty_delta = db.Column(db.Integer, nullable=False)
+    ref_type = db.Column(db.String(50), nullable=True)
+    ref_id = db.Column(db.String(100), nullable=True)
+    note = db.Column(db.Text, nullable=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    product = db.relationship('Product')
+    store = db.relationship('Store')
+
+    __table_args__ = (
+        db.Index('ix_inv_event_prod_store_date', 'product_id', 'store_id', 'event_date'),
+        db.Index('ix_inv_event_ref', 'ref_type', 'ref_id'),
+        db.Index('ix_inv_event_type_date', 'event_type', 'event_date'),
+    )
+
+
+class ProductHold(db.Model):
+    __tablename__ = 'product_hold'
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False, index=True)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    reason = db.Column(db.Text, nullable=True)
+    observation = db.Column(db.Text, nullable=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    resolved_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    resolved_at = db.Column(db.DateTime, nullable=True)
+
+    product = db.relationship('Product')
+    created_by = db.relationship('User', foreign_keys=[created_by_user_id])
+    resolved_by = db.relationship('User', foreign_keys=[resolved_by_user_id])
+
+
+# ------------------ Operational Stock Helpers ------------------
+def _get_baseline_date(scope, session=None):
+    s = session or db.session
+    bl = s.query(InventoryBaseline).filter_by(scope=scope).order_by(InventoryBaseline.id.desc()).first()
+    return bl.baseline_date if bl else None
+
+
+def get_cd_operational_stock(product_id, as_of_date=None, session=None):
+    s = session or db.session
+    if as_of_date is None:
+        as_of_date = date.today()
+    
+    bl_date = _get_baseline_date('cd', session=s)
+    
+    snap_qty = 0
+    if bl_date:
+        snap_row = (
+            s.query(func.sum(StockCD.quantity))
+            .filter(StockCD.product_id == product_id)
+            .filter(StockCD.as_of_date == bl_date)
+            .filter(StockCD.quality_status != 'PROBLEM')
+            .scalar()
+        )
+        snap_qty = snap_row or 0
+    else:
+        latest_date = s.query(func.max(StockCD.as_of_date)).filter_by(product_id=product_id).scalar()
+        if latest_date:
+            snap_row = (
+                s.query(func.sum(StockCD.quantity))
+                .filter(StockCD.product_id == product_id)
+                .filter(StockCD.as_of_date == latest_date)
+                .filter(StockCD.quality_status != 'PROBLEM')
+                .scalar()
+            )
+            snap_qty = snap_row or 0
+    
+    event_delta = (
+        s.query(func.coalesce(func.sum(InventoryEvent.qty_delta), 0))
+        .filter(InventoryEvent.product_id == product_id)
+        .filter(InventoryEvent.store_id.is_(None))
+        .filter(InventoryEvent.event_date >= (bl_date or date.min))
+        .filter(InventoryEvent.event_date <= as_of_date)
+        .scalar()
+    ) or 0
+    
+    return max(snap_qty + event_delta, 0)
+
+
+def get_store_operational_stock(store_id, product_id, as_of_date=None, session=None):
+    s = session or db.session
+    if as_of_date is None:
+        as_of_date = date.today()
+    
+    bl_date = _get_baseline_date('store', session=s)
+    
+    snap_qty = 0
+    if bl_date:
+        snap_row = (
+            s.query(StockSnapshot.quantity)
+            .filter(StockSnapshot.product_id == product_id)
+            .filter(StockSnapshot.store_id == store_id)
+            .filter(StockSnapshot.as_of_date == bl_date)
+            .first()
+        )
+        snap_qty = snap_row[0] if snap_row else 0
+    else:
+        snap_row = (
+            s.query(StockSnapshot.quantity)
+            .filter(StockSnapshot.product_id == product_id)
+            .filter(StockSnapshot.store_id == store_id)
+            .order_by(StockSnapshot.as_of_date.desc())
+            .first()
+        )
+        snap_qty = snap_row[0] if snap_row else 0
+    
+    event_delta = (
+        s.query(func.coalesce(func.sum(InventoryEvent.qty_delta), 0))
+        .filter(InventoryEvent.product_id == product_id)
+        .filter(InventoryEvent.store_id == store_id)
+        .filter(InventoryEvent.event_date >= (bl_date or date.min))
+        .filter(InventoryEvent.event_date <= as_of_date)
+        .scalar()
+    ) or 0
+    
+    return max(snap_qty + event_delta, 0)
+
+
+def get_cd_operational_stock_bulk(product_ids=None, as_of_date=None, session=None):
+    s = session or db.session
+    if as_of_date is None:
+        as_of_date = date.today()
+    
+    bl_date = _get_baseline_date('cd', session=s)
+    
+    result = {}
+    
+    snap_q = (
+        s.query(StockCD.product_id, func.sum(StockCD.quantity))
+        .filter(StockCD.quality_status != 'PROBLEM')
+    )
+    if bl_date:
+        snap_q = snap_q.filter(StockCD.as_of_date == bl_date)
+    else:
+        latest_cd_date = s.query(func.max(StockCD.as_of_date)).scalar()
+        if latest_cd_date:
+            snap_q = snap_q.filter(StockCD.as_of_date == latest_cd_date)
+        else:
+            return result
+    
+    if product_ids is not None:
+        snap_q = snap_q.filter(StockCD.product_id.in_(product_ids))
+    
+    for pid, qty in snap_q.group_by(StockCD.product_id).all():
+        result[pid] = qty or 0
+    
+    event_q = (
+        s.query(InventoryEvent.product_id, func.sum(InventoryEvent.qty_delta))
+        .filter(InventoryEvent.store_id.is_(None))
+        .filter(InventoryEvent.event_date >= (bl_date or date.min))
+        .filter(InventoryEvent.event_date <= as_of_date)
+    )
+    if product_ids is not None:
+        event_q = event_q.filter(InventoryEvent.product_id.in_(product_ids))
+    
+    for pid, delta in event_q.group_by(InventoryEvent.product_id).all():
+        result[pid] = max(result.get(pid, 0) + (delta or 0), 0)
+    
+    if product_ids is not None:
+        for pid in product_ids:
+            if pid not in result:
+                result[pid] = 0
+    
+    return result
+
+
+def get_store_operational_stock_bulk(store_ids=None, product_ids=None, as_of_date=None, session=None):
+    s = session or db.session
+    if as_of_date is None:
+        as_of_date = date.today()
+    
+    bl_date = _get_baseline_date('store', session=s)
+    
+    result = {}
+    
+    snap_q = s.query(StockSnapshot.product_id, StockSnapshot.store_id, StockSnapshot.quantity)
+    if bl_date:
+        snap_q = snap_q.filter(StockSnapshot.as_of_date == bl_date)
+    else:
+        latest_store_date = s.query(func.max(StockSnapshot.as_of_date)).scalar()
+        if latest_store_date:
+            snap_q = snap_q.filter(StockSnapshot.as_of_date == latest_store_date)
+        else:
+            return result
+    
+    if product_ids is not None:
+        snap_q = snap_q.filter(StockSnapshot.product_id.in_(product_ids))
+    if store_ids is not None:
+        snap_q = snap_q.filter(StockSnapshot.store_id.in_(store_ids))
+    
+    for pid, sid, qty in snap_q.all():
+        result[(sid, pid)] = qty or 0
+    
+    event_q = (
+        s.query(InventoryEvent.product_id, InventoryEvent.store_id, func.sum(InventoryEvent.qty_delta))
+        .filter(InventoryEvent.store_id.isnot(None))
+        .filter(InventoryEvent.event_date >= (bl_date or date.min))
+        .filter(InventoryEvent.event_date <= as_of_date)
+    )
+    if product_ids is not None:
+        event_q = event_q.filter(InventoryEvent.product_id.in_(product_ids))
+    if store_ids is not None:
+        event_q = event_q.filter(InventoryEvent.store_id.in_(store_ids))
+    
+    for pid, sid, delta in event_q.group_by(InventoryEvent.product_id, InventoryEvent.store_id).all():
+        key = (sid, pid)
+        result[key] = max(result.get(key, 0) + (delta or 0), 0)
+    
+    return result
+
+
 # ------------------ Background Job Infrastructure ------------------
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4 as uuid4_gen
@@ -1195,30 +1432,14 @@ def generate_predictions(
         if extra_bits:
             model_tag = f"{model_tag} — " + " | ".join(extra_bits)
 
-    # 3) Define active snapshot dates ONCE (deterministic and consistent)
+    # 3) Load operational stock (snapshot + event deltas)
     active_store_stock_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
     active_cd_stock_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar()
     
-    # Pre-load all store stock for the active date into a lookup dict
-    store_stock_lookup = {}
-    if active_store_stock_date:
-        stock_rows = (
-            db.session.query(StockSnapshot.product_id, StockSnapshot.store_id, StockSnapshot.quantity)
-            .filter(StockSnapshot.as_of_date == active_store_stock_date)
-            .all()
-        )
-        for pid, sid, qty in stock_rows:
-            store_stock_lookup[(pid, sid)] = qty or 0
+    store_stock_bulk = get_store_operational_stock_bulk()
+    store_stock_lookup = {(pid, sid): qty for (sid, pid), qty in store_stock_bulk.items()}
     
-    # Pre-load CD stock for the active date (exclude PROBLEM stock from distribution)
-    cd_stock_lookup = {}
-    if active_cd_stock_date:
-        cd_rows = StockCD.query.filter(
-            StockCD.as_of_date == active_cd_stock_date,
-            db.or_(StockCD.quality_status == 'OK', StockCD.quality_status.is_(None))
-        ).all()
-        for row in cd_rows:
-            cd_stock_lookup[row.product_id] = cd_stock_lookup.get(row.product_id, 0) + (row.quantity or 0)
+    cd_stock_lookup = get_cd_operational_stock_bulk()
     
     # Pre-compute category sales rates per store (for BACKOFF_STOCKOUT tie-breaking)
     cat_store_sales_rate = {}
@@ -2302,16 +2523,7 @@ def generate_predictions_from_macro(
     if skus_eligible_for_cold_start:
         import math
 
-        latest_stock_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
-        store_stock_map = {}
-        if latest_stock_date:
-            stock_snap_q = (
-                db.session.query(StockSnapshot.product_id, StockSnapshot.store_id, StockSnapshot.quantity)
-                .filter(StockSnapshot.as_of_date == latest_stock_date)
-                .all()
-            )
-            for pid, sid, qty in stock_snap_q:
-                store_stock_map[(pid, sid)] = qty or 0
+        store_stock_map = store_stock_lookup
 
         cd_remaining_after_base = {}
         base_assigned_by_product = defaultdict(int)
@@ -2323,19 +2535,12 @@ def generate_predictions_from_macro(
             cd_remaining_after_base[product_id] = max(original - assigned, 0)
 
         MAX_CAT_WOC = 6.0
-        latest_stock_date_cs = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
+        pid_to_product = {p.id: p for p in product_map.values()}
         category_store_stock_cache = defaultdict(lambda: defaultdict(float))
-        if latest_stock_date_cs:
-            cat_stock_all = (
-                db.session.query(Product.category, StockSnapshot.store_id, func.sum(StockSnapshot.quantity))
-                .join(Product, StockSnapshot.product_id == Product.id)
-                .filter(StockSnapshot.as_of_date == latest_stock_date_cs)
-                .filter(Product.category.isnot(None))
-                .group_by(Product.category, StockSnapshot.store_id)
-                .all()
-            )
-            for cat_q, sid_q, total_cat_stock in cat_stock_all:
-                category_store_stock_cache[cat_q][sid_q] = total_cat_stock or 0
+        for (pid_k, sid_k), qty_k in store_stock_lookup.items():
+            prod_k = pid_to_product.get(pid_k)
+            if prod_k and prod_k.category:
+                category_store_stock_cache[prod_k.category][sid_k] += qty_k
 
         for sku in skus_eligible_for_cold_start:
             prod = product_map.get(sku)
@@ -2822,12 +3027,9 @@ def dashboard():
     kpi_skus_distintos = int(kpi_result[1] or 0) if kpi_result else 0
     kpi_tiendas_alcanzadas = int(kpi_result[2] or 0) if kpi_result else 0
 
-    # Stock CD hoy (total)
-    kpi_stock_cd_total = (
-        db.session.query(func.coalesce(func.sum(StockCD.quantity), 0))
-        .filter(StockCD.as_of_date == today)
-        .scalar()
-    )
+    # Stock CD hoy (total) - operational stock
+    cd_op_stock = get_cd_operational_stock_bulk()
+    kpi_stock_cd_total = sum(cd_op_stock.values()) if cd_op_stock else 0
 
     # --- Executive KPIs (lightweight aggregates) ---
     kpi_total_skus = Product.query.count()
@@ -6688,6 +6890,40 @@ def process_macro_sales_upload(job_id, payload):
             update_job_status(job_id, progress=min(progress, 95), 
                             message=f'Insertando... {total_inserted}/{len(records)}')
         
+        update_job_status(job_id, progress=93, message='Creando eventos de venta...')
+        
+        sales_batch_id = str(uuid.uuid4())
+        sales_event_inserts = []
+        daily_sales = df.groupby(['product_id', 'store_id', 'date']).agg({'quantity': 'sum'}).reset_index()
+        for _, srow in daily_sales.iterrows():
+            pid = int(srow['product_id'])
+            sid = int(srow['store_id'])
+            qty = int(srow['quantity'])
+            raw_d = srow['date']
+            if pd.isna(raw_d) or qty == 0:
+                continue
+            ev_date = raw_d.date() if hasattr(raw_d, 'date') else raw_d
+            sales_event_inserts.append({
+                'event_type': 'STORE_SALE',
+                'event_date': ev_date,
+                'product_id': pid,
+                'store_id': sid,
+                'qty_delta': -abs(qty),
+                'ref_type': 'macro_sales_upload',
+                'ref_id': sales_batch_id,
+                'note': None,
+                'created_by_user_id': user_id,
+                'created_at': datetime.utcnow(),
+            })
+        
+        if sales_event_inserts:
+            ev_chunk = 1000
+            for i in range(0, len(sales_event_inserts), ev_chunk):
+                session.execute(InventoryEvent.__table__.insert(), sales_event_inserts[i:i+ev_chunk])
+            session.commit()
+        
+        print(f"[INVENTORY] Macro sales: {len(sales_event_inserts)} STORE_SALE events created (batch={sales_batch_id})")
+        
         update_job_status(job_id, progress=96, message='Actualizando lifecycle SKUs...')
         
         lifecycle_store_df = df.groupby(['product_id', 'store_id']).agg({
@@ -7957,51 +8193,89 @@ def process_stock_cd_upload(job_id, payload):
         
         created = 0
         updated = 0
+        events_created = 0
+        batch_id = str(uuid.uuid4())
+        observation = payload.get('observation', '')
         
-        if modo == 'replace_all':
-            session.query(StockCD).delete()
-            session.commit()
-        elif modo == 'replace_today':
-            session.query(StockCD).filter_by(as_of_date=snapshot_date).delete()
-            session.commit()
-        
-        existing_stock = {}
         if modo == 'append':
-            for sc in session.query(StockCD).filter_by(as_of_date=snapshot_date).all():
-                existing_stock[sc.product_id] = sc
-        
-        update_job_status(job_id, progress=70, message='Insertando stock...')
-        
-        stock_inserts = []
-        
-        for _, row in df.iterrows():
-            sku = row['sku']
-            qty = int(row['quantity'])
-            pid = sku_to_product_id.get(sku)
-            if not pid:
-                continue
+            update_job_status(job_id, progress=70, message='Creando eventos de recepción CD...')
             
-            if modo == 'append' and pid in existing_stock:
-                existing_stock[pid].quantity += qty
-                existing_stock[pid].as_of_date = snapshot_date
-                updated += 1
-            else:
+            event_inserts = []
+            for _, row in df.iterrows():
+                sku = row['sku']
+                qty = int(row['quantity'])
+                pid = sku_to_product_id.get(sku)
+                if not pid or qty == 0:
+                    continue
+                
+                event_inserts.append({
+                    'event_type': 'CD_RECEIPT',
+                    'event_date': snapshot_date,
+                    'product_id': pid,
+                    'store_id': None,
+                    'qty_delta': qty,
+                    'ref_type': 'stock_cd_upload',
+                    'ref_id': batch_id,
+                    'note': observation if observation else f'Append upload {original_filename}',
+                    'created_by_user_id': user_id,
+                    'created_at': datetime.utcnow(),
+                })
+                events_created += 1
+            
+            if event_inserts:
+                insert_batch = 1000
+                for i in range(0, len(event_inserts), insert_batch):
+                    chunk = event_inserts[i:i + insert_batch]
+                    session.execute(InventoryEvent.__table__.insert(), chunk)
+                    progress = 70 + int(20 * (i + len(chunk)) / len(event_inserts))
+                    update_job_status(job_id, progress=progress, message=f'Eventos: {i + len(chunk)}/{len(event_inserts)}...')
+            
+            session.commit()
+            print(f"[INVENTORY] CD append: {events_created} CD_RECEIPT events created (batch={batch_id})")
+            
+        else:
+            if modo == 'replace_all':
+                session.query(StockCD).delete()
+                session.commit()
+            elif modo == 'replace_today':
+                session.query(StockCD).filter_by(as_of_date=snapshot_date).delete()
+                session.commit()
+            
+            update_job_status(job_id, progress=70, message='Insertando stock...')
+            
+            stock_inserts = []
+            for _, row in df.iterrows():
+                sku = row['sku']
+                qty = int(row['quantity'])
+                pid = sku_to_product_id.get(sku)
+                if not pid:
+                    continue
+                
                 stock_inserts.append({
                     'as_of_date': snapshot_date,
                     'product_id': pid,
                     'quantity': qty
                 })
                 created += 1
-        
-        if stock_inserts:
-            insert_batch = 1000
-            for i in range(0, len(stock_inserts), insert_batch):
-                batch = stock_inserts[i:i + insert_batch]
-                session.execute(StockCD.__table__.insert(), batch)
-                progress = 70 + int(20 * (i + len(batch)) / len(stock_inserts))
-                update_job_status(job_id, progress=progress, message=f'Insertando {i + len(batch)}/{len(stock_inserts)}...')
-        
-        session.commit()
+            
+            if stock_inserts:
+                insert_batch = 1000
+                for i in range(0, len(stock_inserts), insert_batch):
+                    batch = stock_inserts[i:i + insert_batch]
+                    session.execute(StockCD.__table__.insert(), batch)
+                    progress = 70 + int(20 * (i + len(batch)) / len(stock_inserts))
+                    update_job_status(job_id, progress=progress, message=f'Insertando {i + len(batch)}/{len(stock_inserts)}...')
+            
+            session.commit()
+            
+            bl = session.query(InventoryBaseline).filter_by(scope='cd').first()
+            if bl:
+                bl.baseline_date = snapshot_date
+                bl.created_at = datetime.utcnow()
+            else:
+                session.add(InventoryBaseline(scope='cd', baseline_date=snapshot_date))
+            session.commit()
+            print(f"[INVENTORY] CD {modo}: baseline updated to {snapshot_date}")
         
         update_job_status(job_id, progress=95, message='Finalizando...')
         
@@ -8010,13 +8284,18 @@ def process_stock_cd_upload(job_id, payload):
         except:
             pass
         
-        mode_label = {'append': 'sumado', 'replace_today': 'reemplazado hoy', 'replace_all': 'reemplazado todo'}.get(modo, modo)
+        mode_label = {'append': 'sumado (eventos)', 'replace_today': 'reemplazado hoy', 'replace_all': 'reemplazado todo'}.get(modo, modo)
+        msg_parts = [f'Stock CD {mode_label} ({snapshot_date})']
+        if modo == 'append':
+            msg_parts.append(f'Eventos: {events_created}')
+        else:
+            msg_parts.append(f'Nuevos: {created}')
         update_job_status(
             job_id,
             status='done',
             progress=100,
-            message=f'Stock CD {mode_label} ({snapshot_date}). Nuevos: {created}, Actualizados: {updated}',
-            result={'created': created, 'updated': updated, 'total_rows': total_rows, 'snapshot_date': str(snapshot_date)}
+            message='. '.join(msg_parts),
+            result={'created': created, 'updated': updated, 'events_created': events_created, 'total_rows': total_rows, 'snapshot_date': str(snapshot_date), 'batch_id': batch_id}
         )
         
     except Exception as e:
@@ -8116,25 +8395,26 @@ def stock_query():
                 }
             
             if scope == "cd":
+                # Use operational stock helper for main quantity
+                quantity = get_cd_operational_stock(product.id)
+                
+                # Still read PROBLEM stock from StockCD (tracked separately)
                 latest_date = db.session.query(db.func.max(StockCD.as_of_date)).filter_by(product_id=product.id).scalar()
                 
-                qty_ok = 0
                 qty_problem = 0
                 if latest_date:
                     cd_rows = StockCD.query.filter_by(product_id=product.id, as_of_date=latest_date).all()
                     for row in cd_rows:
                         if row.quality_status == 'PROBLEM':
                             qty_problem += int(row.quantity)
-                        else:
-                            qty_ok += int(row.quantity)
                 
                 result = {
                     "sku": product.sku,
                     "product": product.name,
                     "scope": "cd",
                     "as_of_date": latest_date,
-                    "quantity": qty_ok,
-                    "quantity_ok": qty_ok,
+                    "quantity": quantity,
+                    "quantity_ok": quantity,
                     "quantity_problem": qty_problem,
                     "is_on_hold": product.is_on_hold,
                     "hold_info": hold_info,
@@ -8142,25 +8422,30 @@ def stock_query():
                 }
 
             else:
-                # Stock de tiendas: último snapshot por tienda
-                q = (db.session.query(StockSnapshot, Store)
-                     .join(Store, StockSnapshot.store_id == Store.id)
-                     .filter(StockSnapshot.product_id == product.id))
-
+                # Stock de tiendas: use operational stock bulk helper
+                # Get all stores, optionally filtered by store_name
+                stores_query = Store.query.order_by(Store.name.asc())
                 if store_name:
-                    q = q.filter(Store.name == store_name)
-
-                rows = (q.order_by(StockSnapshot.as_of_date.desc()).all())
-
-                # quedarnos con el más reciente por tienda
+                    stores_query = stores_query.filter(Store.name == store_name)
+                
+                filtered_stores = stores_query.all()
+                store_ids = [st.id for st in filtered_stores]
+                
+                # Get operational stock for all stores using bulk helper
+                store_stock = get_store_operational_stock_bulk(
+                    store_ids=store_ids if store_ids else None,
+                    product_ids=[product.id],
+                    session=db.session
+                )
+                
+                # Build result dict from operational stock
                 latest_by_store = {}
-                for snap, st in rows:
-                    if st.id not in latest_by_store:
-                        latest_by_store[st.id] = {
-                            "store": st.name,
-                            "as_of_date": snap.as_of_date,
-                            "quantity": int(snap.quantity)
-                        }
+                for st in filtered_stores:
+                    qty = store_stock.get((st.id, product.id), 0)
+                    latest_by_store[st.id] = {
+                        "store": st.name,
+                        "quantity": qty
+                    }
 
                 result = {
                     "sku": product.sku,
@@ -8985,6 +9270,19 @@ def admin_diagnostics():
             for s in sample
         ]
     
+    inv_event_count = db.session.query(db.func.count(InventoryEvent.id)).scalar() or 0
+    inv_event_types = {}
+    if inv_event_count > 0:
+        type_rows = db.session.query(
+            InventoryEvent.event_type, db.func.count(InventoryEvent.id)
+        ).group_by(InventoryEvent.event_type).all()
+        inv_event_types = {t: c for t, c in type_rows}
+    
+    cd_baseline = InventoryBaseline.query.filter_by(scope='cd').order_by(InventoryBaseline.id.desc()).first()
+    store_baseline = InventoryBaseline.query.filter_by(scope='store').order_by(InventoryBaseline.id.desc()).first()
+    
+    active_holds_count = ProductHold.query.filter_by(is_active=True).count()
+    
     diagnostics = {
         'macro_sales': macro_stats,
         'store_stock': {
@@ -9001,10 +9299,110 @@ def admin_diagnostics():
             'distinct_skus': cd_stock_skus
         },
         'analysis_end_date': analysis_end,
-        'sample_sales': sample_sales
+        'sample_sales': sample_sales,
+        'inventory_ledger': {
+            'total_events': inv_event_count,
+            'event_types': inv_event_types,
+            'cd_baseline_date': cd_baseline.baseline_date if cd_baseline else None,
+            'store_baseline_date': store_baseline.baseline_date if store_baseline else None,
+            'active_holds': active_holds_count,
+        }
     }
     
     return render_template('admin_diagnostics.html', diagnostics=diagnostics)
+
+
+@app.route('/admin/operational_stock_debug')
+@login_required
+@require_permission('admin:users')
+def operational_stock_debug():
+    """Dev-only route to compare snapshot stock vs operational stock for a SKU."""
+    sku = request.args.get('sku', '').strip()
+    if not sku:
+        return jsonify({'error': 'Provide ?sku=XXX'}), 400
+    
+    product = Product.query.filter_by(sku=sku).first()
+    if not product:
+        return jsonify({'error': f'Product not found: {sku}'}), 404
+    
+    latest_cd_date = db.session.query(func.max(StockCD.as_of_date)).scalar()
+    cd_snap_qty = 0
+    if latest_cd_date:
+        cd_snap_qty = db.session.query(
+            func.coalesce(func.sum(StockCD.quantity), 0)
+        ).filter(
+            StockCD.product_id == product.id,
+            StockCD.as_of_date == latest_cd_date,
+            StockCD.quality_status != 'PROBLEM'
+        ).scalar() or 0
+    
+    cd_op_qty = get_cd_operational_stock(product.id)
+    
+    cd_events = db.session.query(
+        InventoryEvent.event_type,
+        InventoryEvent.event_date,
+        InventoryEvent.qty_delta,
+        InventoryEvent.ref_type,
+        InventoryEvent.note,
+        InventoryEvent.created_at
+    ).filter(
+        InventoryEvent.product_id == product.id,
+        InventoryEvent.store_id.is_(None)
+    ).order_by(InventoryEvent.event_date.desc()).limit(20).all()
+    
+    stores = Store.query.order_by(Store.name).all()
+    store_comparison = []
+    for st in stores:
+        latest_store_date = db.session.query(func.max(StockSnapshot.as_of_date)).scalar()
+        snap_qty = 0
+        if latest_store_date:
+            snap_r = db.session.query(StockSnapshot.quantity).filter(
+                StockSnapshot.product_id == product.id,
+                StockSnapshot.store_id == st.id,
+                StockSnapshot.as_of_date == latest_store_date
+            ).first()
+            snap_qty = snap_r[0] if snap_r else 0
+        
+        op_qty = get_store_operational_stock(st.id, product.id)
+        
+        if snap_qty != 0 or op_qty != 0:
+            store_comparison.append({
+                'store': st.name,
+                'snapshot_qty': snap_qty,
+                'operational_qty': op_qty,
+                'delta': op_qty - snap_qty
+            })
+    
+    bl_cd = _get_baseline_date('cd')
+    bl_store = _get_baseline_date('store')
+    
+    return jsonify({
+        'sku': sku,
+        'product_id': product.id,
+        'category': product.category,
+        'is_on_hold': product.is_on_hold,
+        'baselines': {
+            'cd': str(bl_cd) if bl_cd else None,
+            'store': str(bl_store) if bl_store else None
+        },
+        'cd_stock': {
+            'snapshot_qty': cd_snap_qty,
+            'operational_qty': cd_op_qty,
+            'delta': cd_op_qty - cd_snap_qty,
+            'snapshot_date': str(latest_cd_date) if latest_cd_date else None
+        },
+        'cd_events': [
+            {
+                'type': e.event_type,
+                'date': str(e.event_date),
+                'qty_delta': e.qty_delta,
+                'ref_type': e.ref_type,
+                'note': e.note,
+                'created_at': e.created_at.isoformat() if e.created_at else None
+            } for e in cd_events
+        ],
+        'store_comparison': store_comparison
+    })
 
 
 # ======================================================
@@ -9448,23 +9846,13 @@ def compute_rebalancing_suggestions(
     else:
         target_product_ids = None
     
-    latest_stock_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
-    if not latest_stock_date:
+    op_stock_raw = get_store_operational_stock_bulk(product_ids=target_product_ids)
+    if not op_stock_raw:
         return []
     
     stock_map = {}
     stores_per_product_stock = defaultdict(set)
-    stock_query = db.session.query(
-        StockSnapshot.product_id,
-        StockSnapshot.store_id,
-        StockSnapshot.quantity
-    ).filter(StockSnapshot.as_of_date == latest_stock_date)
-    
-    if target_product_ids:
-        stock_query = stock_query.filter(StockSnapshot.product_id.in_(target_product_ids))
-    
-    stock_q = stock_query.all()
-    for pid, sid, qty in stock_q:
+    for (sid, pid), qty in op_stock_raw.items():
         stock_map[(pid, sid)] = qty
         stores_per_product_stock[pid].add(sid)
     
@@ -10998,26 +11386,21 @@ def compute_slow_stock_analysis(params=None):
     # Use analysis end date from macro sales instead of today
     analysis_end = get_analysis_end_date()
     
-    # Get latest stock snapshots
-    latest_store_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
-    latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar()
-    
-    if not latest_store_date or not latest_cd_date:
-        return {'store_analysis': [], 'cd_analysis': [], 'transfers': [], 'error': 'No stock data available'}
-    
     # Build product and store lookups
     products = {p.id: p for p in Product.query.all()}
     stores = {s.id: s for s in Store.query.all()}
     
-    # Get store stock (latest snapshot)
-    store_stock = {}
-    for ss in StockSnapshot.query.filter(StockSnapshot.as_of_date == latest_store_date).all():
-        store_stock[(ss.product_id, ss.store_id)] = ss.quantity
+    # Get store stock (operational)
+    op_store_stock = get_store_operational_stock_bulk()
+    # Get CD stock (operational)
+    cd_stock = get_cd_operational_stock_bulk()
     
-    # Get CD stock (latest snapshot)
-    cd_stock = {}
-    for cd in StockCD.query.filter(StockCD.as_of_date == latest_cd_date).all():
-        cd_stock[cd.product_id] = cd.quantity
+    if not op_store_stock and not cd_stock:
+        return {'store_analysis': [], 'cd_analysis': [], 'transfers': [], 'error': 'No stock data available'}
+    
+    store_stock = {}
+    for (sid, pid), qty in op_store_stock.items():
+        store_stock[(pid, sid)] = qty
     
     # Get lifecycle data
     lifecycle_global = {lc.product_id: lc for lc in SkuLifecycle.query.all()}
@@ -12264,14 +12647,12 @@ def compute_store_health_index(weights=None, sku_scope='core', category_filter=N
         ).all()
         skus_in_runs = {r[0] for r in run_skus}
     
-    # Get SKUs with stock > 0 in any store (exclude CD)
+    # Get SKUs with stock > 0 in any store (exclude CD) - via operational stock
     skus_with_store_stock = set()
-    store_ids = list(stores.keys())
-    stock_skus = db.session.query(StockSnapshot.product_id.distinct()).filter(
-        StockSnapshot.store_id.in_(store_ids),
-        StockSnapshot.quantity > 0
-    ).all()
-    skus_with_store_stock = {r[0] for r in stock_skus}
+    op_store_stock_health = get_store_operational_stock_bulk(store_ids=list(stores.keys()))
+    for (sid, pid), qty in op_store_stock_health.items():
+        if qty > 0:
+            skus_with_store_stock.add(pid)
     
     # Build scope set based on mode
     all_product_ids = set(all_products.keys())
@@ -12327,30 +12708,14 @@ def compute_store_health_index(weights=None, sku_scope='core', category_filter=N
     total_skus = len(products)
     max_woc = weights.get('MAX_WOC', 8.0)
     
-    # Get latest stock snapshot for each store-product pair using subquery for latest date
-    latest_dates = db.session.query(
-        StockSnapshot.store_id,
-        StockSnapshot.product_id,
-        db.func.max(StockSnapshot.as_of_date).label('max_date')
-    ).group_by(
-        StockSnapshot.store_id,
-        StockSnapshot.product_id
-    ).subquery()
-    
-    stock_query = db.session.query(StockSnapshot).join(
-        latest_dates,
-        db.and_(
-            StockSnapshot.store_id == latest_dates.c.store_id,
-            StockSnapshot.product_id == latest_dates.c.product_id,
-            StockSnapshot.as_of_date == latest_dates.c.max_date
-        )
-    ).all()
+    # Get latest stock via operational stock helper
+    op_store_stock_data = get_store_operational_stock_bulk(store_ids=list(stores.keys()))
     
     store_stock = {}
-    for ss in stock_query:
-        if ss.store_id not in store_stock:
-            store_stock[ss.store_id] = {}
-        store_stock[ss.store_id][ss.product_id] = ss.quantity
+    for (sid, pid), qty in op_store_stock_data.items():
+        if sid not in store_stock:
+            store_stock[sid] = {}
+        store_stock[sid][pid] = qty
     
     # Use analysis_end (already set above) for sales window
     cutoff_week = analysis_end - timedelta(weeks=time_window)
@@ -13218,23 +13583,16 @@ def compute_alerts(params=None):
     alerts = []
     severity_order = {'HIGH': 0, 'MEDIUM': 1, 'LOW': 2}
     
-    latest_store_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
-    latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar()
-    
-    if not latest_store_date:
-        return alerts
-    
     products = {p.id: p for p in Product.query.all()}
     stores = {s.id: s for s in Store.query.all()}
     
-    store_stock = {}
-    for ss in StockSnapshot.query.filter(StockSnapshot.as_of_date == latest_store_date).all():
-        store_stock[(ss.product_id, ss.store_id)] = ss.quantity
+    if not products or not stores:
+        return alerts
     
-    cd_stock = {}
-    if latest_cd_date:
-        for cd in StockCD.query.filter(StockCD.as_of_date == latest_cd_date).all():
-            cd_stock[cd.product_id] = cd.quantity
+    store_op = get_store_operational_stock_bulk()
+    store_stock = {(pid, sid): qty for (sid, pid), qty in store_op.items()}
+    
+    cd_stock = get_cd_operational_stock_bulk()
     
     recent_window = params.get('RECENT_WINDOW_WEEKS', 4)
     cutoff_week = today - timedelta(weeks=recent_window)
@@ -13509,23 +13867,16 @@ def compute_alerts_normalized(params=None):
     alerts = []
     severity_order = {'HIGH': 0, 'MEDIUM': 1, 'LOW': 2}
     
-    latest_store_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
-    latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar()
-    
-    if not latest_store_date:
-        return alerts
-    
     products = {p.id: p for p in Product.query.all()}
     stores = {s.id: s for s in Store.query.all()}
     
-    store_stock = {}
-    for ss in StockSnapshot.query.filter(StockSnapshot.as_of_date == latest_store_date).all():
-        store_stock[(ss.product_id, ss.store_id)] = ss.quantity
+    if not products or not stores:
+        return alerts
     
-    cd_stock = {}
-    if latest_cd_date:
-        for cd in StockCD.query.filter(StockCD.as_of_date == latest_cd_date).all():
-            cd_stock[cd.product_id] = cd.quantity
+    store_op = get_store_operational_stock_bulk()
+    store_stock = {(pid, sid): qty for (sid, pid), qty in store_op.items()}
+    
+    cd_stock = get_cd_operational_stock_bulk()
     
     recent_window = params.get('RECENT_WINDOW_WEEKS', 4)
     cutoff_week = today - timedelta(weeks=recent_window)
@@ -14059,14 +14410,34 @@ def planner_dispatch(plan_id):
     
     plan.status = 'DISPATCHED'
     
+    dispatch_batch_id = str(uuid.uuid4())
+    dispatch_events = 0
+    lines = DistributionPlanLine.query.filter_by(plan_id=plan.id).all()
+    for line in lines:
+        if line.qty_planned and line.qty_planned > 0:
+            db.session.add(InventoryEvent(
+                event_type='STORE_RECEIPT',
+                event_date=date.today(),
+                product_id=line.product_id,
+                store_id=line.store_id,
+                qty_delta=line.qty_planned,
+                ref_type='planner_dispatch',
+                ref_id=dispatch_batch_id,
+                note=f'Folio {plan.folio}',
+                created_by_user_id=current_user.id,
+            ))
+            dispatch_events += 1
+    
     log = PlanActivityLog(
         plan_id=plan.id,
         action='DISPATCHED',
         user_id=current_user.id,
-        comment=f'Plan despachado por {current_user.username}'
+        comment=f'Plan despachado por {current_user.username}. {dispatch_events} eventos STORE_RECEIPT creados.'
     )
     db.session.add(log)
     db.session.commit()
+    
+    print(f"[INVENTORY] Planner dispatch folio={plan.folio}: {dispatch_events} STORE_RECEIPT events (batch={dispatch_batch_id})")
     
     flash(f'Plan {plan.folio} marcado como DESPACHADO', 'success')
     return redirect(url_for('planner'))
@@ -14164,6 +14535,30 @@ def planner_close(plan_id):
                     )
                     db.session.add(new_stock)
                 
+                incident_obs = ''
+                if has_observation_col and pd.notna(row.get(obs_col)):
+                    incident_obs = str(row[obs_col]).strip()
+                
+                db.session.add(InventoryEvent(
+                    event_type='PLANNER_INCIDENT_TO_HOLD',
+                    event_date=date.today(),
+                    product_id=product.id,
+                    store_id=None,
+                    qty_delta=0,
+                    ref_type='planner_close',
+                    ref_id=str(plan.id),
+                    note=hold_reason,
+                    created_by_user_id=current_user.id,
+                ))
+                
+                db.session.add(ProductHold(
+                    product_id=product.id,
+                    is_active=True,
+                    reason='PLANNER_INCIDENT',
+                    observation=incident_obs if incident_obs else hold_reason,
+                    created_by_user_id=current_user.id,
+                ))
+                
                 exceptions_count += 1
             
             upload_dir = os.path.join(app.instance_path, 'uploads', 'planner_exceptions')
@@ -14188,7 +14583,7 @@ def planner_close(plan_id):
     
     comment = f'Plan cerrado por {current_user.username}'
     if exceptions_count > 0:
-        comment += f' con {exceptions_count} excepciones (stock problema)'
+        comment += f' con {exceptions_count} excepciones (stock problema + hold)'
     elif no_exceptions:
         comment += ' sin excepciones'
     
@@ -14200,6 +14595,9 @@ def planner_close(plan_id):
     )
     db.session.add(log)
     db.session.commit()
+    
+    if exceptions_count > 0:
+        print(f"[INVENTORY] Planner close folio={plan.folio}: {exceptions_count} PLANNER_INCIDENT_TO_HOLD events + ProductHold entries")
     
     flash(f'Plan {plan.folio} cerrado exitosamente' + (f' con {exceptions_count} excepciones' if exceptions_count > 0 else ''), 'success')
     return redirect(url_for('planner'))
@@ -14290,11 +14688,68 @@ def planner_export_picking(plan_id):
     )
 
 
+def ensure_inventory_schema():
+    """Ensure inventory ledger tables exist and baseline rows are initialized."""
+    from sqlalchemy import inspect, text
+    
+    inspector = inspect(db.engine)
+    table_names = inspector.get_table_names()
+    
+    tables_created = []
+    if 'inventory_baseline' not in table_names:
+        InventoryBaseline.__table__.create(db.engine)
+        tables_created.append('inventory_baseline')
+    if 'inventory_event' not in table_names:
+        InventoryEvent.__table__.create(db.engine)
+        tables_created.append('inventory_event')
+    if 'product_hold' not in table_names:
+        ProductHold.__table__.create(db.engine)
+        tables_created.append('product_hold')
+    
+    if tables_created:
+        print(f"[INVENTORY] Created tables: {', '.join(tables_created)}")
+    
+    if 'product' in table_names:
+        product_cols = [col['name'] for col in inspector.get_columns('product')]
+        col_defs = {
+            'eligible_for_distribution': "BOOLEAN DEFAULT 1",
+            'risk_score': "FLOAT",
+            'risk_reason': "TEXT",
+            'is_on_hold': "BOOLEAN DEFAULT 0",
+            'hold_reason': "TEXT",
+            'hold_source': "VARCHAR(50)",
+            'hold_created_at': "DATETIME",
+        }
+        for col_name, col_type in col_defs.items():
+            if col_name not in product_cols:
+                with db.engine.connect() as conn:
+                    conn.execute(text(f"ALTER TABLE product ADD COLUMN {col_name} {col_type}"))
+                    conn.commit()
+                print(f"[INVENTORY] Added column product.{col_name}")
+    
+    cd_baseline = InventoryBaseline.query.filter_by(scope='cd').first()
+    if not cd_baseline:
+        latest_cd = db.session.query(func.max(StockCD.as_of_date)).scalar()
+        bl_date = latest_cd if latest_cd else date.today()
+        db.session.add(InventoryBaseline(scope='cd', baseline_date=bl_date))
+        db.session.commit()
+        print(f"[INVENTORY] Created CD baseline: {bl_date}")
+    
+    store_baseline = InventoryBaseline.query.filter_by(scope='store').first()
+    if not store_baseline:
+        latest_store = db.session.query(func.max(StockSnapshot.as_of_date)).scalar()
+        bl_date = latest_store if latest_store else date.today()
+        db.session.add(InventoryBaseline(scope='store', baseline_date=bl_date))
+        db.session.commit()
+        print(f"[INVENTORY] Created store baseline: {bl_date}")
+
+
 def init_database():
     """Initialize database with safe schema migration for RBAC and Audit columns."""
     from sqlalchemy import inspect, text
     
     db.create_all()
+    ensure_inventory_schema()
     
     inspector = inspect(db.engine)
     
