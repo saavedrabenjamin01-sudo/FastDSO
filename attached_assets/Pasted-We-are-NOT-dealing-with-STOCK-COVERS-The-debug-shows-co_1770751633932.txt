@@ -1,0 +1,38 @@
+We are NOT dealing with STOCK_COVERS. The debug shows cold-start is producing ZERO predictions because 68 SKUs have no macro sales data and then get skipped with reason=NO_ELIGIBLE_STORES.
+
+Please fix the distribution pipeline with these changes:
+
+A) Correct SKU classification for a DistributionRequest
+1) For each requested SKU, query MacroSales (or SalesWeeklyAgg based on macro) for that SKU in the active window.
+2) Classify as:
+   - sales_based ONLY IF macro sales rows exist (sum_units > 0 or rows > 0)
+   - cold_start_category IF no macro sales rows exist AND category is present
+   - skipped_no_category IF category missing
+3) Update the upload summary to reflect this real classification (it currently says sales-based 121 but macro data exists for only 56, which is wrong).
+
+B) Fix cold-start eligible store selection (NO_ELIGIBLE_STORES)
+Cold-start must not require SKU-level sales or SKU-level stock. It should use CATEGORY store hierarchy:
+1) Build store_category_rank = stores sorted by category sales (from Macro Sales) in the same window.
+2) Eligible stores for cold_start:
+   - default: top N stores by category sales (N = 20)
+   - optionally: if store is closed/inactive, exclude (but do not over-filter)
+3) If after filtering we still have 0 eligible stores:
+   - fallback to overall top 20 stores by total sales (all categories) OR
+   - fallback to all stores with any stock snapshot (choose one deterministic fallback)
+   - log fallback reason: COLD_START_FALLBACK_USED
+
+C) Cold-start allocation rule
+When CD stock exists:
+1) Allocate proportionally to category weights (store share of category sales).
+2) Enforce min allocation for top stores:
+   - for top 10 stores: min 1 unit each until CD stock is exhausted
+3) Respect CD stock limit strictly.
+
+D) Logging
+Add a concise per-SKU debug line when cold_start is used or skipped:
+- sku, category, cd_stock, eligible_store_count, reason_code
+Make sure NO_ELIGIBLE_STORES can only happen if ALL fallbacks fail, and in that case include why (no category sales found, no stores, etc).
+
+After changes:
+- Cold-start SKUs must produce predictions if CD stock > 0 and category exists, even if SKU has zero sales history.
+- Upload summary counts must match macro sales reality.

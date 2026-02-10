@@ -2180,6 +2180,16 @@ def generate_predictions_from_macro(
     raw_preds = []
     skus_with_sales_estimation = set()
     
+    from datetime import timedelta as _td
+    analysis_end = get_analysis_end_date()
+    macro_window_cutoff = analysis_end - _td(weeks=max(win, 3) * 2)
+    skus_with_any_macro = set()
+    for r in agg_rows:
+        if r.week_start and r.week_start >= macro_window_cutoff:
+            s = sku_by_pid.get(r.product_id)
+            if s:
+                skus_with_any_macro.add(s)
+    
     product_category_map = {p.id: p.category for p in product_map.values()}
     categories_in_scope = set(c for c in product_category_map.values() if c)
 
@@ -2511,7 +2521,7 @@ def generate_predictions_from_macro(
             print(f"[DISTRIBUTION ROW DEBUG] No matching row found for sku={DEBUG_SKU} store={DEBUG_STORE}")
     
     skus_with_predictions = {it['sku'] for it in final_preds if it.get('suggested', 0) > 0}
-    skus_without_macro_sales = scope_skus_set - skus_with_sales_estimation
+    skus_without_macro_sales = scope_skus_set - skus_with_any_macro
     
     skus_eligible_for_cold_start = skus_without_macro_sales
 
@@ -2544,6 +2554,12 @@ def generate_predictions_from_macro(
             if prod_k and prod_k.category:
                 category_store_stock_cache[prod_k.category][sid_k] += qty_k
 
+        overall_store_sales = defaultdict(float)
+        for (cat_key, sid_key), rate_val in cat_store_sales_rate.items():
+            overall_store_sales[sid_key] += rate_val
+        overall_store_ranking = sorted(overall_store_sales.items(), key=lambda x: x[1], reverse=True)
+        overall_top_store_ids = [sid for sid, _ in overall_store_ranking[:COLD_START_TOP_STORES]]
+
         for sku in skus_eligible_for_cold_start:
             prod = product_map.get(sku)
             if not prod:
@@ -2552,32 +2568,44 @@ def generate_predictions_from_macro(
             category = prod.category
             if not category or category.strip() == '':
                 cold_start_no_category.append({"sku": sku, "product_id": prod.id, "reason": "NO_CATEGORY"})
-                continue
-
-            weights = cat_store_weights.get(category)
-            cwm = cat_weekly_mean.get(category, 0)
-            if not weights or cwm <= 0:
-                cold_start_no_category.append({"sku": sku, "product_id": prod.id, "reason": "NO_CATEGORY_SALES"})
+                print(f"[COLD_START] SKIP sku={sku} reason=NO_CATEGORY cd_stock={cd_stock.get(prod.id, 0)}")
                 continue
 
             available_cd = cd_remaining_after_base.get(prod.id, cd_stock.get(prod.id))
             if available_cd is None or available_cd <= 0:
                 cold_start_no_category.append({"sku": sku, "product_id": prod.id, "reason": "NO_CD_STOCK"})
+                print(f"[COLD_START] SKIP sku={sku} cat={category} reason=NO_CD_STOCK")
                 continue
+
+            weights = cat_store_weights.get(category)
+            cwm = cat_weekly_mean.get(category, 0)
+
+            fallback_used = None
+            if weights and cwm > 0:
+                sorted_stores = sorted(weights.items(), key=lambda x: x[1], reverse=True)[:COLD_START_TOP_STORES]
+                candidate_ids = [sid for sid, _ in sorted_stores]
+                w_subset = {sid: weights[sid] for sid in candidate_ids}
+            else:
+                fallback_used = 'NO_CAT_SALES_FALLBACK_OVERALL'
+                candidate_ids = overall_top_store_ids[:]
+                if not candidate_ids:
+                    candidate_ids = list(store_map.keys())[:COLD_START_TOP_STORES]
+                    fallback_used = 'NO_CAT_SALES_FALLBACK_ALL_STORES'
+                w_subset = {sid: 1.0 / len(candidate_ids) for sid in candidate_ids} if candidate_ids else {}
+                cwm = max(cwm, 1.0)
+
+            w_total = sum(w_subset.values())
+            if w_total > 0:
+                w_subset = {sid: wv / w_total for sid, wv in w_subset.items()}
 
             total_units_to_allocate = math.ceil(cwm * weeks_target * COLD_START_LAUNCH_FACTOR)
             total_units_to_allocate = min(total_units_to_allocate, int(available_cd))
             if total_units_to_allocate <= 0:
-                cold_start_no_category.append({"sku": sku, "product_id": prod.id, "reason": "ZERO_LAUNCH_DEMAND"})
-                continue
-
-            sorted_stores = sorted(weights.items(), key=lambda x: x[1], reverse=True)[:COLD_START_TOP_STORES]
-            candidate_ids = [sid for sid, _ in sorted_stores]
-
-            w_subset = {sid: weights[sid] for sid in candidate_ids}
-            w_total = sum(w_subset.values())
-            if w_total > 0:
-                w_subset = {sid: wv / w_total for sid, wv in w_subset.items()}
+                total_units_to_allocate = min(1, int(available_cd))
+                if total_units_to_allocate <= 0:
+                    cold_start_no_category.append({"sku": sku, "product_id": prod.id, "reason": "ZERO_LAUNCH_DEMAND"})
+                    print(f"[COLD_START] SKIP sku={sku} cat={category} reason=ZERO_LAUNCH_DEMAND cwm={cwm:.2f}")
+                    continue
 
             cat_stock_by_store = category_store_stock_cache.get(category, {})
 
@@ -2606,12 +2634,52 @@ def generate_predictions_from_macro(
                     'allocated': 0,
                     'raw_alloc': 0.0,
                     'remainder': 0.0,
-                    'reason': 'COLD_START_PROPORTIONAL',
+                    'reason': 'COLD_START_PROPORTIONAL' if not fallback_used else fallback_used,
                 })
 
+            if not store_list and fallback_used is None:
+                fallback_used = 'COLD_START_FALLBACK_RELAXED'
+                for sid in candidate_ids:
+                    current_stock = store_stock_map.get((prod.id, sid), 0)
+                    need_cap = max(MAX_UNITS_PER_STORE_EVENT - current_stock, 0)
+                    if need_cap > 0:
+                        store_list.append({
+                            'store_id': sid,
+                            'w_store_cat': w_subset.get(sid, 0),
+                            'need_cap': need_cap,
+                            'current_stock': current_stock,
+                            'allocated': 0,
+                            'raw_alloc': 0.0,
+                            'remainder': 0.0,
+                            'reason': fallback_used,
+                        })
+
+            if not store_list and fallback_used != 'NO_CAT_SALES_FALLBACK_ALL_STORES':
+                fallback_used = 'COLD_START_FALLBACK_OVERALL'
+                fallback_ids = overall_top_store_ids if overall_top_store_ids else list(store_map.keys())[:COLD_START_TOP_STORES]
+                equal_w = 1.0 / len(fallback_ids) if fallback_ids else 0
+                for sid in fallback_ids:
+                    current_stock = store_stock_map.get((prod.id, sid), 0)
+                    need_cap = max(MAX_UNITS_PER_STORE_EVENT - current_stock, 0)
+                    if need_cap > 0:
+                        store_list.append({
+                            'store_id': sid,
+                            'w_store_cat': equal_w,
+                            'need_cap': need_cap,
+                            'current_stock': current_stock,
+                            'allocated': 0,
+                            'raw_alloc': 0.0,
+                            'remainder': 0.0,
+                            'reason': fallback_used,
+                        })
+
             if not store_list:
-                cold_start_no_category.append({"sku": sku, "product_id": prod.id, "reason": "NO_ELIGIBLE_STORES"})
+                cold_start_no_category.append({"sku": sku, "product_id": prod.id, "reason": "NO_ELIGIBLE_STORES_ALL_FALLBACKS_EXHAUSTED"})
+                print(f"[COLD_START] SKIP sku={sku} cat={category} reason=NO_ELIGIBLE_STORES_ALL_FALLBACKS cd={int(available_cd)} stores_checked={len(candidate_ids)}")
                 continue
+
+            if fallback_used:
+                print(f"[COLD_START] FALLBACK sku={sku} cat={category} fallback={fallback_used} eligible_stores={len(store_list)}")
 
             if excluded_weight > 0:
                 sl_total = sum(s['w_store_cat'] for s in store_list)
@@ -2660,6 +2728,9 @@ def generate_predictions_from_macro(
 
             total_allocated = sum(s['allocated'] for s in store_list)
 
+            fb_tag = f" fallback={fallback_used}" if fallback_used else ""
+            print(f"[COLD_START] OK sku={sku} cat={category} cd={int(available_cd)} eligible_stores={len(store_list)} allocated={total_allocated}{fb_tag}")
+
             if app.debug or os.environ.get('COLD_START_DEBUG'):
                 print(f"[COLD_START DEBUG] SKU={sku} cat={category} cwm={cwm:.2f} launch_total={total_units_to_allocate} cd={int(available_cd)} allocated={total_allocated}")
                 print(f"  {'store':<20} {'rank':>4} {'weight':>8} {'raw':>6} {'stock':>5} {'alloc':>5} {'reason'}")
@@ -2704,9 +2775,9 @@ def generate_predictions_from_macro(
 
     print(f"[DISTRIBUTION DEBUG] === RUN SAFETY CHECK ===")
     print(f"[DISTRIBUTION DEBUG] Scope SKUs: {len(scope_skus_set)}")
-    print(f"[DISTRIBUTION DEBUG] SKUs with macro sales data: {len(skus_with_sales_estimation)}")
-    print(f"[DISTRIBUTION DEBUG] SKUs without macro sales: {len(skus_without_macro_sales)}")
-    print(f"[DISTRIBUTION DEBUG] eligible_for_cold_start: {len(skus_eligible_for_cold_start)} (no sales)")
+    print(f"[DISTRIBUTION DEBUG] SKUs with any macro sales rows: {len(skus_with_any_macro)}")
+    print(f"[DISTRIBUTION DEBUG] SKUs with SMA predictions: {len(skus_with_sales_estimation)}")
+    print(f"[DISTRIBUTION DEBUG] SKUs without macro sales (cold-start eligible): {len(skus_without_macro_sales)}")
     print(f"[DISTRIBUTION DEBUG] SKUs skipped (no category / no cat sales / no CD): {len(cold_start_no_category)}")
     if cold_start_no_category:
         for skip in cold_start_no_category[:10]:
