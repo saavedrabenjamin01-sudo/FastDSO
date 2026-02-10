@@ -2197,6 +2197,8 @@ def generate_predictions_from_macro(
     CAT_WEIGHT_ALPHA = 1.0
     CAT_WEIGHT_MIN_EPSILON = 0.002
     COLD_START_LAUNCH_FACTOR = 0.20
+    COLD_START_NEW_SKU_SHARE = 0.03
+    COLD_START_ABSOLUTE_CAP = 50
 
     cat_store_sales_rate = {}
     cat_store_weights = {}
@@ -2461,15 +2463,28 @@ def generate_predictions_from_macro(
         return (-need, -sku_rate, -cat_rate, store_name)
     
     for product_id, items in per_product.items():
-        # Apply deterministic prioritization sort
         items.sort(key=prioritization_sort_key)
         
-        # Assign allocation rank after sorting
         for rank, it in enumerate(items, start=1):
             it["alloc_rank"] = rank
         
         available = cd_stock.get(product_id, None)
         original_cd = available if available is not None else 0
+        
+        total_need = sum(it["suggested"] for it in items)
+        total_alloc_cap = min(total_need, original_cd) if available is not None else total_need
+        
+        sku_label = items[0].get("sku", "?") if items else "?"
+        avg_weekly = 0.0
+        stores_with_demand = 0
+        for it in items:
+            wr = it.get("weekly_rate", 0)
+            if wr > 0:
+                avg_weekly += wr
+                stores_with_demand += 1
+        print(f"[ALLOC_CAP] sku={sku_label} mode=sales_based horizon_weeks={weeks_target} "
+              f"weekly_demand_total={avg_weekly:.1f} stores_with_demand={stores_with_demand} "
+              f"total_need={total_need} cd_stock={original_cd} total_alloc_cap={total_alloc_cap}")
         
         if available is None:
             for it in items:
@@ -2479,14 +2494,14 @@ def generate_predictions_from_macro(
             final_preds.extend(items)
             continue
         
+        alloc_budget = total_alloc_cap
         for idx, it in enumerate(items):
             want = it["suggested"]
-            give = min(want, max(available, 0))
+            give = min(want, max(alloc_budget, 0))
             it["suggested_final"] = give
             it["suggested"] = give
-            available -= give
+            alloc_budget -= give
             
-            # Update reason_code based on CD allocation
             if want > 0 and give == 0 and original_cd == 0:
                 it["reason_code"] = "CD_ZERO"
             elif want > 0 and give == 0:
@@ -2496,7 +2511,7 @@ def generate_predictions_from_macro(
             
             final_preds.append(it)
             
-            if available <= 0:
+            if alloc_budget <= 0:
                 for it2 in items[idx+1:]:
                     it2["suggested_final"] = 0
                     it2["suggested"] = 0
@@ -2504,6 +2519,9 @@ def generate_predictions_from_macro(
                         it2["reason_code"] = "CD_EXHAUSTED"
                     final_preds.append(it2)
                 break
+        
+        final_alloc = sum(it.get("suggested_final", 0) for it in items)
+        print(f"[ALLOC_CAP] sku={sku_label} final_alloc={final_alloc}")
     
     # --- Targeted per-row debug logging ---
     if debug_target_active:
@@ -2598,13 +2616,14 @@ def generate_predictions_from_macro(
             if w_total > 0:
                 w_subset = {sid: wv / w_total for sid, wv in w_subset.items()}
 
-            total_units_to_allocate = math.ceil(cwm * weeks_target * COLD_START_LAUNCH_FACTOR)
-            total_units_to_allocate = min(total_units_to_allocate, int(available_cd))
+            estimated_weekly_sku = max(1, round(cwm * COLD_START_NEW_SKU_SHARE))
+            cold_start_total_need = estimated_weekly_sku * weeks_target
+            total_units_to_allocate = min(cold_start_total_need, int(available_cd), COLD_START_ABSOLUTE_CAP)
             if total_units_to_allocate <= 0:
                 total_units_to_allocate = min(1, int(available_cd))
                 if total_units_to_allocate <= 0:
                     cold_start_no_category.append({"sku": sku, "product_id": prod.id, "reason": "ZERO_LAUNCH_DEMAND"})
-                    print(f"[COLD_START] SKIP sku={sku} cat={category} reason=ZERO_LAUNCH_DEMAND cwm={cwm:.2f}")
+                    print(f"[COLD_START] SKIP sku={sku} cat={category} reason=ZERO_LAUNCH_DEMAND cwm={cwm:.2f} est_weekly={estimated_weekly_sku}")
                     continue
 
             cat_stock_by_store = category_store_stock_cache.get(category, {})
@@ -2687,9 +2706,14 @@ def generate_predictions_from_macro(
                     for s in store_list:
                         s['w_store_cat'] = s['w_store_cat'] / sl_total
 
+            safety_buffer = 0.2
             for s in store_list:
+                per_store_demand_cap = math.ceil(total_units_to_allocate * s['w_store_cat'] * (1 + safety_buffer))
+                per_store_demand_cap = max(per_store_demand_cap, 1)
+                effective_cap = min(s['need_cap'], per_store_demand_cap)
+                s['effective_cap'] = effective_cap
                 s['raw_alloc'] = total_units_to_allocate * s['w_store_cat']
-                s['allocated'] = min(math.floor(s['raw_alloc']), s['need_cap'])
+                s['allocated'] = min(math.floor(s['raw_alloc']), effective_cap)
                 s['remainder'] = s['raw_alloc'] - math.floor(s['raw_alloc'])
 
             remainder_budget = total_units_to_allocate - sum(s['allocated'] for s in store_list)
@@ -2697,13 +2721,13 @@ def generate_predictions_from_macro(
             for s in by_remainder:
                 if remainder_budget <= 0:
                     break
-                room = s['need_cap'] - s['allocated']
+                room = s['effective_cap'] - s['allocated']
                 if room > 0:
                     s['allocated'] += 1
                     remainder_budget -= 1
 
             for rank_i, s in enumerate(store_list):
-                if rank_i < COLD_START_TOP_K_GUARANTEE and s['allocated'] == 0 and s['need_cap'] > 0 and total_units_to_allocate >= COLD_START_TOP_K_GUARANTEE:
+                if rank_i < COLD_START_TOP_K_GUARANTEE and s['allocated'] == 0 and s.get('effective_cap', s['need_cap']) > 0 and total_units_to_allocate >= COLD_START_TOP_K_GUARANTEE:
                     over_stores = [x for x in store_list if x['allocated'] > 1]
                     if over_stores:
                         donor = max(over_stores, key=lambda x: x['allocated'])
@@ -2730,9 +2754,10 @@ def generate_predictions_from_macro(
 
             fb_tag = f" fallback={fallback_used}" if fallback_used else ""
             print(f"[COLD_START] OK sku={sku} cat={category} cd={int(available_cd)} eligible_stores={len(store_list)} allocated={total_allocated}{fb_tag}")
+            print(f"[ALLOC_CAP] sku={sku} mode=cold_start horizon_weeks={weeks_target} est_weekly_sku={estimated_weekly_sku} total_need={cold_start_total_need} cd_stock={int(available_cd)} abs_cap={COLD_START_ABSOLUTE_CAP} total_alloc_cap={total_units_to_allocate} final_alloc={total_allocated}")
 
             if app.debug or os.environ.get('COLD_START_DEBUG'):
-                print(f"[COLD_START DEBUG] SKU={sku} cat={category} cwm={cwm:.2f} launch_total={total_units_to_allocate} cd={int(available_cd)} allocated={total_allocated}")
+                print(f"[COLD_START DEBUG] SKU={sku} cat={category} cwm={cwm:.2f} est_weekly_sku={estimated_weekly_sku} total_need={cold_start_total_need} alloc_cap={total_units_to_allocate} cd={int(available_cd)} allocated={total_allocated}")
                 print(f"  {'store':<20} {'rank':>4} {'weight':>8} {'raw':>6} {'stock':>5} {'alloc':>5} {'reason'}")
                 for rank_i, s in enumerate(store_list, 1):
                     sname = store_map.get(s['store_id'], f"ID:{s['store_id']}")

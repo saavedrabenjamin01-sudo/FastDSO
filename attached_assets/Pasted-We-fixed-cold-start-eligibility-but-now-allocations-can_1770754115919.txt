@@ -1,0 +1,38 @@
+We fixed cold-start eligibility but now allocations can explode (e.g., ~2000 units per run). We must cap allocations by DEMAND, not by CD stock availability.
+
+Implement strict allocation caps for both sales-based and cold-start SKUs:
+
+1) For sales-based SKUs (macro sales exists):
+- weekly_demand = SMA over chosen window (1/2/3 weeks)
+- horizon_weeks = selected model horizon (1/2/3)
+- per-store need = max(0, weekly_demand_store * horizon_weeks - store_stock)
+- total_need = sum(per-store need)
+- total_alloc_cap = min(total_need, cd_stock)
+
+2) For cold-start SKUs (no macro sales for SKU):
+- Compute category store weights from macro sales (already done)
+- Compute a conservative estimated weekly demand for THIS NEW SKU:
+    - category_weekly_total = SMA(category total units over window) / window_weeks
+    - estimate_method (pick ONE stable method):
+        A) estimated_weekly_sku = max(1, round(category_weekly_total * DEFAULT_NEW_SKU_SHARE))
+           where DEFAULT_NEW_SKU_SHARE is configurable (e.g., 0.03)
+        OR
+        B) estimated_weekly_sku = median(weekly_demand of existing SKUs in that category) * MEDIAN_MULTIPLIER (e.g., 0.5)
+- total_need = estimated_weekly_sku * horizon_weeks
+- Apply hard caps:
+    - ABSOLUTE_CAP_PER_SKU (config by category; default 50)
+    - total_alloc_cap = min(total_need, cd_stock, ABSOLUTE_CAP_PER_SKU)
+
+3) Allocation distribution:
+- Allocate across stores proportionally to category weights but:
+    - per-store cap = ceil(total_alloc_cap * weight * (1 + safety_buffer))
+    - enforce min 1 for top stores only if total_alloc_cap allows it
+    - never allocate above per-store cap or above store need (if store stock exists and you can compute it)
+
+4) Debug:
+For each SKU log:
+- sku, mode (sales_based/cold_start), horizon_weeks, weekly_demand (or estimated_weekly_sku), total_need, cd_stock, total_alloc_cap, final_alloc
+
+Goal:
+- Cold-start SKUs should not drain CD stock; they should allocate only what demand/horizon suggests.
+- Total run units should align with projected demand, not inventory availability.
