@@ -1,0 +1,55 @@
+We have a cold_start_category bug: NEW SKUs (no macro sales) still produce 0 predictions if the SKU has ANY store stock in at least one store.
+
+Current behavior (from debug):
+- SKUs without macro sales: 1
+- SKUs with any store stock: 1
+- SKUs eligible for cold start (no sales AND no stock): 0
+=> The eligibility requires BOTH no sales AND no stock globally, so the SKU is excluded from cold start and also excluded from sales-based, yielding 0.
+
+GOAL:
+A SKU with NO SALES must always be eligible for cold_start_category, even if some stores already have stock.
+Cold start should allocate per-store based on category store ranking + per-store stock gap. Stores that already have enough stock get 0, others receive units.
+
+CHANGES REQUIRED:
+
+1) FIX ELIGIBILITY CONDITION
+- Replace global condition:
+    eligible_cold_start = (no_sales AND no_stock_anywhere)
+  with:
+    eligible_cold_start = (no_sales)
+- Keep a separate flag:
+    has_any_store_stock = True/False
+  but DO NOT use it to block cold_start.
+
+2) IMPLEMENT PER-STORE GAP ALLOCATION FOR COLD START
+For each target store:
+- Compute store_stock_sku (0 if missing).
+- Determine desired target units:
+  Option A (preferred): use category proxy demand (weekly mean for category) * target_woc, then:
+      desired_units = ceil(category_proxy_weekly * target_woc)
+  Option B (fallback if proxy unavailable): starter_units = 1 or 2
+- Then:
+      needed = max(0, desired_units - store_stock_sku)
+
+3) STORE SELECTION (TOP N)
+- Rank stores by category strength (category share / recent category sales) using MacroSales/SalesWeeklyAgg.
+- For cold start, default topN = 20.
+- Allocate only to topN stores, but allow 0 for stores whose stock already covers desired_units.
+
+4) MINIMUM PRESENCE RULE (IMPORTANT)
+Even if a store has weak category rank, if it has RECENT category activity OR is within rank <= topN, it should be eligible.
+But do NOT allocate if needed == 0.
+If cd_stock > 0 and total allocations still == 0 (edge-case), force allocate 1 unit to the best stores that have store_stock_sku == 0 until cd_stock runs out (log reason FORCE_MIN_ALLOC).
+
+5) DEBUG OUTPUT
+For cold start SKUs, print a concise per-store debug table for the targeted SKU:
+- store_name, rank, category_proxy_weekly, target_units, store_stock_sku, needed, allocated, reason_code
+
+6) REGRESSION SAFETY
+- Do not change sales-based SMA models logic.
+- Ensure cold start path is only used when sku has NO sales history in macro.
+- Keep performance acceptable (debug behind flag).
+
+EXPECTED RESULT:
+If a SKU has no sales, we should get predictions > 0 whenever CD stock exists and there are eligible stores with store_stock_sku < desired_units.
+Stores that already have stock should not necessarily receive more.

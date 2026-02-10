@@ -2362,14 +2362,6 @@ def generate_predictions_from_macro(
             
             top_stores = sorted(eligible_stores, key=lambda x: x[1], reverse=True)[:COLD_START_TOP_STORES]
             
-            if not top_stores:
-                cold_start_no_category.append({
-                    "sku": sku,
-                    "product_id": prod.id,
-                    "reason": "NO_ELIGIBLE_STORES"
-                })
-                continue
-            
             available_cd = cd_remaining_after_base.get(prod.id, cd_stock.get(prod.id))
             if available_cd is None or available_cd <= 0:
                 cold_start_no_category.append({
@@ -2378,6 +2370,24 @@ def generate_predictions_from_macro(
                     "reason": "NO_CD_STOCK"
                 })
                 continue
+            
+            force_min_mode = False
+            if not top_stores:
+                all_cat_stores = sorted(cat_rates.items(), key=lambda x: x[1], reverse=True)[:COLD_START_TOP_STORES]
+                fallback_stores = []
+                for store_id, cat_sales_rate in all_cat_stores:
+                    store_stock = store_stock_map.get((prod.id, store_id), 0)
+                    fallback_stores.append((store_id, cat_sales_rate, store_stock, 1))
+                fallback_stores.sort(key=lambda x: (x[2], -x[1]))
+                top_stores = fallback_stores
+                force_min_mode = True
+                if not top_stores:
+                    cold_start_no_category.append({
+                        "sku": sku,
+                        "product_id": prod.id,
+                        "reason": "NO_ELIGIBLE_STORES"
+                    })
+                    continue
             
             budget = int(available_cd)
             n_stores = len(top_stores)
@@ -2393,7 +2403,8 @@ def generate_predictions_from_macro(
                     'max_cap': effective_cap,
                     'current_stock': current_stock,
                     'need': need,
-                    'allocated': 0
+                    'allocated': 0,
+                    '_force_min': force_min_mode,
                 })
             
             if not store_list:
@@ -2439,11 +2450,33 @@ def generate_predictions_from_macro(
                     break
             
             total_allocated = sum(s['allocated'] for s in store_list)
+
+            if total_allocated == 0 and budget > 0:
+                zero_stock_stores = [s for s in store_list if s['current_stock'] == 0]
+                if not zero_stock_stores:
+                    zero_stock_stores = sorted(store_list, key=lambda x: x['current_stock'])
+                for s in zero_stock_stores:
+                    if budget <= 0:
+                        break
+                    s['allocated'] = 1
+                    s['_force_min'] = True
+                    budget -= 1
+                    total_allocated += 1
+
+            if app.debug or os.environ.get('COLD_START_DEBUG'):
+                print(f"[COLD_START DEBUG] SKU={sku} category={category} cd_available={int(available_cd)} total_allocated={total_allocated}")
+                print(f"  {'store':<20} {'rank':>4} {'cat_wk_rate':>10} {'target':>6} {'stock':>5} {'need':>4} {'alloc':>5} {'reason'}")
+                for rank_i, s in enumerate(store_list, 1):
+                    sname = store_map.get(s['store_id'], f"ID:{s['store_id']}")
+                    reason = "FORCE_MIN_ALLOC" if s.get('_force_min') else ("OK" if s['allocated'] > 0 else "BUDGET_EXHAUSTED")
+                    print(f"  {sname:<20} {rank_i:>4} {s['cat_sales_rate']:>10.2f} {math.ceil(s['cat_sales_rate']*COLD_START_TARGET_WOC):>6} {s['current_stock']:>5} {s['need']:>4} {s['allocated']:>5} {reason}")
+
             for s in store_list:
                 store_name = store_map.get(s['store_id'])
                 if not store_name:
                     continue
                 suggested = int(s['allocated'])
+                reason_code = "FORCE_MIN_ALLOC" if s.get('_force_min') else "COLD_START_GAP"
                 if suggested > 0:
                     cold_start_candidates.append({
                         "sku": sku,
@@ -2455,6 +2488,7 @@ def generate_predictions_from_macro(
                         "category": category,
                         "cat_sales_rate": s['cat_sales_rate'],
                         "stock_store_used": s['current_stock'],
+                        "reason_code": reason_code,
                     })
             
             cd_remaining_after_base[prod.id] = max(int(available_cd) - total_allocated, 0)
