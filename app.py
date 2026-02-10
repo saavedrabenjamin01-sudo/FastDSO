@@ -2388,7 +2388,6 @@ def generate_predictions_from_macro(
     
     # --- Top-10 Minimum Guaranteed Allocation ---
     # Compute rank per SKU across stores by total sales in window
-    from collections import defaultdict
     preds_by_product = defaultdict(list)
     for pred in raw_preds:
         preds_by_product[pred["product_id"]].append(pred)
