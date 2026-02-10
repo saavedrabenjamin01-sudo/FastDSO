@@ -1959,15 +1959,23 @@ def generate_predictions_from_macro(
     raw_preds = []
     skus_with_sales_estimation = set()
     
-    # Pre-compute category sales rates per store (for BACKOFF_STOCKOUT tie-breaking)
-    # Map: (category, store_id) -> avg_weekly_rate
-    cat_store_sales_rate = {}
     product_category_map = {p.id: p.category for p in product_map.values()}
     categories_in_scope = set(c for c in product_category_map.values() if c)
-    
+
+    CAT_WEIGHT_WINDOW_WEEKS = 12
+    CAT_WEIGHT_ALPHA = 1.0
+    CAT_WEIGHT_MIN_EPSILON = 0.002
+    COLD_START_LAUNCH_FACTOR = 0.20
+
+    cat_store_sales_rate = {}
+    cat_store_weights = {}
+    cat_total_units = {}
+    cat_weekly_mean = {}
+    cat_store_units_raw = defaultdict(lambda: defaultdict(float))
+
     if categories_in_scope:
         from datetime import timedelta
-        cutoff_date = get_analysis_end_date() - timedelta(weeks=12)
+        cutoff_date = get_analysis_end_date() - timedelta(weeks=CAT_WEIGHT_WINDOW_WEEKS)
         cat_agg = (
             db.session.query(
                 SalesWeeklyAgg.category,
@@ -1982,9 +1990,33 @@ def generate_predictions_from_macro(
             .group_by(SalesWeeklyAgg.category, SalesWeeklyAgg.store_id)
             .all()
         )
+
         for cat, store_id, total_units, weeks_count in cat_agg:
-            if weeks_count > 0:
-                cat_store_sales_rate[(cat, store_id)] = total_units / max(weeks_count, 1)
+            units_val = total_units or 0
+            cat_store_units_raw[cat][store_id] = units_val
+            if weeks_count and weeks_count > 0:
+                cat_store_sales_rate[(cat, store_id)] = units_val / max(weeks_count, 1)
+
+        all_store_ids = list(store_map.keys())
+        num_stores = len(all_store_ids)
+
+        for cat, store_units in cat_store_units_raw.items():
+            total = sum(store_units.values())
+            cat_total_units[cat] = total
+            total_weeks_for_cat = CAT_WEIGHT_WINDOW_WEEKS
+            cat_weekly_mean[cat] = total / total_weeks_for_cat if total_weeks_for_cat > 0 else 0
+
+            denominator = total + CAT_WEIGHT_ALPHA * num_stores
+            weights = {}
+            for sid in all_store_ids:
+                raw_units = store_units.get(sid, 0)
+                w = (raw_units + CAT_WEIGHT_ALPHA) / denominator if denominator > 0 else 0
+                w = max(w, CAT_WEIGHT_MIN_EPSILON)
+                weights[sid] = w
+            w_sum = sum(weights.values())
+            if w_sum > 0:
+                weights = {sid: wv / w_sum for sid, wv in weights.items()}
+            cat_store_weights[cat] = weights
     
     if data:
         df = pd.DataFrame(data)
@@ -2051,18 +2083,31 @@ def generate_predictions_from_macro(
             weekly_rate = weekly_rate_used
             
             import math
-            # Horizon-based target: target_units = ceil(weekly_rate * weeks_target)
             target_units = math.ceil(weekly_rate * weeks_target) if weekly_rate > 0 else 0
             suggested_raw = max(target_units - stock_qty, 0)
             max_alloc_woc = math.ceil(MAX_WOC_CAP * weekly_rate)
             suggested = min(suggested_raw, max_alloc_woc, MAX_UNITS_PER_STORE_EVENT)
-            
-            # Determine reason code for caps and zero cases
+
+            cat_weight_factor = 1.0
+            product_category = product_category_map.get(product.id)
+            w_store_cat_val = 0.0
+            if product_category and suggested_raw > 0:
+                cat_w = cat_store_weights.get(product_category, {})
+                if cat_w:
+                    w_store_cat_val = cat_w.get(store_id, 0)
+                    w_values = list(cat_w.values())
+                    w_values.sort()
+                    mid = len(w_values) // 2
+                    median_w = w_values[mid] if w_values else 0
+                    if median_w > 0:
+                        cat_weight_factor = max(0.6, min(w_store_cat_val / median_w, 1.6))
+                    adjusted_raw = round(suggested_raw * cat_weight_factor)
+                    suggested = min(adjusted_raw, max_alloc_woc, MAX_UNITS_PER_STORE_EVENT)
+
             reason_code = "OK"
             if backoff_applied:
                 reason_code = "BACKOFF_STOCKOUT"
             elif suggested_raw == 0 and weekly_rate > 0:
-                # STOCK_COVERS: stock already covers the horizon target
                 reason_code = "STOCK_COVERS"
             elif weekly_rate == 0:
                 reason_code = "NO_SALES_IN_WINDOW"
@@ -2071,6 +2116,8 @@ def generate_predictions_from_macro(
                     reason_code = "CAPPED_EVENT"
                 elif suggested == max_alloc_woc and suggested_raw > max_alloc_woc:
                     reason_code = "CAPPED_WOC"
+            if cat_weight_factor != 1.0 and suggested > 0 and reason_code in ("OK", "BACKOFF_STOCKOUT"):
+                reason_code = "BREAK_PROPORTIONAL_ADJUST"
             
             # Get week values for debug (last N weeks)
             week_values = last_weeks['quantity'].tolist()
@@ -2084,12 +2131,10 @@ def generate_predictions_from_macro(
             need_units = suggested_raw  # Primary: cover stockouts first
             sku_sales_rate_store = round(weekly_rate, 4)  # Secondary: higher SKU sellers first
             
-            # Category rate for BACKOFF_STOCKOUT tie-breaking only
-            product_category = product_category_map.get(product.id)
             cat_sales_rate_store = 0.0
             if product_category:
                 cat_sales_rate_store = round(cat_store_sales_rate.get((product_category, store_id), 0.0), 4)
-            
+
             raw_preds.append({
                 "sku": sku_key,
                 "store": store_key,
@@ -2115,6 +2160,8 @@ def generate_predictions_from_macro(
                 "need_units": need_units,
                 "sku_sales_rate_store": sku_sales_rate_store,
                 "cat_sales_rate_store": cat_sales_rate_store,
+                "w_store_cat": round(w_store_cat_val, 6),
+                "cat_weight_factor": round(cat_weight_factor, 4),
             })
             skus_with_sales_estimation.add(sku_key)
     
@@ -2244,41 +2291,17 @@ def generate_predictions_from_macro(
     skus_without_macro_sales = scope_skus_set - skus_with_sales_estimation
     
     skus_eligible_for_cold_start = skus_without_macro_sales
-    
-    COLD_START_MIN_FILL = 2
+
     COLD_START_TOP_STORES = 20
-    COLD_START_WINDOW_WEEKS = 12
-    MAX_CAT_WOC = 6.0
-    COLD_START_TARGET_WOC = 2.0
-    
-    cold_start_end = get_analysis_end_date()
-    cold_start_window = cold_start_end - timedelta(weeks=COLD_START_WINDOW_WEEKS)
-    
+    COLD_START_TOP_K_GUARANTEE = 5
+
     cold_start_candidates = []
     cold_start_no_category = []
     cold_start_store_skips = defaultdict(int)
-    
+
     if skus_eligible_for_cold_start:
         import math
-        
-        category_store_rates = defaultdict(lambda: defaultdict(float))
-        cat_agg_query = (
-            db.session.query(
-                SalesWeeklyAgg.category,
-                SalesWeeklyAgg.store_id,
-                func.sum(SalesWeeklyAgg.units).label('total_units'),
-                func.count(func.distinct(SalesWeeklyAgg.week_start)).label('weeks')
-            )
-            .filter(SalesWeeklyAgg.week_start >= cold_start_window)
-            .filter(SalesWeeklyAgg.category.isnot(None))
-            .group_by(SalesWeeklyAgg.category, SalesWeeklyAgg.store_id)
-            .all()
-        )
-        
-        for cat, store_id, total_units, weeks in cat_agg_query:
-            if weeks > 0:
-                category_store_rates[cat][store_id] = (total_units or 0) / weeks
-        
+
         latest_stock_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
         store_stock_map = {}
         if latest_stock_date:
@@ -2289,194 +2312,159 @@ def generate_predictions_from_macro(
             )
             for pid, sid, qty in stock_snap_q:
                 store_stock_map[(pid, sid)] = qty or 0
-        
-        category_store_stock = defaultdict(lambda: defaultdict(float))
-        if latest_stock_date:
-            cat_stock_q = (
-                db.session.query(
-                    Product.category,
-                    StockSnapshot.store_id,
-                    func.sum(StockSnapshot.quantity)
-                )
-                .join(Product, StockSnapshot.product_id == Product.id)
-                .filter(StockSnapshot.as_of_date == latest_stock_date)
-                .filter(Product.category.isnot(None))
-                .group_by(Product.category, StockSnapshot.store_id)
-                .all()
-            )
-            for cat, store_id, total_cat_stock in cat_stock_q:
-                category_store_stock[cat][store_id] = total_cat_stock or 0
-        
+
         cd_remaining_after_base = {}
         base_assigned_by_product = defaultdict(int)
         for it in final_preds:
             base_assigned_by_product[it["product_id"]] += int(it["suggested"])
-        
         for product_id in cd_stock:
             original = cd_stock[product_id]
             assigned = base_assigned_by_product.get(product_id, 0)
             cd_remaining_after_base[product_id] = max(original - assigned, 0)
-        
+
+        MAX_CAT_WOC = 6.0
+        latest_stock_date_cs = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
+        category_store_stock_cache = defaultdict(lambda: defaultdict(float))
+        if latest_stock_date_cs:
+            cat_stock_all = (
+                db.session.query(Product.category, StockSnapshot.store_id, func.sum(StockSnapshot.quantity))
+                .join(Product, StockSnapshot.product_id == Product.id)
+                .filter(StockSnapshot.as_of_date == latest_stock_date_cs)
+                .filter(Product.category.isnot(None))
+                .group_by(Product.category, StockSnapshot.store_id)
+                .all()
+            )
+            for cat_q, sid_q, total_cat_stock in cat_stock_all:
+                category_store_stock_cache[cat_q][sid_q] = total_cat_stock or 0
+
         for sku in skus_eligible_for_cold_start:
             prod = product_map.get(sku)
             if not prod:
                 continue
-            
+
             category = prod.category
             if not category or category.strip() == '':
-                cold_start_no_category.append({
-                    "sku": sku,
-                    "product_id": prod.id,
-                    "reason": "NO_CATEGORY"
-                })
+                cold_start_no_category.append({"sku": sku, "product_id": prod.id, "reason": "NO_CATEGORY"})
                 continue
-            
-            cat_rates = category_store_rates.get(category, {})
-            if not cat_rates:
-                cold_start_no_category.append({
-                    "sku": sku,
-                    "product_id": prod.id,
-                    "reason": "NO_CATEGORY_SALES"
-                })
+
+            weights = cat_store_weights.get(category)
+            cwm = cat_weekly_mean.get(category, 0)
+            if not weights or cwm <= 0:
+                cold_start_no_category.append({"sku": sku, "product_id": prod.id, "reason": "NO_CATEGORY_SALES"})
                 continue
-            
-            cat_stock_by_store = category_store_stock.get(category, {})
-            
-            eligible_stores = []
-            for store_id, cat_sales_rate in cat_rates.items():
-                if cat_sales_rate <= 0:
-                    cold_start_store_skips['NO_CAT_RATE'] += 1
-                    continue
-                store_stock = store_stock_map.get((prod.id, store_id), 0)
-                target_units = math.ceil(cat_sales_rate * COLD_START_TARGET_WOC)
-                need = max(target_units - store_stock, 0)
-                if need <= 0:
-                    cold_start_store_skips['STOCK_COVERS'] += 1
-                    continue
-                cat_stock = cat_stock_by_store.get(store_id, 0)
-                cat_woc = cat_stock / max(cat_sales_rate, 1)
-                if cat_woc > MAX_CAT_WOC:
-                    cold_start_store_skips['AT_CAT_TARGET'] += 1
-                    continue
-                eligible_stores.append((store_id, cat_sales_rate, store_stock, need))
-            
-            top_stores = sorted(eligible_stores, key=lambda x: x[1], reverse=True)[:COLD_START_TOP_STORES]
-            
+
             available_cd = cd_remaining_after_base.get(prod.id, cd_stock.get(prod.id))
             if available_cd is None or available_cd <= 0:
-                cold_start_no_category.append({
-                    "sku": sku,
-                    "product_id": prod.id,
-                    "reason": "NO_CD_STOCK"
-                })
+                cold_start_no_category.append({"sku": sku, "product_id": prod.id, "reason": "NO_CD_STOCK"})
                 continue
-            
-            force_min_mode = False
-            if not top_stores:
-                all_cat_stores = sorted(cat_rates.items(), key=lambda x: x[1], reverse=True)[:COLD_START_TOP_STORES]
-                fallback_stores = []
-                for store_id, cat_sales_rate in all_cat_stores:
-                    store_stock = store_stock_map.get((prod.id, store_id), 0)
-                    fallback_stores.append((store_id, cat_sales_rate, store_stock, 1))
-                fallback_stores.sort(key=lambda x: (x[2], -x[1]))
-                top_stores = fallback_stores
-                force_min_mode = True
-                if not top_stores:
-                    cold_start_no_category.append({
-                        "sku": sku,
-                        "product_id": prod.id,
-                        "reason": "NO_ELIGIBLE_STORES"
-                    })
-                    continue
-            
-            budget = int(available_cd)
-            n_stores = len(top_stores)
-            
-            store_list = []
-            for store_id, cat_sales_rate, current_stock, need in top_stores:
-                effective_cap = min(need, MAX_UNITS_PER_STORE_EVENT)
-                if effective_cap <= 0:
-                    continue
-                store_list.append({
-                    'store_id': store_id,
-                    'cat_sales_rate': cat_sales_rate,
-                    'max_cap': effective_cap,
-                    'current_stock': current_stock,
-                    'need': need,
-                    'allocated': 0,
-                    '_force_min': force_min_mode,
-                })
-            
-            if not store_list:
-                continue
-            
-            for s in store_list:
-                if budget <= 0:
-                    break
-                min_give = min(COLD_START_MIN_FILL, s['max_cap'])
-                give = min(min_give, budget)
-                s['allocated'] = give
-                budget -= give
-            
-            if budget > 0:
-                for s in store_list:
-                    if budget <= 0:
-                        break
-                    room = s['max_cap'] - s['allocated']
-                    if room > 0:
-                        give = min(room, budget)
-                        s['allocated'] += give
-                        budget -= give
-            
-            n_stores_final = len(store_list)
-            for _ in range(n_stores_final):
-                changed = False
-                for i in range(n_stores_final - 1):
-                    hi = store_list[i]
-                    lo = store_list[i + 1]
-                    if hi['allocated'] < lo['allocated']:
-                        diff = lo['allocated'] - hi['allocated']
-                        room_hi = hi['max_cap'] - hi['allocated']
-                        if room_hi > 0:
-                            transfer = min(diff, room_hi, lo['allocated'] - 1) if lo['allocated'] > 1 else 0
-                            if transfer > 0:
-                                hi['allocated'] += transfer
-                                lo['allocated'] -= transfer
-                                changed = True
-                        if hi['allocated'] < lo['allocated'] and hi['allocated'] >= hi['max_cap']:
-                            lo['allocated'] = hi['allocated']
-                            changed = True
-                if not changed:
-                    break
-            
-            total_allocated = sum(s['allocated'] for s in store_list)
 
-            if total_allocated == 0 and budget > 0:
-                zero_stock_stores = [s for s in store_list if s['current_stock'] == 0]
-                if not zero_stock_stores:
-                    zero_stock_stores = sorted(store_list, key=lambda x: x['current_stock'])
-                for s in zero_stock_stores:
-                    if budget <= 0:
+            total_units_to_allocate = math.ceil(cwm * weeks_target * COLD_START_LAUNCH_FACTOR)
+            total_units_to_allocate = min(total_units_to_allocate, int(available_cd))
+            if total_units_to_allocate <= 0:
+                cold_start_no_category.append({"sku": sku, "product_id": prod.id, "reason": "ZERO_LAUNCH_DEMAND"})
+                continue
+
+            sorted_stores = sorted(weights.items(), key=lambda x: x[1], reverse=True)[:COLD_START_TOP_STORES]
+            candidate_ids = [sid for sid, _ in sorted_stores]
+
+            w_subset = {sid: weights[sid] for sid in candidate_ids}
+            w_total = sum(w_subset.values())
+            if w_total > 0:
+                w_subset = {sid: wv / w_total for sid, wv in w_subset.items()}
+
+            cat_stock_by_store = category_store_stock_cache.get(category, {})
+
+            store_list = []
+            excluded_weight = 0.0
+            for sid in candidate_ids:
+                current_stock = store_stock_map.get((prod.id, sid), 0)
+                if current_stock >= MAX_UNITS_PER_STORE_EVENT:
+                    cold_start_store_skips['STOCK_MAXED'] += 1
+                    excluded_weight += w_subset.get(sid, 0)
+                    continue
+                cat_rate = cat_store_sales_rate.get((category, sid), 0)
+                if cat_rate > 0:
+                    cat_stock_val = cat_stock_by_store.get(sid, 0)
+                    cat_woc = cat_stock_val / cat_rate
+                    if cat_woc > MAX_CAT_WOC:
+                        cold_start_store_skips['AT_CAT_TARGET'] += 1
+                        excluded_weight += w_subset.get(sid, 0)
+                        continue
+                need_cap = max(MAX_UNITS_PER_STORE_EVENT - current_stock, 0)
+                store_list.append({
+                    'store_id': sid,
+                    'w_store_cat': w_subset.get(sid, 0),
+                    'need_cap': need_cap,
+                    'current_stock': current_stock,
+                    'allocated': 0,
+                    'raw_alloc': 0.0,
+                    'remainder': 0.0,
+                    'reason': 'COLD_START_PROPORTIONAL',
+                })
+
+            if not store_list:
+                cold_start_no_category.append({"sku": sku, "product_id": prod.id, "reason": "NO_ELIGIBLE_STORES"})
+                continue
+
+            if excluded_weight > 0:
+                sl_total = sum(s['w_store_cat'] for s in store_list)
+                if sl_total > 0:
+                    for s in store_list:
+                        s['w_store_cat'] = s['w_store_cat'] / sl_total
+
+            for s in store_list:
+                s['raw_alloc'] = total_units_to_allocate * s['w_store_cat']
+                s['allocated'] = min(math.floor(s['raw_alloc']), s['need_cap'])
+                s['remainder'] = s['raw_alloc'] - math.floor(s['raw_alloc'])
+
+            remainder_budget = total_units_to_allocate - sum(s['allocated'] for s in store_list)
+            by_remainder = sorted(store_list, key=lambda x: x['remainder'], reverse=True)
+            for s in by_remainder:
+                if remainder_budget <= 0:
+                    break
+                room = s['need_cap'] - s['allocated']
+                if room > 0:
+                    s['allocated'] += 1
+                    remainder_budget -= 1
+
+            for rank_i, s in enumerate(store_list):
+                if rank_i < COLD_START_TOP_K_GUARANTEE and s['allocated'] == 0 and s['need_cap'] > 0 and total_units_to_allocate >= COLD_START_TOP_K_GUARANTEE:
+                    over_stores = [x for x in store_list if x['allocated'] > 1]
+                    if over_stores:
+                        donor = max(over_stores, key=lambda x: x['allocated'])
+                        donor['allocated'] -= 1
+                        s['allocated'] = 1
+                        s['reason'] = 'TOP_K_GUARANTEE'
+
+            force_min_applied = False
+            total_allocated = sum(s['allocated'] for s in store_list)
+            if total_allocated == 0 and total_units_to_allocate > 0:
+                force_min_applied = True
+                zero_stock = sorted([s for s in store_list if s['current_stock'] == 0], key=lambda x: -x['w_store_cat'])
+                if not zero_stock:
+                    zero_stock = sorted(store_list, key=lambda x: (x['current_stock'], -x['w_store_cat']))
+                budget_left = total_units_to_allocate
+                for s in zero_stock:
+                    if budget_left <= 0:
                         break
                     s['allocated'] = 1
-                    s['_force_min'] = True
-                    budget -= 1
-                    total_allocated += 1
+                    s['reason'] = 'FORCE_MIN_ALLOC'
+                    budget_left -= 1
+
+            total_allocated = sum(s['allocated'] for s in store_list)
 
             if app.debug or os.environ.get('COLD_START_DEBUG'):
-                print(f"[COLD_START DEBUG] SKU={sku} category={category} cd_available={int(available_cd)} total_allocated={total_allocated}")
-                print(f"  {'store':<20} {'rank':>4} {'cat_wk_rate':>10} {'target':>6} {'stock':>5} {'need':>4} {'alloc':>5} {'reason'}")
+                print(f"[COLD_START DEBUG] SKU={sku} cat={category} cwm={cwm:.2f} launch_total={total_units_to_allocate} cd={int(available_cd)} allocated={total_allocated}")
+                print(f"  {'store':<20} {'rank':>4} {'weight':>8} {'raw':>6} {'stock':>5} {'alloc':>5} {'reason'}")
                 for rank_i, s in enumerate(store_list, 1):
                     sname = store_map.get(s['store_id'], f"ID:{s['store_id']}")
-                    reason = "FORCE_MIN_ALLOC" if s.get('_force_min') else ("OK" if s['allocated'] > 0 else "BUDGET_EXHAUSTED")
-                    print(f"  {sname:<20} {rank_i:>4} {s['cat_sales_rate']:>10.2f} {math.ceil(s['cat_sales_rate']*COLD_START_TARGET_WOC):>6} {s['current_stock']:>5} {s['need']:>4} {s['allocated']:>5} {reason}")
+                    print(f"  {sname:<20} {rank_i:>4} {s['w_store_cat']:>8.4f} {s['raw_alloc']:>6.1f} {s['current_stock']:>5} {s['allocated']:>5} {s['reason']}")
 
             for s in store_list:
                 store_name = store_map.get(s['store_id'])
                 if not store_name:
                     continue
                 suggested = int(s['allocated'])
-                reason_code = "FORCE_MIN_ALLOC" if s.get('_force_min') else "COLD_START_GAP"
                 if suggested > 0:
                     cold_start_candidates.append({
                         "sku": sku,
@@ -2486,13 +2474,14 @@ def generate_predictions_from_macro(
                         "suggested": suggested,
                         "model_name": f"COLD_START_CATEGORY ({category})",
                         "category": category,
-                        "cat_sales_rate": s['cat_sales_rate'],
+                        "cat_sales_rate": cat_store_sales_rate.get((category, s['store_id']), 0),
                         "stock_store_used": s['current_stock'],
-                        "reason_code": reason_code,
+                        "reason_code": s['reason'],
+                        "w_store_cat": s['w_store_cat'],
                     })
-            
+
             cd_remaining_after_base[prod.id] = max(int(available_cd) - total_allocated, 0)
-        
+
         for cand in cold_start_candidates:
             final_preds.append(cand)
     
@@ -2502,6 +2491,10 @@ def generate_predictions_from_macro(
     capped_rows = len([p for p in final_preds if p.get('suggested', 0) == MAX_UNITS_PER_STORE_EVENT])
     max_single_row = max((p.get('suggested', 0) for p in final_preds), default=0)
     
+    proportional_adjusted = len([p for p in final_preds if p.get('reason_code') == 'BREAK_PROPORTIONAL_ADJUST'])
+    cold_start_proportional = len([p for p in final_preds if p.get('reason_code') == 'COLD_START_PROPORTIONAL'])
+    force_min_count = len([p for p in final_preds if p.get('reason_code') == 'FORCE_MIN_ALLOC'])
+
     print(f"[DISTRIBUTION DEBUG] === RUN SAFETY CHECK ===")
     print(f"[DISTRIBUTION DEBUG] Scope SKUs: {len(scope_skus_set)}")
     print(f"[DISTRIBUTION DEBUG] SKUs with macro sales data: {len(skus_with_sales_estimation)}")
@@ -2511,9 +2504,8 @@ def generate_predictions_from_macro(
     if cold_start_no_category:
         for skip in cold_start_no_category[:10]:
             print(f"[DISTRIBUTION DEBUG]   skip: sku={skip['sku']} reason={skip['reason']}")
-    if cold_start_store_skips:
-        print(f"[DISTRIBUTION DEBUG] Cold start store-level skips: {dict(cold_start_store_skips)}")
     print(f"[DISTRIBUTION DEBUG] Final predictions: {len(final_preds)} ({sales_based_used} sales-based, {cold_start_used} cold start)")
+    print(f"[DISTRIBUTION DEBUG] Proportional: {cold_start_proportional} cold_start, {proportional_adjusted} break_adjust, {force_min_count} force_min")
     print(f"[DISTRIBUTION DEBUG] Total units: {total_units}")
     print(f"[DISTRIBUTION DEBUG] Capped rows (hit MAX_UNITS limit): {capped_rows}")
     print(f"[DISTRIBUTION DEBUG] Max single row qty: {max_single_row}")

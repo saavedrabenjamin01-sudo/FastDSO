@@ -1,0 +1,78 @@
+We need to upgrade distribution logic so that BOTH:
+A) cold_start_category (new SKU with no sales) and
+B) shortage / projected-stockout allocations (sales-based SMA models)
+allocate quantities PROPORTIONALLY to store category hierarchy (category sales weight), not “1 unit per store”.
+
+CURRENT ISSUE:
+Cold start now allocates at least 1 unit per store, which is wrong for launches/brand-new SKUs.
+We need proportional allocation based on store category performance.
+Also, for SKUs distributed due to break/stockout, category hierarchy must influence allocation (tie-breaker + multiplier), so high-performing category stores get priority.
+
+IMPLEMENTATION REQUIREMENTS:
+
+1) BUILD STORE CATEGORY WEIGHTS (MacroSales-driven)
+- For each store and category, compute `cat_units_recent` over a configurable window (default 8-12 weeks).
+- For the same category, compute total across stores `cat_units_total`.
+- Define weight:
+    w_store_cat = cat_units_recent / cat_units_total
+- Add smoothing to avoid zero weights:
+    w_smooth = (cat_units_recent + alpha) / (cat_units_total + alpha * num_stores)
+  where alpha default = 1.0
+- Optionally cap min weight to a tiny epsilon (e.g., 0.002) to avoid 0 allocations.
+
+2) COLD_START_CATEGORY ALLOCATION (no SKU sales)
+Inputs:
+- total_units_to_allocate for the SKU:
+   derive from category demand proxy:
+     cat_weekly_mean = total category units in window / weeks_in_window
+     total_units_to_allocate = ceil(cat_weekly_mean * horizon_weeks * launch_factor)
+   defaults:
+     horizon_weeks comes from selected model (1w/2w/3w)
+     launch_factor default 0.15 to 0.30 (configurable) so we don't flood.
+- Candidate stores:
+   topN stores by w_store_cat (default topN=20) OR stores with any recent category activity.
+
+Allocation:
+- Compute desired allocation per store:
+    raw_i = total_units_to_allocate * w_store_cat_i
+- Convert to integers:
+    alloc_i = floor(raw_i)
+- Distribute remainder using Largest Remainder Method:
+    remainder = total_units_to_allocate - sum(alloc_i)
+    give +1 to stores with largest (raw_i - floor(raw_i)) until remainder=0
+- Respect constraints:
+    - if store already has stock_store_sku >= desired_target_units (optional): allow alloc_i = 0
+    - do not allocate to stores with store_stock_sku > max_stock_threshold (optional)
+- Ensure meaningful minimums:
+    - For the topK stores (default 5), enforce alloc_i >= 1 IF total_units_to_allocate >= topK
+      (prevents a top store getting 0 due to rounding)
+
+3) SALES-BASED SMA ALLOCATION ENHANCEMENT (break / projected break)
+When we compute `needed_units` per store from SMA demand and WOC logic, apply category hierarchy as modifier:
+- Determine base_needed = max(0, target_units - store_stock_sku)
+- Determine category weight factor:
+    factor_i = clamp( (w_store_cat_i / median_w_store_cat), 0.6, 1.6 )
+  (so strong stores get boosted, weak stores reduced, but not extreme)
+- Apply:
+    adjusted_needed = round(base_needed * factor_i)
+- Keep existing "STOCK_COVERS" logic:
+    if store_stock_sku already covers target units -> 0
+- Ensure we still prioritize breaks first:
+    - Only apply factor AFTER break eligibility is met.
+    - Do not allocate to non-break stores ahead of break stores.
+
+4) DEBUG + TRANSPARENCY
+- Add reason codes:
+   COLD_START_PROPORTIONAL
+   BREAK_PROPORTIONAL_ADJUST
+- For a targeted SKU, print per-store:
+   store, rank, w_store_cat, base_needed, factor, adjusted_needed, final_alloc, reason
+
+5) SAFETY & PERFORMANCE
+- All computations must use pre-aggregated MacroSales (SalesWeeklyAgg) not raw rows.
+- Cache weights per category for the request/run.
+- Ensure this change does NOT break existing UI or DB schema.
+
+EXPECTED BEHAVIOR:
+- For a new launch SKU, total allocation is driven by category demand proxy and distributed proportionally to top stores by category sales.
+- For break SKUs, high-category-performing stores receive more of the replenishment while still respecting stock coverage and break priority.
