@@ -2423,6 +2423,9 @@ def generate_predictions_from_macro(
     else:
         cd_stock = {}
     
+    store_stock_bulk = get_store_operational_stock_bulk()
+    store_stock_lookup = {(pid, sid): qty for (sid, pid), qty in store_stock_bulk.items()}
+    
     per_product = defaultdict(list)
     for r in raw_preds:
         r["cd_stock_used"] = cd_stock.get(r["product_id"], 0)
