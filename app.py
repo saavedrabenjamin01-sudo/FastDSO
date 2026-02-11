@@ -1651,7 +1651,8 @@ def generate_predictions(
     # 4) Aplicar límite por stock CD (priorizar tiendas con más demanda)
     # Reuse cd_stock_lookup and active_cd_stock_date from step 3
     cd_stock = cd_stock_lookup
-    snapshot_date = active_cd_stock_date
+    as_of_date = active_cd_stock_date
+    print(f"[DISTRIBUTION DEBUG] as_of_date={as_of_date}")
 
     per_product = defaultdict(list)
     for r in raw_preds:
@@ -1750,7 +1751,7 @@ def generate_predictions(
     
     stockout_candidates = []
     
-    if latest_stock_date and snapshot_date:
+    if latest_stock_date and as_of_date:
         # Reuse store_stock_lookup from step 3
         store_stock_map = store_stock_lookup
         
@@ -2010,7 +2011,7 @@ def generate_predictions(
             })
         
         cd_remaining = []
-        if snapshot_date:
+        if as_of_date:
             for cd_row in cd_stock_rows:
                 assigned = assigned_by_product.get(cd_row.product_id, 0)
                 remaining = max(cd_row.quantity - assigned, 0)
@@ -2073,9 +2074,9 @@ def generate_predictions(
         db.session.add_all(preds_bulk)
 
     # 6) Descontar del stock CD lo que realmente asignamos
-    if snapshot_date:
+    if as_of_date:
         for product_id, assigned_total in assigned_by_product.items():
-            cd_row = StockCD.query.filter_by(as_of_date=snapshot_date, product_id=product_id).first()
+            cd_row = StockCD.query.filter_by(as_of_date=as_of_date, product_id=product_id).first()
             if cd_row:
                 cd_row.quantity = max(cd_row.quantity - assigned_total, 0)
 
@@ -2484,6 +2485,8 @@ def generate_predictions_from_macro(
                 pred["reason_code"] = "TOP10_MIN_GUARANTEE"
     
     cd_stock = get_cd_stock_map()
+    as_of_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar()
+    print(f"[DISTRIBUTION DEBUG] as_of_date={as_of_date}")
     
     store_stock_bulk = get_store_operational_stock_bulk()
     store_stock_lookup = {(pid, sid): qty for (sid, pid), qty in store_stock_bulk.items()}
@@ -2925,9 +2928,9 @@ def generate_predictions_from_macro(
     if preds_bulk:
         db.session.add_all(preds_bulk)
     
-    if snapshot_date:
+    if as_of_date:
         for product_id, assigned_total in assigned_by_product.items():
-            cd_row = StockCD.query.filter_by(as_of_date=snapshot_date, product_id=product_id).first()
+            cd_row = StockCD.query.filter_by(as_of_date=as_of_date, product_id=product_id).first()
             if cd_row:
                 cd_row.quantity = max(cd_row.quantity - assigned_total, 0)
     

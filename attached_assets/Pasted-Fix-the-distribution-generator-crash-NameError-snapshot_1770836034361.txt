@@ -1,0 +1,38 @@
+Fix the distribution generator crash: NameError "snapshot_date is not defined".
+
+Goal:
+- Eliminate any reference to an undefined variable snapshot_date during distribution request processing and distribution run generation.
+- Ensure a single, consistent variable name is used for the “as-of” date across:
+  - CD stock latest snapshot lookup
+  - store stock lookup
+  - sales macro weekly aggregation (if it uses a date anchor)
+  - distribution run metadata (created_at is separate)
+
+Steps:
+1) Search the codebase (app.py and any helpers) for "snapshot_date".
+   - Identify where it is referenced inside the distribution request flow (the upload endpoint and/or the function that builds predictions).
+   - Confirm if a similarly intended variable exists (e.g., fecha_doc, as_of_date, snapshot_dt, today_date).
+
+2) Define a single variable `as_of_date` (preferred) early in the distribution flow:
+   - If the distribution request form provides a date field, parse it safely.
+   - Else default to `date.today()` (or UTC date).
+   - Example: as_of_date = parsed_date if provided else date.today()
+
+3) Replace all uses of `snapshot_date` with `as_of_date` OR explicitly assign:
+   - snapshot_date = as_of_date
+   Do NOT leave mixed naming.
+
+4) Ensure helper functions accept the correct parameter:
+   - If functions like `get_latest_cd_stock(..., snapshot_date=...)` exist, rename parameter to `as_of_date` or pass it consistently.
+   - If the function doesn’t need a date (it already selects latest), remove the unused argument and remove references.
+
+5) Add a small safety guard/log:
+   - Print/log `[DISTRIBUTION DEBUG] as_of_date=YYYY-MM-DD` at the start of the run so we can validate the chosen date.
+
+6) Run a quick smoke test:
+   - Generate a distribution with a normal SKU (sales-based).
+   - Generate a distribution with a cold-start SKU (category-based).
+   - Confirm no NameError and that CD + store stock reads still work.
+
+Deliverable:
+- Commit the minimal code changes that remove the NameError and keep date handling consistent.
