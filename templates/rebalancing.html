@@ -298,8 +298,9 @@
                   <th>Donante</th>
                   <th>Destino</th>
                   <th class="text-end">Cantidad</th>
+                  <th class="text-end">Stock Orig</th>
+                  <th class="text-end">Remane.</th>
                   <th class="text-end">WOC Dest</th>
-                  <th class="text-end">Donante da</th>
                   <th>Estado</th>
                 </tr>
               </thead>
@@ -389,6 +390,8 @@
             <th>Tienda Origen</th>
             <th>Tienda Destino</th>
             <th class="text-end">Cantidad</th>
+            <th class="text-end">Stock Orig</th>
+            <th class="text-end">Remane.</th>
             <th class="text-end">Vta/Sem</th>
             <th class="text-end">WOC Orig</th>
             <th class="text-end">WOC Dest</th>
@@ -405,6 +408,8 @@
             <td><span class="badge-donor">{{ s.from_store }}</span></td>
             <td><span class="badge-receiver">{{ s.to_store }}</span></td>
             <td class="text-end fw-bold">{{ s.qty }}</td>
+            <td class="text-end">{{ s.donor_on_hand|default(0) }}</td>
+            <td class="text-end {% if s.donor_remaining is defined and s.donor_remaining < 0 %}text-danger fw-bold{% endif %}">{{ s.donor_remaining|default(0) }}</td>
             <td class="text-end">{{ "%.1f"|format(s.sales_rate_to) }}</td>
             <td class="text-end rebal-woc-high">{{ "%.1f"|format(s.woc_from) }}</td>
             <td class="text-end rebal-woc-low">{{ "%.1f"|format(s.woc_to) }}</td>
@@ -741,6 +746,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const statusLabel = item.status === 'OK' ? 'OK' :
                          (item.status === 'NO-NEED' ? 'Sin necesidad' : 
                          (item.status === 'NO-DONOR' ? 'Sin donante' : 'Sin ventas'));
+      const remainClass = (item.donor_remaining != null && item.donor_remaining < 0) ? 'text-danger fw-bold' : '';
       tbody.innerHTML += `
         <tr>
           <td><code class="rebal-sku">${item.sku}</code></td>
@@ -748,8 +754,9 @@ document.addEventListener('DOMContentLoaded', function() {
           <td>${item.donor_store ? '<span class="badge-donor">' + item.donor_store + '</span>' : '-'}</td>
           <td><span class="badge-receiver">${item.to_store || ''}</span></td>
           <td class="text-end fw-bold">${item.transfer_qty || 0}</td>
+          <td class="text-end">${item.donor_on_hand || 0}</td>
+          <td class="text-end ${remainClass}">${item.donor_remaining != null ? item.donor_remaining : '-'}</td>
           <td class="text-end">${(item.woc_dest || 0).toFixed(1)}</td>
-          <td class="text-end">${item.donor_give || 0}</td>
           <td><span class="mt-status ${statusClass}">${statusLabel}</span></td>
         </tr>
       `;

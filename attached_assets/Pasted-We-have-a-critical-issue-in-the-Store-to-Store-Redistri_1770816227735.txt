@@ -1,0 +1,43 @@
+We have a critical issue in the Store-to-Store Redistribution module: the engine is suggesting/transferring more units than the donor store actually has.
+
+Goal:
+- A donor store must NEVER be allocated below its retain threshold and NEVER donate more than its available stock.
+- When the same donor contributes to multiple destinations/SKUs, we must decrement donor availability in-memory as allocations are assigned (waterfall), so the sum of allocations never exceeds stock.
+
+Tasks:
+1) Identify where redistribution suggestions are computed (automatic and manual-assisted modes). Locate the code building the suggestions list (donor->dest movements).
+2) Ensure donor stock is read from the correct snapshot/table (StoreStockSnapshot or current store stock table used elsewhere). Confirm store name normalization matches.
+3) Implement a strict donor “available_to_give” calculation per (donor_store, sku):
+   - donor_on_hand = current donor stock for sku
+   - donor_min_retain_units = max(
+        absolute_min_retain_units,
+        ceil(retain_woc * donor_weekly_demand_for_sku)
+     )
+   - available_to_give = max(0, donor_on_hand - donor_min_retain_units)
+4) Enforce global conservation across assignments:
+   - Build a mutable dict:
+        donor_available[(donor_store_id, product_id)] = available_to_give
+   - When creating each suggested transfer row:
+        qty = min(qty, donor_available[key])
+        donor_available[key] -= qty
+     If qty becomes 0, skip the row.
+   - IMPORTANT: if the algorithm sorts recipients by priority, keep that order, but still enforce the decrement.
+5) Also enforce destination caps:
+   - destination_need = max(0, target_units - dest_on_hand)
+   - transfer_qty = min(transfer_qty, destination_need)
+6) Add a validation pass BEFORE rendering/exporting:
+   - Aggregate by (donor, sku): sum(transfer_qty)
+   - If any sum > donor_on_hand - donor_min_retain_units, log an error and hard-cap/recompute.
+7) Add debug output (behind a flag) for a single SKU + donor store:
+   - donor_on_hand, donor_min_retain_units, available_to_give, total_assigned
+8) UI:
+   - In results table, show donor_on_hand and “remaining after plan” (optional) so we can see it’s consistent.
+9) Add 2-3 unit-like tests (or deterministic scenario functions) with small mocked data:
+   - Case A: donor has 10, retain 6, two destinations request 5 each → result total assigned must be 4.
+   - Case B: donor has 3, retain 0, one destination requests 10 → assigned 3.
+   - Case C: donor has 10 but SKU appears twice due to multiple rows → ensure aggregation is correct.
+
+Acceptance criteria:
+- No generated plan can allocate more than donor stock allows.
+- Sum of allocations per donor+SKU is always <= donor_on_hand - donor_min_retain_units.
+- No negative donor_remaining in any view/export.

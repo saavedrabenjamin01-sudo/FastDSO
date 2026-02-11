@@ -9410,6 +9410,58 @@ def admin_diagnostics():
     return render_template('admin_diagnostics.html', diagnostics=diagnostics)
 
 
+@app.route('/admin/rebalancing_test_scenarios')
+@login_required
+@require_permission('admin:users')
+def rebalancing_test_scenarios():
+    results = {}
+
+    def run_scenario(name, donor_stock, retain, requests_list):
+        donor_avail = max(0, donor_stock - retain)
+        allocations = []
+        budget = donor_avail
+        for dest_name, qty_requested in requests_list:
+            give = min(qty_requested, budget)
+            allocations.append({'dest': dest_name, 'requested': qty_requested, 'assigned': give})
+            budget -= give
+        total_assigned = sum(a['assigned'] for a in allocations)
+        remaining = donor_stock - total_assigned
+        passed = total_assigned <= donor_avail and remaining >= retain
+        return {
+            'name': name,
+            'donor_stock': donor_stock,
+            'retain': retain,
+            'available_to_give': donor_avail,
+            'allocations': allocations,
+            'total_assigned': total_assigned,
+            'remaining': remaining,
+            'passed': passed
+        }
+
+    results['A'] = run_scenario(
+        'Donor=10, Retain=6, 2 dests request 5 each → max 4',
+        donor_stock=10, retain=6,
+        requests_list=[('Dest1', 5), ('Dest2', 5)]
+    )
+    results['B'] = run_scenario(
+        'Donor=3, Retain=0, 1 dest requests 10 → max 3',
+        donor_stock=3, retain=0,
+        requests_list=[('Dest1', 10)]
+    )
+    results['C'] = run_scenario(
+        'Donor=10, Retain=4, 3 dests request 3 each → max 6',
+        donor_stock=10, retain=4,
+        requests_list=[('Dest1', 3), ('Dest2', 3), ('Dest3', 3)]
+    )
+
+    all_passed = all(r['passed'] for r in results.values())
+
+    return jsonify({
+        'all_passed': all_passed,
+        'scenarios': results
+    })
+
+
 @app.route('/admin/operational_stock_debug')
 @login_required
 @require_permission('admin:users')
@@ -10006,6 +10058,10 @@ def compute_rebalancing_suggestions(
     
     suggestions = []
     
+    donor_available = {}
+    donor_on_hand_map = {}
+    donor_retain_map = {}
+    
     for pid in all_products:
         stores_for_pid = stores_per_product_stock.get(pid, set()) | stores_per_product_sales.get(pid, set())
         
@@ -10061,13 +10117,22 @@ def compute_rebalancing_suggestions(
             if sd['woc'] > target_woc_max or is_overstock_source:
                 keep_units = max(math.ceil(retain_woc * sd['rate']), stock_floor)
                 give_units = max(sd['stock'] - keep_units, 0)
-                if give_units > 0:
+                
+                da_key = (sd['store_id'], pid)
+                if da_key not in donor_available:
+                    donor_available[da_key] = give_units
+                    donor_on_hand_map[da_key] = sd['stock']
+                    donor_retain_map[da_key] = keep_units
+                
+                if donor_available[da_key] > 0:
                     priority_boost = 100 if is_overstock_source else 0
                     donors.append({
                         **sd,
-                        'give': give_units,
-                        'priority': priority_boost + give_units,
-                        'alert_flagged': is_overstock_source
+                        'give': donor_available[da_key],
+                        'keep_units': keep_units,
+                        'priority': priority_boost + donor_available[da_key],
+                        'alert_flagged': is_overstock_source,
+                        'da_key': da_key
                     })
                     if is_overstock_source:
                         alerts_logger.info(f"[{sku_str}] Redistribution: OVERSTOCK alert adds donor store_id={sd['store_id']}")
@@ -10087,12 +10152,15 @@ def compute_rebalancing_suggestions(
             for donor in donors:
                 if remaining_need <= 0:
                     break
-                if donor['give'] <= 0:
+                
+                da_key = donor['da_key']
+                current_avail = donor_available.get(da_key, 0)
+                if current_avail <= 0:
                     continue
                 if donor['store_id'] == receiver['store_id']:
                     continue
                 
-                transfer = min(remaining_need, donor['give'], REBALANCING_MAX_UNITS_PER_SKU_PER_DEST)
+                transfer = min(remaining_need, current_avail, REBALANCING_MAX_UNITS_PER_SKU_PER_DEST)
                 
                 is_extreme = receiver['woc'] < 0.5
                 if transfer < min_transfer_qty and not is_extreme:
@@ -10110,6 +10178,8 @@ def compute_rebalancing_suggestions(
                     reason = f"[OVERSTOCK] {reason}"
                 
                 prod_info = product_info.get(pid, ('?', '?', None))
+                on_hand = donor_on_hand_map.get(da_key, donor['stock'])
+                retain = donor_retain_map.get(da_key, donor.get('keep_units', 0))
                 suggestions.append({
                     'product_id': pid,
                     'sku': prod_info[0],
@@ -10125,11 +10195,14 @@ def compute_rebalancing_suggestions(
                     'woc_to': receiver['woc'],
                     'score': score,
                     'reason': reason,
-                    'alert_flagged': alert_priority
+                    'alert_flagged': alert_priority,
+                    'donor_on_hand': on_hand,
+                    'donor_retain': retain,
                 })
                 
                 remaining_need -= transfer
-                donor['give'] -= transfer
+                donor_available[da_key] -= transfer
+                donor['give'] = donor_available[da_key]
                 
                 if len(suggestions) >= REBALANCING_MAX_ROWS:
                     app.logger.warning(f"Redistribution: Hit MAX_ROWS limit ({REBALANCING_MAX_ROWS})")
@@ -10140,6 +10213,31 @@ def compute_rebalancing_suggestions(
         
         if len(suggestions) >= REBALANCING_MAX_ROWS:
             break
+    
+    agg_check = defaultdict(lambda: {'total_assigned': 0, 'on_hand': 0, 'retain': 0})
+    for s in suggestions:
+        agg_key = (s['from_store_id'], s['product_id'])
+        agg_check[agg_key]['total_assigned'] += s['qty']
+        agg_check[agg_key]['on_hand'] = s.get('donor_on_hand', 0)
+        agg_check[agg_key]['retain'] = s.get('donor_retain', 0)
+    
+    for agg_key, vals in agg_check.items():
+        available = vals['on_hand'] - vals['retain']
+        if vals['total_assigned'] > available:
+            app.logger.error(f"[REBAL VALIDATION FAIL] donor=({agg_key}) assigned={vals['total_assigned']} > available={available} (on_hand={vals['on_hand']} retain={vals['retain']})")
+            overflow = vals['total_assigned'] - available
+            for s in reversed(suggestions):
+                if (s['from_store_id'], s['product_id']) == agg_key and overflow > 0:
+                    reduce_by = min(s['qty'], overflow)
+                    s['qty'] -= reduce_by
+                    overflow -= reduce_by
+    
+    suggestions = [s for s in suggestions if s['qty'] > 0]
+    
+    for s in suggestions:
+        da_key = (s['from_store_id'], s['product_id'])
+        agg_total = sum(x['qty'] for x in suggestions if (x['from_store_id'], x['product_id']) == da_key)
+        s['donor_remaining'] = s.get('donor_on_hand', 0) - agg_total
     
     def suggestion_sort_key(x):
         score = x.get('score')
@@ -11055,6 +11153,10 @@ def manual_transfer_calculate():
     
     results = []
     
+    donor_available = {}
+    donor_on_hand_cache = {}
+    donor_retain_cache = {}
+    
     for sku in sku_list:
         product = products_by_sku.get(sku)
         
@@ -11069,6 +11171,7 @@ def manual_transfer_calculate():
                 'transfer_qty': 0,
                 'woc_dest': 0,
                 'donor_give': 0,
+                'donor_on_hand': 0,
                 'status': 'NO-SKU',
                 'notes': 'SKU no encontrado'
             })
@@ -11096,6 +11199,7 @@ def manual_transfer_calculate():
                         'transfer_qty': 0,
                         'woc_dest': 0,
                         'donor_give': 0,
+                        'donor_on_hand': 0,
                         'status': 'NO-SALES',
                         'notes': 'Sin historial de ventas en destino'
                     })
@@ -11123,6 +11227,7 @@ def manual_transfer_calculate():
                         'transfer_qty': 0,
                         'woc_dest': round(woc_dest, 2),
                         'donor_give': 0,
+                        'donor_on_hand': 0,
                         'status': 'NO-NEED',
                         'notes': f'WOC {woc_dest:.1f} >= {woc_min}'
                     })
@@ -11139,17 +11244,24 @@ def manual_transfer_calculate():
                 if stock_donor <= 0:
                     continue
                 
-                rate_donor = sales_rate_map.get((pid, sid), 0)
-                keep_units = max(math.ceil(retain_woc * rate_donor), stock_floor) if rate_donor > 0 else stock_floor
-                give_units = max(stock_donor - keep_units, 0)
+                da_key = (sid, pid)
+                if da_key not in donor_available:
+                    rate_donor = sales_rate_map.get((pid, sid), 0)
+                    keep_units = max(math.ceil(retain_woc * rate_donor), stock_floor) if rate_donor > 0 else stock_floor
+                    give_units = max(stock_donor - keep_units, 0)
+                    donor_available[da_key] = give_units
+                    donor_on_hand_cache[da_key] = stock_donor
+                    donor_retain_cache[da_key] = keep_units
                 
-                if give_units > 0:
-                    woc_donor = stock_donor / max(rate_donor, 0.01)
+                avail = donor_available[da_key]
+                if avail > 0:
+                    woc_donor = stock_donor / max(sales_rate_map.get((pid, sid), 0), 0.01)
                     candidate_donors.append({
                         'store_id': sid,
                         'store_name': store_info.get(sid, '?'),
-                        'give': give_units,
-                        'woc': woc_donor
+                        'give': avail,
+                        'woc': woc_donor,
+                        'da_key': da_key
                     })
             
             candidate_donors.sort(key=lambda x: x['give'], reverse=True)
@@ -11167,13 +11279,15 @@ def manual_transfer_calculate():
                         'transfer_qty': 0,
                         'woc_dest': round(woc_dest, 2),
                         'donor_give': 0,
+                        'donor_on_hand': 0,
                         'status': 'NO-DONOR',
                         'notes': 'Sin tienda donante disponible'
                     })
                 continue
             
             best_donor = candidate_donors[0]
-            transfer = min(need_units, best_donor['give'], REBALANCING_MAX_UNITS_PER_SKU_PER_DEST)
+            da_key = best_donor['da_key']
+            transfer = min(need_units, donor_available[da_key], REBALANCING_MAX_UNITS_PER_SKU_PER_DEST)
             
             is_stockout = stock_dest == 0 and rate_dest > 0
             if transfer < min_transfer_qty and not is_stockout:
@@ -11183,6 +11297,7 @@ def manual_transfer_calculate():
             else:
                 status = 'OK'
                 notes = ''
+                donor_available[da_key] -= transfer
             
             results.append({
                 'sku': sku,
@@ -11195,6 +11310,7 @@ def manual_transfer_calculate():
                 'transfer_qty': transfer,
                 'woc_dest': round(woc_dest, 2),
                 'donor_give': best_donor['give'],
+                'donor_on_hand': donor_on_hand_cache.get(da_key, 0),
                 'status': status,
                 'notes': notes
             })
@@ -11204,6 +11320,31 @@ def manual_transfer_calculate():
         
         if len(results) >= REBALANCING_MAX_ROWS:
             break
+    
+    agg_check = defaultdict(lambda: {'total_assigned': 0, 'on_hand': 0, 'retain': 0})
+    for r in results:
+        if r.get('transfer_qty', 0) > 0 and r.get('donor_store_id'):
+            agg_key = (r['donor_store_id'], r.get('product_id', 0))
+            agg_check[agg_key]['total_assigned'] += r['transfer_qty']
+            agg_check[agg_key]['on_hand'] = donor_on_hand_cache.get(agg_key, r.get('donor_on_hand', 0))
+            agg_check[agg_key]['retain'] = donor_retain_cache.get(agg_key, 0)
+    
+    for agg_key, vals in agg_check.items():
+        available = vals['on_hand'] - vals['retain']
+        if vals['total_assigned'] > available:
+            app.logger.error(f"[MANUAL REBAL VALIDATION FAIL] donor=({agg_key}) assigned={vals['total_assigned']} > available={available}")
+            overflow = vals['total_assigned'] - available
+            for r in reversed(results):
+                if r.get('donor_store_id') == agg_key[0] and r.get('product_id') == agg_key[1] and r.get('transfer_qty', 0) > 0 and overflow > 0:
+                    reduce_by = min(r['transfer_qty'], overflow)
+                    r['transfer_qty'] -= reduce_by
+                    overflow -= reduce_by
+    
+    for r in results:
+        if r.get('donor_store_id') and r.get('product_id'):
+            da_key = (r['donor_store_id'], r.get('product_id'))
+            agg_total = sum(x.get('transfer_qty', 0) for x in results if x.get('donor_store_id') == da_key[0] and x.get('product_id') == da_key[1])
+            r['donor_remaining'] = donor_on_hand_cache.get(da_key, r.get('donor_on_hand', 0)) - agg_total
     
     ok_count = sum(1 for r in results if r['status'] == 'OK' and r.get('transfer_qty', 0) > 0)
     no_need_count = sum(1 for r in results if r['status'] == 'NO-NEED')
