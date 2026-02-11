@@ -19,6 +19,30 @@ from flask_login import (
     LoginManager, login_user, login_required, logout_user, current_user, UserMixin
 )
 
+import re as _re_module
+from decimal import Decimal, InvalidOperation
+
+def normalize_sku(value):
+    """Canonical SKU normalizer. Always returns a string. Preserves leading zeros."""
+    if value is None:
+        return ""
+    s = str(value).strip()
+    if s in ('', 'nan', 'None', 'NaN', '<NA>', 'NA'):
+        return ""
+    # Scientific notation (e.g. "1.23E+10")
+    if _re_module.search(r'[eE][+\-]?\d+', s):
+        try:
+            d = Decimal(s)
+            s = format(d, 'f')
+        except InvalidOperation:
+            pass
+    # Float-like from Excel (e.g. "12345.0") – remove ".0" only if fractional part is all zeros
+    if '.' in s:
+        integer_part, frac_part = s.rsplit('.', 1)
+        if frac_part and all(c == '0' for c in frac_part):
+            s = integer_part
+    return s
+
 # ------------------ RBAC Configuration ------------------
 ROLES = ['Admin', 'Management', 'CategoryManager', 'WarehouseOps', 'Viewer']
 
@@ -894,6 +918,38 @@ def get_cd_operational_stock_bulk(product_ids=None, as_of_date=None, session=Non
     return result
 
 
+def get_cd_stock_map(as_of_date=None, session=None):
+    """Centralized CD stock map: {product_id: qty}.
+    Uses operational stock (baseline + events) when available,
+    falls back to latest StockCD snapshot per product (MAX date per product).
+    This is the SINGLE source of truth for CD stock across all modules."""
+    result = get_cd_operational_stock_bulk(as_of_date=as_of_date, session=session)
+    if result:
+        return result
+    s = session or db.session
+    latest_per_product = (
+        s.query(StockCD.product_id, func.max(StockCD.as_of_date).label('max_date'))
+        .group_by(StockCD.product_id)
+        .subquery()
+    )
+    rows = (
+        s.query(StockCD.product_id, func.sum(StockCD.quantity))
+        .join(latest_per_product, db.and_(
+            StockCD.product_id == latest_per_product.c.product_id,
+            db.or_(
+                StockCD.as_of_date == latest_per_product.c.max_date,
+                db.and_(StockCD.as_of_date.is_(None), latest_per_product.c.max_date.is_(None))
+            )
+        ))
+        .filter(StockCD.quality_status != 'PROBLEM')
+        .group_by(StockCD.product_id)
+        .all()
+    )
+    for pid, qty in rows:
+        result[pid] = qty or 0
+    return result
+
+
 def get_store_operational_stock_bulk(store_ids=None, product_ids=None, as_of_date=None, session=None):
     s = session or db.session
     if as_of_date is None:
@@ -1439,7 +1495,13 @@ def generate_predictions(
     store_stock_bulk = get_store_operational_stock_bulk()
     store_stock_lookup = {(pid, sid): qty for (sid, pid), qty in store_stock_bulk.items()}
     
-    cd_stock_lookup = get_cd_operational_stock_bulk()
+    cd_stock_lookup = get_cd_stock_map()
+    SKU_NORM_DEBUG = os.environ.get('SKU_NORM_DEBUG', '').lower() in ('1', 'true', 'yes')
+    if SKU_NORM_DEBUG:
+        app.logger.info(f"[SKU_NORM_DEBUG] CD stock map size: {len(cd_stock_lookup)} products")
+        for pid, qty in list(cd_stock_lookup.items())[:5]:
+            p = Product.query.get(pid)
+            app.logger.info(f"[SKU_NORM_DEBUG] Sample CD: sku={p.sku if p else '?'} pid={pid} qty={qty}")
     
     # Pre-compute category sales rates per store (for BACKOFF_STOCKOUT tie-breaking)
     cat_store_sales_rate = {}
@@ -2421,19 +2483,7 @@ def generate_predictions_from_macro(
                 pred["suggested"] = MIN_TOP10_ALLOC
                 pred["reason_code"] = "TOP10_MIN_GUARANTEE"
     
-    snapshot_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar()
-    
-    if snapshot_date:
-        cd_stock_rows = StockCD.query.filter(
-            StockCD.as_of_date == snapshot_date,
-            StockCD.product_id.in_(product_ids),
-            db.or_(StockCD.quality_status == 'OK', StockCD.quality_status.is_(None))
-        ).all()
-        cd_stock = {}
-        for row in cd_stock_rows:
-            cd_stock[row.product_id] = cd_stock.get(row.product_id, 0) + (row.quantity or 0)
-    else:
-        cd_stock = {}
+    cd_stock = get_cd_stock_map()
     
     store_stock_bulk = get_store_operational_stock_bulk()
     store_stock_lookup = {(pid, sid): qty for (sid, pid), qty in store_stock_bulk.items()}
@@ -2592,7 +2642,7 @@ def generate_predictions_from_macro(
             available_cd = cd_remaining_after_base.get(prod.id, cd_stock.get(prod.id))
             if available_cd is None or available_cd <= 0:
                 cold_start_no_category.append({"sku": sku, "product_id": prod.id, "reason": "NO_CD_STOCK"})
-                print(f"[COLD_START] SKIP sku={sku} cat={category} reason=NO_CD_STOCK")
+                print(f"[COLD_START] SKIP sku={sku} (normalized={normalize_sku(sku)}) cat={category} reason=NO_CD_STOCK cd_lookup={cd_stock.get(prod.id, 'MISSING')}")
                 continue
 
             weights = cat_store_weights.get(category)
@@ -3836,17 +3886,7 @@ def purchase_forecast_v2_legacy():
     )
     slow_sales_map = {r.product_id: r for r in sales_rows_slow}
 
-    latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar() or today
-    cd_rows = (
-        db.session.query(
-            StockCD.product_id,
-            db.func.sum(StockCD.quantity).label('cd_qty')
-        )
-        .filter(StockCD.as_of_date == latest_cd_date)
-        .group_by(StockCD.product_id)
-        .all()
-    )
-    cd_stock_map = {r.product_id: int(r.cd_qty) for r in cd_rows}
+    cd_stock_map = get_cd_stock_map()
 
     latest_store_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar() or today
     store_stock_rows = (
@@ -4176,14 +4216,7 @@ def export_purchase_forecast_v2():
     sales_rows_slow = sales_q_slow.group_by(Product.id).all()
     slow_sales_map = {r.product_id: r for r in sales_rows_slow}
 
-    latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar() or today
-    cd_rows = (
-        db.session.query(StockCD.product_id, db.func.sum(StockCD.quantity).label('cd_qty'))
-        .filter(StockCD.as_of_date == latest_cd_date)
-        .group_by(StockCD.product_id)
-        .all()
-    )
-    cd_stock_map = {r.product_id: int(r.cd_qty) for r in cd_rows}
+    cd_stock_map = get_cd_stock_map()
 
     latest_store_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar() or today
     store_stock_rows = (
@@ -4390,7 +4423,7 @@ def api_forecast_v2_chart_data():
     from flask import jsonify
     today = date.today()
 
-    sku_filter = request.args.get('sku', '').strip()
+    sku_filter = normalize_sku(request.args.get('sku', ''))
     store_filter = request.args.get('store_filter', '').strip()
     demand_method = request.args.get('demand_method', 'sma3').strip()
 
@@ -4485,17 +4518,7 @@ def api_forecast_v2_chart_data():
         .all()
     )
 
-    latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar() or today
-    cd_rows = (
-        db.session.query(
-            StockCD.product_id,
-            db.func.sum(StockCD.quantity).label('cd_qty')
-        )
-        .filter(StockCD.as_of_date == latest_cd_date)
-        .group_by(StockCD.product_id)
-        .all()
-    )
-    cd_stock_map = {r.product_id: int(r.cd_qty) for r in cd_rows}
+    cd_stock_map = get_cd_stock_map()
 
     forecast_data = []
     for r in sales_rows:
@@ -5900,15 +5923,7 @@ def api_forecast_batch():
     )
     sales_map = {r.product_id: r.total_units / history_weeks for r in sales_rows}
     
-    latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar() or today
-    cd_rows = (
-        db.session.query(StockCD.product_id, db.func.sum(StockCD.quantity).label('qty'))
-        .filter(StockCD.product_id.in_(all_product_ids))
-        .filter(StockCD.as_of_date == latest_cd_date)
-        .group_by(StockCD.product_id)
-        .all()
-    )
-    cd_stock_map = {r.product_id: int(r.qty) for r in cd_rows}
+    cd_stock_map = get_cd_stock_map()
     
     latest_store_date = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar() or today
     store_rows = (
@@ -6848,7 +6863,7 @@ def process_macro_sales_upload(job_id, payload):
                             message='Archivo debe tener columnas: sku, store, date, quantity')
             return
         
-        df['sku'] = df['sku'].astype(str).str.strip()
+        df['sku'] = df['sku'].apply(normalize_sku)
         df['store'] = df['store'].astype(str).str.strip()
         df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0).astype(int)
         df['date'] = pd.to_datetime(df['date'], errors='coerce')
@@ -6890,7 +6905,10 @@ def process_macro_sales_upload(job_id, payload):
         
         update_job_status(job_id, progress=20, message='Preparando productos y tiendas...')
         
-        existing_products = {p.sku: p for p in session.query(Product).all()}
+        existing_products = {}
+        for p in session.query(Product).all():
+            existing_products[p.sku] = p
+            existing_products[normalize_sku(p.sku)] = p
         existing_stores = {s.name: s for s in session.query(Store).all()}
         
         new_products = []
@@ -6912,7 +6930,10 @@ def process_macro_sales_upload(job_id, payload):
         if new_products:
             session.execute(Product.__table__.insert(), new_products)
             session.commit()
-            existing_products = {p.sku: p for p in session.query(Product).all()}
+            existing_products = {}
+            for p in session.query(Product).all():
+                existing_products[p.sku] = p
+                existing_products[normalize_sku(p.sku)] = p
         
         if new_stores:
             session.execute(Store.__table__.insert(), new_stores)
@@ -7206,7 +7227,7 @@ def process_sales_upload(job_id, payload):
                             message='Archivo debe tener columnas: sku, product_name, store, quantity, date')
             return
         
-        df['sku'] = df['sku'].astype(str).str.strip()
+        df['sku'] = df['sku'].apply(normalize_sku)
         df['product_name'] = df['product_name'].astype(str).str.strip()
         df['store'] = df['store'].astype(str).str.strip()
         df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0).astype(int)
@@ -7244,6 +7265,7 @@ def process_sales_upload(job_id, payload):
             sku_batch = unique_skus[i:i + batch_size]
             for p in session.query(Product).filter(Product.sku.in_(sku_batch)).all():
                 existing_products[p.sku] = p.id
+                existing_products[normalize_sku(p.sku)] = p.id
         
         existing_stores = {}
         for i in range(0, len(unique_store_names), batch_size):
@@ -7804,7 +7826,7 @@ def upload_stock():
             return redirect(url_for('upload_stock'))
 
         # limpieza básica
-        df[sku_col] = df[sku_col].astype('string').str.strip()
+        df[sku_col] = df[sku_col].apply(normalize_sku)
         if prod_col:
             df[prod_col] = df[prod_col].astype('string').str.strip()
         
@@ -7823,9 +7845,10 @@ def upload_stock():
 
         # 🔥 CACHE para no golpear la BD por cada celda
         # 1) cache de productos existentes por SKU
-        existing_products = {
-            p.sku: p for p in Product.query.all()
-        }
+        existing_products = {}
+        for p in Product.query.all():
+            existing_products[p.sku] = p
+            existing_products[normalize_sku(p.sku)] = p
 
         # 2) cache de tiendas existentes por nombre
         existing_stores = {
@@ -8206,7 +8229,7 @@ def process_stock_cd_upload(job_id, payload):
             update_job_status(job_id, status='error', progress=100, message='Archivo debe tener columnas sku y quantity')
             return
         
-        df['sku'] = df['sku'].astype(str).str.strip()
+        df['sku'] = df['sku'].apply(normalize_sku)
         df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0).astype(int)
         
         name_col = None
@@ -8231,6 +8254,7 @@ def process_stock_cd_upload(job_id, payload):
             sku_batch = unique_skus[i:i + batch_size]
             for p in session.query(Product).filter(Product.sku.in_(sku_batch)).all():
                 sku_to_product_id[p.sku] = p.id
+                sku_to_product_id[normalize_sku(p.sku)] = p.id
         
         update_job_status(job_id, progress=40, message='Procesando SKUs...')
         
@@ -8480,7 +8504,7 @@ def stock_query():
     stores = Store.query.order_by(Store.name.asc()).all()
 
     if sku:
-        # SKU SIEMPRE como texto
+        sku = normalize_sku(sku)
         product = Product.query.filter_by(sku=sku).first()
 
         if product:
@@ -9319,6 +9343,80 @@ def admin_reset_password(user_id):
     
     flash(f'Contraseña de "{user.username}" actualizada.', 'success')
     return redirect(url_for('admin_users'))
+
+
+@app.route('/admin/sku_dedup', methods=['GET', 'POST'])
+@login_required
+@require_permission('admin:users')
+def admin_sku_dedup():
+    """Find and merge duplicate Product rows by normalized SKU."""
+    all_products = Product.query.order_by(Product.id).all()
+    norm_groups = defaultdict(list)
+    for p in all_products:
+        nsku = normalize_sku(p.sku)
+        if nsku:
+            norm_groups[nsku].append(p)
+    
+    duplicates = {nsku: prods for nsku, prods in norm_groups.items() if len(prods) > 1}
+    
+    merged_count = 0
+    if request.method == 'POST' and duplicates:
+        fk_tables = [
+            (StockCD, 'product_id'),
+            (StockSnapshot, 'product_id'),
+            (SalesWeeklyAgg, 'product_id'),
+            (DistributionRecord, 'product_id'),
+            (Prediction, 'product_id'),
+            (ForecastResult, 'product_id'),
+            (ForecastBatchItem, 'product_id'),
+            (RebalanceSuggestion, 'product_id'),
+            (ManualTransferItem, 'product_id'),
+            (SkuLifecycle, 'product_id'),
+            (SkuStoreLifecycle, 'product_id'),
+            (SlowStockSuggestion, 'product_id'),
+        ]
+        unique_fk_tables = {SkuLifecycle}
+        for nsku, prods in duplicates.items():
+            canonical = prods[0]
+            for dup in prods[1:]:
+                for model, col_name in fk_tables:
+                    if model in unique_fk_tables:
+                        existing = model.query.filter(getattr(model, col_name) == canonical.id).first()
+                        if existing:
+                            model.query.filter(getattr(model, col_name) == dup.id).delete(synchronize_session=False)
+                            continue
+                    model.query.filter(getattr(model, col_name) == dup.id).update(
+                        {col_name: canonical.id}, synchronize_session=False
+                    )
+                canonical.name = canonical.name or dup.name
+                if not canonical.category and dup.category:
+                    canonical.category = dup.category
+                db.session.delete(dup)
+                merged_count += 1
+            if canonical.sku != nsku:
+                canonical.sku = nsku
+        
+        db.session.commit()
+        log_audit(
+            action='admin.sku_dedup',
+            status='success',
+            message=f'Merged {merged_count} duplicate Product rows',
+            metadata={'merged': merged_count, 'groups': len(duplicates)}
+        )
+        flash(f'Se fusionaron {merged_count} productos duplicados en {len(duplicates)} grupos.', 'success')
+        return redirect(url_for('admin_sku_dedup'))
+    
+    return jsonify({
+        'duplicate_groups': len(duplicates),
+        'total_duplicates': sum(len(p) - 1 for p in duplicates.values()),
+        'details': [
+            {
+                'normalized_sku': nsku,
+                'products': [{'id': p.id, 'sku': p.sku, 'name': p.name} for p in prods]
+            }
+            for nsku, prods in duplicates.items()
+        ]
+    })
 
 
 @app.route('/admin/diagnostics')

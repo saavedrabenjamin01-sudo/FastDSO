@@ -1,0 +1,47 @@
+We have a critical bug: CD stock is not being recognized consistently across modules (distribution, forecast, alerts, etc). This causes:
+- Cold start SKUs to be skipped with reason NO_CD_STOCK even when CD has stock.
+- Sales-based SKUs to compute cd_stock=0 and allocate 0.
+- Forecast “CD + Stores” card sometimes only counts stores (ignores CD).
+
+Root causes likely include SKU normalization issues (leading zeros lost from Excel/CSV), duplicated Product rows, and/or wrong snapshot selection.
+
+Implement the following, without breaking existing logic:
+
+A) Create ONE canonical helper normalize_sku(value) in a shared place (app.py utilities section):
+   - Always return a string
+   - Strip whitespace
+   - If value is float-like from Excel (e.g. "12345.0"), remove trailing ".0"
+   - If value is in scientific notation, convert safely to a plain digit string
+   - Preserve leading zeros (NEVER cast to int)
+   - Return "" if null/empty
+
+B) Update ALL upload parsers to force sku as string and normalize it before any DB write or lookup:
+   - Stock CD upload
+   - Stock Stores upload
+   - Macro Sales upload
+   - Distribution Request upload
+   - Forecast single + forecast bulk
+   Use pandas with dtype={"sku": str} (or converters={"sku": normalize_sku}) for both CSV and XLSX.
+
+C) Ensure Product.sku stored in DB is ALWAYS normalized_sku (string) and deduplicate:
+   - Add a safe migration/cleanup step: find products whose normalized_sku matches another product and merge them.
+   - At minimum: prevent inserting a new Product if normalize_sku(sku) already exists.
+   - If duplicates exist, update foreign keys (stock snapshots, sales agg, predictions) to the canonical product_id.
+
+D) Fix CD stock retrieval globally:
+   - Create get_cd_stock_map(as_of_date=None) that returns {sku: qty} using the latest available snapshot per product (MAX(snapshot_date)), not only “today”.
+   - If snapshot_date is NULL, treat it as the most recent for that product.
+   - Use this SAME function everywhere CD stock is needed (distribution, forecast, alerts, store health, stock slow, etc).
+
+E) Fix Forecast “CD + Stores” to always compute:
+   total_stock = cd_stock + sum(store_stock_by_store)
+   using the same cd_stock map as in D.
+
+F) Add sanity debug logs (guarded by a DEBUG flag):
+   - When distribution starts, print for each SKU in scope: normalized sku, product_id, cd_stock_used, store_stock_used
+   - When cold_start skips: print normalized sku and cd stock qty
+
+Acceptance criteria:
+1) A SKU with leading zeros present in Stock CD must be found by Distribution and Forecast (cd_stock_used > 0).
+2) Cold start category distribution must allocate proportionally by category store ranking when CD stock exists (not skipped).
+3) Forecast “CD + Stores” card must include CD units (validated on a SKU where CD > 0 and store stock > 0).
