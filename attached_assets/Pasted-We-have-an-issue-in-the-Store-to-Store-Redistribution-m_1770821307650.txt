@@ -1,0 +1,42 @@
+We have an issue in the Store-to-Store Redistribution module: the rebalance results are now consistent, but some SKUs that the user expects to see do not appear in the output list (they are neither shown as "No need" nor as suggestions). We need to make the SKU inclusion logic transparent and fix any unintended filtering.
+
+Tasks:
+1) Locate the SKU selection pipeline for redistribution:
+   - identify the exact list/set of SKUs considered ("scope_skus") before calculations.
+   - identify where SKUs are filtered out (continue/skip).
+2) Add a debug table/section (server-side computed) that shows, for the current run, counts and reasons:
+   - total candidate SKUs
+   - SKUs included in final "No need" list
+   - SKUs included in "Suggestions" list
+   - SKUs excluded (missing) list, WITH A REASON CODE per SKU.
+   Reason codes must be explicit:
+   - NO_PRODUCT_MATCH
+   - NO_STORE_STOCK_DATA
+   - NO_MACRO_SALES_DATA
+   - CATEGORY_MISSING
+   - BELOW_THRESHOLD (explain which threshold)
+   - ZERO_DEMAND
+   - TOP_N_TRUNCATION
+   - OTHER (with details)
+3) Ensure that every SKU in the user-selected input set (or in the chosen category filter) ends in exactly one bucket:
+   - Suggestions
+   - No need
+   - Excluded with reason
+   No SKU should silently disappear.
+4) If exclusion is caused by mismatched joins:
+   - Normalize SKU keys consistently (trim, string, preserve leading zeros).
+   - Ensure Stock snapshot -> Product join uses product_id consistently (avoid joining by name).
+   - Add fallback join by SKU if product_id is missing, but log it.
+5) If exclusion is due to TOP-N:
+   - Do not truncate before categorizing; categorize first, then paginate.
+   - Add pagination controls so we can browse all rows.
+6) UI changes:
+   - Add a toggle: "Show excluded SKUs (with reasons)".
+   - Add search box by SKU.
+   - For excluded SKUs, show reason badge and the key data available (stock donor/dest counts, sales availability).
+7) Add a minimal regression test:
+   - Provide a mocked dataset where an SKU has stock but no sales; confirm it shows in Excluded with reason NO_MACRO_SALES_DATA (or ZERO_DEMAND), not missing.
+
+Acceptance criteria:
+- Given any SKU in the selected scope, it appears in exactly one section: Suggestions / No need / Excluded+reason.
+- User can identify why an SKU didn't generate a movement.

@@ -355,6 +355,21 @@
     </div>
   </div>
 
+  {% if rebal_scope_stats %}
+  <div class="rebal-card mb-3" style="padding: 0.75rem 1rem;">
+    <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; font-size:0.85rem;">
+      <strong><i class="bi bi-diagram-3 me-1"></i>Trazabilidad SKUs:</strong>
+      <span class="badge bg-secondary">Alcance: {{ rebal_scope_stats.total_scope }}</span>
+      <span class="badge bg-success">Sugeridos: {{ rebal_scope_stats.suggested }}</span>
+      <span class="badge bg-info text-dark">Sin necesidad: {{ rebal_scope_stats.no_need }}</span>
+      <span class="badge bg-warning text-dark">Excluidos: {{ rebal_scope_stats.excluded }}</span>
+      {% if rebal_scope_stats.truncated_by_top_n > 0 %}
+      <span class="badge bg-dark">Truncados Top-N: {{ rebal_scope_stats.truncated_by_top_n }}</span>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
   <div class="rebal-card rebal-table-card">
     <div class="rebal-results-tabs mb-3">
       <button type="button" class="rebal-results-tab active" data-tab="transfers">
@@ -366,6 +381,14 @@
       <button type="button" class="rebal-results-tab" data-tab="summary">
         <i class="bi bi-bar-chart-line me-1"></i>Resumen
       </button>
+      {% if rebal_no_need or rebal_excluded %}
+      <button type="button" class="rebal-results-tab" data-tab="no-need">
+        <i class="bi bi-check-circle me-1"></i>Sin Necesidad <span class="badge bg-info text-dark ms-1">{{ rebal_no_need|length }}</span>
+      </button>
+      <button type="button" class="rebal-results-tab" data-tab="excluded">
+        <i class="bi bi-funnel me-1"></i>Excluidos <span class="badge bg-warning text-dark ms-1">{{ rebal_excluded|length }}</span>
+      </button>
+      {% endif %}
     </div>
 
     <div id="tabTransfers" class="rebal-tab-content active">
@@ -532,6 +555,124 @@
       </div>
       {% endif %}
     </div>
+
+    {% if rebal_no_need or rebal_excluded %}
+    <div id="tabNoNeed" class="rebal-tab-content" style="display:none;">
+      <div class="rebal-table-header">
+        <div class="rebal-table-title-wrap">
+          <div class="rebal-table-title">
+            <i class="bi bi-check-circle me-2"></i>SKUs Sin Necesidad de Redistribución
+          </div>
+          <div class="rebal-table-hint">
+            <i class="bi bi-info-circle me-1"></i>Estos SKUs están dentro de los rangos de WOC configurados o no tienen receptores/donantes viables.
+          </div>
+        </div>
+        <span class="rebal-table-badge">{{ rebal_no_need|length }} SKUs</span>
+      </div>
+      <div class="mb-2" style="padding: 0 0.5rem;">
+        <input type="text" class="form-control form-control-sm" id="noNeedSearchBox" placeholder="Buscar por SKU..." style="max-width:250px;" onkeyup="filterNoNeedTable()">
+      </div>
+      <div class="rebal-table-wrap">
+        {% if rebal_no_need %}
+        <table class="rebal-table" id="noNeedTable">
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Producto</th>
+              <th>Categoría</th>
+              <th class="text-end">Stock Total</th>
+              <th class="text-end">Vta/Sem Total</th>
+              <th>Razón</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in rebal_no_need %}
+            <tr>
+              <td><code class="rebal-sku">{{ item.sku }}</code></td>
+              <td class="rebal-name">{{ item.name[:40] }}{% if item.name|length > 40 %}...{% endif %}</td>
+              <td>{{ item.category or '—' }}</td>
+              <td class="text-end">{{ item.total_stock|default(0) }}</td>
+              <td class="text-end">{{ item.total_rate|default(0) }}</td>
+              <td><span class="badge bg-info text-dark" style="font-weight:normal; white-space:normal; text-align:left;">{{ item.reason }}</span></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="rebal-empty py-4">
+          <div class="rebal-empty-hint">Todos los SKUs del alcance generaron sugerencias o fueron excluidos.</div>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div id="tabExcluded" class="rebal-tab-content" style="display:none;">
+      <div class="rebal-table-header">
+        <div class="rebal-table-title-wrap">
+          <div class="rebal-table-title">
+            <i class="bi bi-funnel me-2"></i>SKUs Excluidos del Análisis
+          </div>
+          <div class="rebal-table-hint">
+            <i class="bi bi-exclamation-triangle me-1"></i>Estos SKUs fueron filtrados antes de generar sugerencias. Revisa el código de razón para entender por qué.
+          </div>
+        </div>
+        <span class="rebal-table-badge">{{ rebal_excluded|length }} SKUs</span>
+      </div>
+      <div class="mb-2" style="padding: 0 0.5rem;">
+        <input type="text" class="form-control form-control-sm" id="excludedSearchBox" placeholder="Buscar por SKU..." style="max-width:250px;" onkeyup="filterExcludedTable()">
+      </div>
+      <div class="rebal-table-wrap">
+        {% if rebal_excluded %}
+        <table class="rebal-table" id="excludedTable">
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Producto</th>
+              <th>Categoría</th>
+              <th>Código Razón</th>
+              <th>Detalle</th>
+              <th class="text-center">Tiene Ventas</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in rebal_excluded %}
+            <tr>
+              <td><code class="rebal-sku">{{ item.sku }}</code></td>
+              <td class="rebal-name">{{ item.name[:40] }}{% if item.name|length > 40 %}...{% endif %}</td>
+              <td>{{ item.category or '—' }}</td>
+              <td>
+                {% if item.reason_code == 'TOP_N_TRUNCATION' %}
+                <span class="badge bg-dark">TOP_N_TRUNCATION</span>
+                {% elif item.reason_code == 'HELD_SKU' %}
+                <span class="badge bg-danger">HELD_SKU</span>
+                {% elif item.reason_code == 'NO_PRODUCT_MATCH' %}
+                <span class="badge bg-secondary">NO_PRODUCT_MATCH</span>
+                {% elif item.reason_code == 'NO_STORE_DATA' %}
+                <span class="badge bg-warning text-dark">NO_STORE_DATA</span>
+                {% elif item.reason_code == 'ZERO_DEMAND' %}
+                <span class="badge bg-warning text-dark">ZERO_DEMAND</span>
+                {% elif item.reason_code == 'MAX_ROWS_LIMIT' %}
+                <span class="badge bg-danger">MAX_ROWS_LIMIT</span>
+                {% else %}
+                <span class="badge bg-secondary">{{ item.reason_code }}</span>
+                {% endif %}
+              </td>
+              <td style="font-size:0.82rem;">{{ item.detail }}</td>
+              <td class="text-center">
+                {% if item.has_sales %}<i class="bi bi-check-circle-fill text-success"></i>{% else %}<i class="bi bi-x-circle text-muted"></i>{% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="rebal-empty py-4">
+          <div class="rebal-empty-hint">No se excluyó ningún SKU.</div>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
   </div>
 </div>
 
@@ -547,7 +688,9 @@ document.addEventListener('DOMContentLoaded', function() {
   const tabContents = {
     'transfers': document.getElementById('tabTransfers'),
     'by-dest': document.getElementById('tabByDest'),
-    'summary': document.getElementById('tabSummary')
+    'summary': document.getElementById('tabSummary'),
+    'no-need': document.getElementById('tabNoNeed'),
+    'excluded': document.getElementById('tabExcluded')
   };
   
   resultsTabs.forEach(tab => {
@@ -829,6 +972,24 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('manualSkuText').value = '';
   });
 });
+
+function filterNoNeedTable() {
+  const query = document.getElementById('noNeedSearchBox').value.toUpperCase();
+  const rows = document.querySelectorAll('#noNeedTable tbody tr');
+  rows.forEach(row => {
+    const sku = row.cells[0]?.textContent.toUpperCase() || '';
+    row.style.display = sku.includes(query) ? '' : 'none';
+  });
+}
+
+function filterExcludedTable() {
+  const query = document.getElementById('excludedSearchBox').value.toUpperCase();
+  const rows = document.querySelectorAll('#excludedTable tbody tr');
+  rows.forEach(row => {
+    const sku = row.cells[0]?.textContent.toUpperCase() || '';
+    row.style.display = sku.includes(query) ? '' : 'none';
+  });
+}
 </script>
 
 {% endblock %}

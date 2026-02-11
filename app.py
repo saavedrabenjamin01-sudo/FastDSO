@@ -9462,6 +9462,80 @@ def rebalancing_test_scenarios():
     })
 
 
+@app.route('/admin/rebalancing_trace_test')
+@login_required
+@require_permission('admin:users')
+def rebalancing_trace_test():
+    """Regression test: verify every SKU in scope ends in exactly one bucket."""
+    result = compute_rebalancing_suggestions(
+        weeks_window=4,
+        target_woc_min=1.5,
+        target_woc_target=2.5,
+        target_woc_max=6.0,
+        retain_woc=4.0,
+        stock_floor=1,
+        min_transfer_qty=2,
+        store_filter=None,
+        scope='sku',
+        destination='all',
+        category=None,
+        top_n=None,
+        include_held=False
+    )
+
+    suggestions = result['suggestions']
+    no_need = result['no_need']
+    excluded = result['excluded']
+    stats = result['scope_stats']
+
+    suggested_pids = set(s['product_id'] for s in suggestions)
+    no_need_pids = set(n['product_id'] for n in no_need)
+    excluded_pids = set(e['product_id'] for e in excluded)
+
+    overlap_sug_nn = suggested_pids & no_need_pids
+    overlap_sug_ex = suggested_pids & excluded_pids
+    overlap_nn_ex = no_need_pids & excluded_pids
+
+    all_categorized = len(suggested_pids) + len(no_need_pids) + len(excluded_pids)
+
+    no_overlaps = len(overlap_sug_nn) == 0 and len(overlap_sug_ex) == 0 and len(overlap_nn_ex) == 0
+
+    reason_codes_found = set(e['reason_code'] for e in excluded)
+
+    tests = {
+        'no_overlaps': {
+            'passed': no_overlaps,
+            'detail': f'overlap_sug_nn={len(overlap_sug_nn)}, overlap_sug_ex={len(overlap_sug_ex)}, overlap_nn_ex={len(overlap_nn_ex)}'
+        },
+        'all_skus_categorized': {
+            'passed': all_categorized == stats['total_scope'] or stats['total_scope'] == 0,
+            'detail': f'categorized={all_categorized}, scope={stats["total_scope"]}, suggested={len(suggested_pids)}, no_need={len(no_need_pids)}, excluded={len(excluded_pids)}'
+        },
+        'excluded_have_reason_codes': {
+            'passed': all(e.get('reason_code') for e in excluded) if excluded else True,
+            'detail': f'reason_codes_found={sorted(reason_codes_found)}'
+        },
+        'no_need_have_reasons': {
+            'passed': all(n.get('reason') for n in no_need) if no_need else True,
+            'detail': f'no_need_count={len(no_need)}'
+        }
+    }
+
+    all_passed = all(t['passed'] for t in tests.values())
+
+    return jsonify({
+        'all_passed': all_passed,
+        'tests': tests,
+        'scope_stats': stats,
+        'reason_codes': sorted(reason_codes_found),
+        'counts': {
+            'suggested': len(suggested_pids),
+            'no_need': len(no_need_pids),
+            'excluded': len(excluded_pids)
+        }
+    })
+
+
 @app.route('/admin/operational_stock_debug')
 @login_required
 @require_permission('admin:users')
@@ -9951,26 +10025,22 @@ def compute_rebalancing_suggestions(
     include_held=False
 ):
     """
-    Compute store-to-store rebalancing suggestions.
+    Compute store-to-store rebalancing suggestions with full SKU traceability.
     
-    Extended params:
-    - scope: 'sku' (all SKUs or filtered list) or 'category' (SKUs from a category)
-    - destination: 'one' (single store filter) or 'all' (multi-destination matrix)
-    - category: category name when scope='category'
-    - top_n: limit to top N SKUs by demand when scope='category'
-    - product_ids_filter: list of product_ids to filter (when scope='sku' with specific list)
-    
-    Integrates with Operational Alerts Layer:
-    - OVERSTOCK alerts mark SKUs as redistribution sources (higher priority)
-    - BREAKAGE alerts mark stores as redistribution destinations (higher priority)
-    
-    Returns list of dicts: {product_id, sku, name, from_store_id, from_store, to_store_id, to_store, qty, sales_rate_to, woc_from, woc_to, score, reason}
-    Optimized: Uses indexed lookups instead of O(n*m) scans.
+    Returns dict with keys:
+    - suggestions: list of transfer dicts
+    - no_need: list of {product_id, sku, name, category, reason} for balanced SKUs
+    - excluded: list of {product_id, sku, name, category, reason_code, detail} for filtered SKUs
+    - scope_stats: {total_scope, suggested, no_need, excluded, truncated_by_top_n}
     """
+    no_need = []
+    excluded = []
+    truncated_by_top_n = []
+
     sales_agg_count = db.session.query(db.func.count(SalesWeeklyAgg.id)).scalar() or 0
     if sales_agg_count == 0:
         app.logger.warning("Redistribution: No SalesWeeklyAgg data available")
-        return []
+        return {'suggestions': [], 'no_need': [], 'excluded': [], 'scope_stats': {'total_scope': 0, 'suggested': 0, 'no_need': 0, 'excluded': 0, 'truncated_by_top_n': 0}}
     
     alert_candidates = get_redistribution_candidates()
     alert_sources = {(s['sku'], s['store_id']): s for s in alert_candidates['sources']}
@@ -9978,33 +10048,60 @@ def compute_rebalancing_suggestions(
     
     alerts_logger.info(f"Redistribution: {len(alert_sources)} OVERSTOCK sources, {len(alert_destinations)} BREAKAGE destinations from alerts")
     
-    # Use analysis end date from macro sales instead of today to align with loaded data
     analysis_end = get_analysis_end_date()
     window_start_week = analysis_end - timedelta(days=weeks_window * 7)
     window_start_week = window_start_week - timedelta(days=window_start_week.weekday())
     
     app.logger.info(f"Redistribution using SalesWeeklyAgg from {window_start_week} to {analysis_end}, scope={scope}, destination={destination}")
     
+    full_category_pids = None
     if scope == 'category' and category:
-        target_product_ids = fetch_category_skus(category, top_n, weeks_window)
-        if not target_product_ids:
+        full_category_pids = fetch_category_skus(category, top_n=None, weeks_window=weeks_window)
+        if not full_category_pids:
             app.logger.warning(f"Redistribution: No SKUs found for category {category}")
-            return []
-        app.logger.info(f"Redistribution: Category '{category}' scope with {len(target_product_ids)} SKUs")
+            return {'suggestions': [], 'no_need': [], 'excluded': [], 'scope_stats': {'total_scope': 0, 'suggested': 0, 'no_need': 0, 'excluded': 0, 'truncated_by_top_n': 0}}
+        if top_n and top_n > 0 and len(full_category_pids) > top_n:
+            target_product_ids = full_category_pids[:top_n]
+            truncated_pids = full_category_pids[top_n:]
+        else:
+            target_product_ids = full_category_pids
+            truncated_pids = []
+        app.logger.info(f"Redistribution: Category '{category}' scope with {len(target_product_ids)} SKUs (truncated {len(truncated_pids)} by top_n)")
     elif product_ids_filter:
         target_product_ids = product_ids_filter
+        truncated_pids = []
     else:
         target_product_ids = None
+        truncated_pids = []
+    
+    all_products_lookup = {}
+    if target_product_ids:
+        for p in Product.query.filter(Product.id.in_(target_product_ids)).all():
+            all_products_lookup[p.id] = p
+    else:
+        for p in Product.query.all():
+            all_products_lookup[p.id] = p
+    
+    for pid in truncated_pids:
+        p = all_products_lookup.get(pid) or Product.query.get(pid)
+        excluded.append({
+            'product_id': pid,
+            'sku': p.sku if p else str(pid),
+            'name': p.name if p else '?',
+            'category': p.category if p else None,
+            'reason_code': 'TOP_N_TRUNCATION',
+            'detail': f'SKU fuera del Top {top_n} por demanda en categoría',
+            'stock_donors': 0, 'stock_receivers': 0, 'has_sales': False
+        })
     
     op_stock_raw = get_store_operational_stock_bulk(product_ids=target_product_ids)
-    if not op_stock_raw:
-        return []
     
     stock_map = {}
     stores_per_product_stock = defaultdict(set)
-    for (sid, pid), qty in op_stock_raw.items():
-        stock_map[(pid, sid)] = qty
-        stores_per_product_stock[pid].add(sid)
+    if op_stock_raw:
+        for (sid, pid), qty in op_stock_raw.items():
+            stock_map[(pid, sid)] = qty
+            stores_per_product_stock[pid].add(sid)
     
     sales_query = db.session.query(
         SalesWeeklyAgg.product_id,
@@ -10026,13 +10123,8 @@ def compute_rebalancing_suggestions(
         stores_per_product_sales[pid].add(sid)
     
     held_product_ids = set()
-    if target_product_ids:
-        products_q = Product.query.filter(Product.id.in_(target_product_ids)).all()
-    else:
-        products_q = Product.query.all()
-    
     product_info = {}
-    for p in products_q:
+    for pid, p in all_products_lookup.items():
         if p.is_on_hold and not include_held:
             held_product_ids.add(p.id)
             continue
@@ -10045,25 +10137,67 @@ def compute_rebalancing_suggestions(
             message=f'Excluded {len(held_product_ids)} held SKUs from redistribution',
             metadata={'count': len(held_product_ids)}
         )
+        for pid in held_product_ids:
+            p = all_products_lookup.get(pid)
+            excluded.append({
+                'product_id': pid,
+                'sku': p.sku if p else str(pid),
+                'name': p.name if p else '?',
+                'category': p.category if p else None,
+                'reason_code': 'HELD_SKU',
+                'detail': 'SKU bloqueado (Hold)',
+                'stock_donors': 0, 'stock_receivers': 0, 'has_sales': False
+            })
     
     store_info = {s.id: s.name for s in Store.query.all()}
-    all_store_ids = list(store_info.keys())
     
     if target_product_ids:
-        all_products = set(target_product_ids) - held_product_ids
+        scope_product_ids = set(target_product_ids)
     else:
-        all_products = (set(stores_per_product_stock.keys()) | set(stores_per_product_sales.keys())) - held_product_ids
+        scope_product_ids = set(stores_per_product_stock.keys()) | set(stores_per_product_sales.keys()) | set(all_products_lookup.keys())
     
-    all_products = all_products & set(product_info.keys())
+    missing_product_pids = scope_product_ids - set(all_products_lookup.keys())
+    for pid in missing_product_pids:
+        excluded.append({
+            'product_id': pid,
+            'sku': str(pid),
+            'name': '?',
+            'category': None,
+            'reason_code': 'NO_PRODUCT_MATCH',
+            'detail': 'product_id no encontrado en tabla Product',
+            'stock_donors': 0, 'stock_receivers': 0, 'has_sales': False
+        })
+    
+    eligible_products = (scope_product_ids - held_product_ids - missing_product_pids) & set(product_info.keys())
     
     suggestions = []
+    suggested_pids = set()
+    no_need_pids = set()
+    max_rows_overflow_pids = set()
+    hit_max_rows = False
     
     donor_available = {}
     donor_on_hand_map = {}
     donor_retain_map = {}
     
-    for pid in all_products:
+    for pid in eligible_products:
         stores_for_pid = stores_per_product_stock.get(pid, set()) | stores_per_product_sales.get(pid, set())
+        
+        sku_str = product_info.get(pid, ('?', '?', None))[0]
+        prod_name = product_info.get(pid, ('?', '?', None))[1]
+        prod_cat = product_info.get(pid, ('?', '?', None))[2]
+        
+        if not stores_for_pid:
+            has_stock = pid in stores_per_product_stock
+            has_sales = pid in stores_per_product_sales
+            if not has_stock and not has_sales:
+                excluded.append({
+                    'product_id': pid, 'sku': sku_str, 'name': prod_name, 'category': prod_cat,
+                    'reason_code': 'NO_STORE_DATA',
+                    'detail': 'Sin datos de stock ni ventas en tiendas',
+                    'stock_donors': 0, 'stock_receivers': 0, 'has_sales': False
+                })
+                continue
         
         store_data = []
         for sid in stores_for_pid:
@@ -10077,7 +10211,17 @@ def compute_rebalancing_suggestions(
                 'woc': woc
             })
         
-        sku_str = product_info.get(pid, ('?', '?'))[0]
+        total_stock = sum(sd['stock'] for sd in store_data)
+        total_rate = sum(sd['rate'] for sd in store_data)
+        
+        if total_stock == 0 and total_rate == 0:
+            excluded.append({
+                'product_id': pid, 'sku': sku_str, 'name': prod_name, 'category': prod_cat,
+                'reason_code': 'ZERO_DEMAND',
+                'detail': 'Stock total y ventas totales = 0 en todas las tiendas',
+                'stock_donors': 0, 'stock_receivers': 0, 'has_sales': False
+            })
+            continue
         
         receivers = []
         for sd in store_data:
@@ -10144,6 +10288,38 @@ def compute_rebalancing_suggestions(
             return (float(p) if p is not None else 0.0, sid)
         donors.sort(key=donor_sort_key, reverse=True)
         
+        if not receivers and not donors:
+            no_need.append({
+                'product_id': pid, 'sku': sku_str, 'name': prod_name, 'category': prod_cat,
+                'reason': 'Todas las tiendas dentro de rango WOC',
+                'total_stock': total_stock, 'total_rate': round(total_rate, 2)
+            })
+            no_need_pids.add(pid)
+            continue
+        
+        if not receivers:
+            no_need.append({
+                'product_id': pid, 'sku': sku_str, 'name': prod_name, 'category': prod_cat,
+                'reason': f'Sin tiendas receptoras (WOC >= {target_woc_min} en todas)',
+                'total_stock': total_stock, 'total_rate': round(total_rate, 2)
+            })
+            no_need_pids.add(pid)
+            continue
+        
+        if not donors:
+            no_need.append({
+                'product_id': pid, 'sku': sku_str, 'name': prod_name, 'category': prod_cat,
+                'reason': f'Sin tiendas donadoras (WOC <= {target_woc_max} en todas)',
+                'total_stock': total_stock, 'total_rate': round(total_rate, 2)
+            })
+            no_need_pids.add(pid)
+            continue
+        
+        if hit_max_rows:
+            max_rows_overflow_pids.add(pid)
+            continue
+        
+        pid_had_suggestion = False
         for receiver in receivers:
             if destination == 'one' and store_filter and store_info.get(receiver['store_id']) != store_filter:
                 continue
@@ -10199,6 +10375,7 @@ def compute_rebalancing_suggestions(
                     'donor_on_hand': on_hand,
                     'donor_retain': retain,
                 })
+                pid_had_suggestion = True
                 
                 remaining_need -= transfer
                 donor_available[da_key] -= transfer
@@ -10206,13 +10383,35 @@ def compute_rebalancing_suggestions(
                 
                 if len(suggestions) >= REBALANCING_MAX_ROWS:
                     app.logger.warning(f"Redistribution: Hit MAX_ROWS limit ({REBALANCING_MAX_ROWS})")
+                    hit_max_rows = True
                     break
             
-            if len(suggestions) >= REBALANCING_MAX_ROWS:
+            if hit_max_rows:
                 break
         
-        if len(suggestions) >= REBALANCING_MAX_ROWS:
-            break
+        if pid_had_suggestion:
+            suggested_pids.add(pid)
+        elif not hit_max_rows:
+            filter_reason = ''
+            if destination == 'one' and store_filter:
+                filter_reason = f'Tienda filtro "{store_filter}" no es receptora'
+            else:
+                filter_reason = f'Transferencias < mín {min_transfer_qty} unidades'
+            no_need.append({
+                'product_id': pid, 'sku': sku_str, 'name': prod_name, 'category': prod_cat,
+                'reason': f'Donantes/receptores existen pero sin match viable: {filter_reason}',
+                'total_stock': total_stock, 'total_rate': round(total_rate, 2)
+            })
+            no_need_pids.add(pid)
+    
+    for pid in max_rows_overflow_pids:
+        info = product_info.get(pid, ('?', '?', None))
+        excluded.append({
+            'product_id': pid, 'sku': info[0], 'name': info[1], 'category': info[2] if len(info) > 2 else None,
+            'reason_code': 'MAX_ROWS_LIMIT',
+            'detail': f'Límite de {REBALANCING_MAX_ROWS} filas alcanzado antes de procesar este SKU',
+            'stock_donors': 0, 'stock_receivers': 0, 'has_sales': pid in stores_per_product_sales
+        })
     
     agg_check = defaultdict(lambda: {'total_assigned': 0, 'on_hand': 0, 'retain': 0})
     for s in suggestions:
@@ -10246,7 +10445,34 @@ def compute_rebalancing_suggestions(
         to_sid = x.get('to_store_id', 0)
         return (float(score) if score is not None else 0.0, pid, from_sid, to_sid)
     suggestions.sort(key=suggestion_sort_key, reverse=True)
-    return suggestions
+    
+    all_categorized_pids = suggested_pids | no_need_pids | max_rows_overflow_pids | set(e['product_id'] for e in excluded)
+    uncategorized_pids = eligible_products - all_categorized_pids
+    for pid in uncategorized_pids:
+        info = product_info.get(pid, ('?', '?', None))
+        excluded.append({
+            'product_id': pid, 'sku': info[0], 'name': info[1], 'category': info[2] if len(info) > 2 else None,
+            'reason_code': 'OTHER',
+            'detail': 'SKU procesado pero no generó resultado (reconciliación)',
+            'stock_donors': 0, 'stock_receivers': 0, 'has_sales': pid in stores_per_product_sales
+        })
+        app.logger.warning(f"[REBAL RECONCILE] SKU pid={pid} was uncategorized, added to excluded")
+    
+    scope_stats = {
+        'total_scope': len(scope_product_ids) + len(truncated_pids),
+        'suggested': len(suggested_pids),
+        'no_need': len(no_need),
+        'excluded': len(excluded),
+        'truncated_by_top_n': len(truncated_pids)
+    }
+    app.logger.info(f"Redistribution scope stats: {scope_stats}")
+    
+    return {
+        'suggestions': suggestions,
+        'no_need': no_need,
+        'excluded': excluded,
+        'scope_stats': scope_stats
+    }
 
 
 @app.route('/rebalancing', methods=['GET', 'POST'])
@@ -10335,7 +10561,7 @@ def rebalancing():
             flash('Selecciona una categoría para el modo por categoría.', 'warning')
             return redirect(url_for('rebalancing'))
         
-        suggestions = compute_rebalancing_suggestions(
+        result = compute_rebalancing_suggestions(
             weeks_window=weeks_window,
             target_woc_min=target_woc_min,
             target_woc_target=target_woc_target,
@@ -10350,6 +10576,10 @@ def rebalancing():
             top_n=top_n,
             include_held=include_held
         )
+        suggestions = result['suggestions']
+        rebal_no_need = result['no_need']
+        rebal_excluded = result['excluded']
+        rebal_scope_stats = result['scope_stats']
         
         run_id = str(uuid.uuid4())
         params = {
@@ -10403,6 +10633,15 @@ def rebalancing():
                 db.session.execute(RebalanceSuggestion.__table__.insert(), batch)
         
         db.session.commit()
+        
+        from flask import session as flask_session
+        MAX_SESSION_ITEMS = 500
+        flask_session['rebal_no_need'] = rebal_no_need[:MAX_SESSION_ITEMS]
+        flask_session['rebal_excluded'] = rebal_excluded[:MAX_SESSION_ITEMS]
+        flask_session['rebal_scope_stats'] = rebal_scope_stats
+        flask_session['rebal_scope_stats']['no_need_truncated'] = len(rebal_no_need) > MAX_SESSION_ITEMS
+        flask_session['rebal_scope_stats']['excluded_truncated'] = len(rebal_excluded) > MAX_SESSION_ITEMS
+        flask_session['rebal_run_id_trace'] = run_id
         
         if simulate:
             flash(f'SIMULACIÓN: {len(suggestions)} sugerencias calculadas.', 'info')
@@ -10511,8 +10750,18 @@ def rebalancing():
         by_destination[dest]['units'] += s.get('qty', 0)
         by_destination[dest]['items'].append(s)
     
-    # Pre-sort destinations by units (descending) to avoid Jinja dictsort on dict values
     sorted_dests = sorted(by_destination.items(), key=lambda kv: kv[1].get('units', 0), reverse=True)
+    
+    from flask import session as flask_session
+    rebal_no_need = flask_session.pop('rebal_no_need', [])
+    rebal_excluded = flask_session.pop('rebal_excluded', [])
+    rebal_scope_stats = flask_session.pop('rebal_scope_stats', None)
+    rebal_trace_run_id = flask_session.pop('rebal_run_id_trace', None)
+    
+    if run_info and rebal_trace_run_id and rebal_trace_run_id != run_info.get('run_id'):
+        rebal_no_need = []
+        rebal_excluded = []
+        rebal_scope_stats = None
     
     return render_template(
         'rebalancing.html',
@@ -10527,6 +10776,9 @@ def rebalancing():
         run_info=run_info,
         is_simulation=is_simulation,
         prefill_sku=prefill_sku,
+        rebal_no_need=rebal_no_need,
+        rebal_excluded=rebal_excluded,
+        rebal_scope_stats=rebal_scope_stats,
         params={
             'weeks_window': weeks_window,
             'target_woc_min': target_woc_min,
