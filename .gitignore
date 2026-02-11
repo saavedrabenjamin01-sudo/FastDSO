@@ -35,3 +35,6 @@ Thumbs.db
 
 # Replit
 .pythonlibs/
+
+# Rebalancing trace files
+rebal_traces/

@@ -10465,6 +10465,15 @@ def compute_rebalancing_suggestions(
         'excluded': len(excluded),
         'truncated_by_top_n': len(truncated_pids)
     }
+    
+    app.logger.info(
+        f"REBALANCING DEBUG candidates={len(eligible_products)} "
+        f"suggestions={len(suggestions)} no_need={len(no_need)} excluded={len(excluded)}"
+    )
+    for i, exc in enumerate(excluded[:10]):
+        app.logger.info(
+            f"REBALANCING DEBUG excluded[{i}]: sku={exc.get('sku')} reason={exc.get('reason_code')}"
+        )
     app.logger.info(f"Redistribution scope stats: {scope_stats}")
     
     return {
@@ -10634,14 +10643,20 @@ def rebalancing():
         
         db.session.commit()
         
-        from flask import session as flask_session
-        MAX_SESSION_ITEMS = 500
-        flask_session['rebal_no_need'] = rebal_no_need[:MAX_SESSION_ITEMS]
-        flask_session['rebal_excluded'] = rebal_excluded[:MAX_SESSION_ITEMS]
-        flask_session['rebal_scope_stats'] = rebal_scope_stats
-        flask_session['rebal_scope_stats']['no_need_truncated'] = len(rebal_no_need) > MAX_SESSION_ITEMS
-        flask_session['rebal_scope_stats']['excluded_truncated'] = len(rebal_excluded) > MAX_SESSION_ITEMS
-        flask_session['rebal_run_id_trace'] = run_id
+        MAX_TRACE_ITEMS = 500
+        trace_data = {
+            'no_need': rebal_no_need[:MAX_TRACE_ITEMS],
+            'excluded': rebal_excluded[:MAX_TRACE_ITEMS],
+            'scope_stats': rebal_scope_stats,
+            'no_need_truncated': len(rebal_no_need) > MAX_TRACE_ITEMS,
+            'excluded_truncated': len(rebal_excluded) > MAX_TRACE_ITEMS
+        }
+        trace_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rebal_traces')
+        os.makedirs(trace_dir, exist_ok=True)
+        trace_path = os.path.join(trace_dir, f'{run_id}.json')
+        with open(trace_path, 'w') as f:
+            json.dump(trace_data, f)
+        app.logger.info(f"[REBAL TRACE] Wrote trace file: {trace_path} (no_need={len(rebal_no_need)}, excluded={len(rebal_excluded)})")
         
         if simulate:
             flash(f'SIMULACIÓN: {len(suggestions)} sugerencias calculadas.', 'info')
@@ -10752,16 +10767,25 @@ def rebalancing():
     
     sorted_dests = sorted(by_destination.items(), key=lambda kv: kv[1].get('units', 0), reverse=True)
     
-    from flask import session as flask_session
-    rebal_no_need = flask_session.pop('rebal_no_need', [])
-    rebal_excluded = flask_session.pop('rebal_excluded', [])
-    rebal_scope_stats = flask_session.pop('rebal_scope_stats', None)
-    rebal_trace_run_id = flask_session.pop('rebal_run_id_trace', None)
-    
-    if run_info and rebal_trace_run_id and rebal_trace_run_id != run_info.get('run_id'):
-        rebal_no_need = []
-        rebal_excluded = []
-        rebal_scope_stats = None
+    rebal_no_need = []
+    rebal_excluded = []
+    rebal_scope_stats = None
+    if run_info:
+        trace_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rebal_traces')
+        trace_path = os.path.join(trace_dir, f"{run_info['run_id']}.json")
+        if os.path.exists(trace_path):
+            try:
+                with open(trace_path, 'r') as f:
+                    trace_data = json.load(f)
+                rebal_no_need = trace_data.get('no_need', [])
+                rebal_excluded = trace_data.get('excluded', [])
+                rebal_scope_stats = trace_data.get('scope_stats', None)
+                if rebal_scope_stats:
+                    rebal_scope_stats['no_need_truncated'] = trace_data.get('no_need_truncated', False)
+                    rebal_scope_stats['excluded_truncated'] = trace_data.get('excluded_truncated', False)
+                app.logger.info(f"[REBAL TRACE] Loaded trace file for run {run_info['run_id']}: no_need={len(rebal_no_need)}, excluded={len(rebal_excluded)}")
+            except Exception as e:
+                app.logger.error(f"[REBAL TRACE] Failed to load trace file {trace_path}: {e}")
     
     return render_template(
         'rebalancing.html',
