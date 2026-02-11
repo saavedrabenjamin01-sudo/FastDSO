@@ -8496,100 +8496,336 @@ def upload_stock_cd():
 @login_required
 @require_permission('stock:query')
 def stock_query():
-    sku = (request.args.get("sku") or "").strip()
-    scope = (request.args.get("scope") or "cd").strip()  # cd | tiendas
-    store_name = (request.args.get("store") or "").strip()
+    NO_MOVEMENT_DAYS = 60
+    OVERSTOCK_WOC = 12
 
-    result = None
-    stores = Store.query.order_by(Store.name.asc()).all()
+    detail_sku = (request.args.get("detail_sku") or "").strip()
+    if detail_sku:
+        detail_sku = normalize_sku(detail_sku)
+        return _stock_query_detail_json(detail_sku, NO_MOVEMENT_DAYS)
 
-    if sku:
-        sku = normalize_sku(sku)
-        product = Product.query.filter_by(sku=sku).first()
+    search = (request.args.get("search") or "").strip()
+    category_filter = (request.args.get("category") or "").strip()
+    show_with_stock = request.args.get("with_stock") == "1"
+    show_broken = request.args.get("broken") == "1"
+    show_blocked = request.args.get("blocked") == "1"
+    show_no_movement = request.args.get("no_movement") == "1"
+    show_overstock = request.args.get("overstock") == "1"
+    page = max(1, request.args.get("page", 1, type=int))
+    per_page = request.args.get("per_page", 10, type=int)
+    if per_page not in (10, 25, 50):
+        per_page = 10
 
-        if product:
-            hold_info = None
-            if product.is_on_hold:
-                hold_info = {
-                    "reason": product.hold_reason,
-                    "source": product.hold_source,
-                    "created_at": product.hold_created_at.strftime('%Y-%m-%d %H:%M') if product.hold_created_at else None
-                }
-            
-            if scope == "cd":
-                # Use operational stock helper for main quantity
-                quantity = get_cd_operational_stock(product.id)
-                
-                # Still read PROBLEM stock from StockCD (tracked separately)
-                latest_date = db.session.query(db.func.max(StockCD.as_of_date)).filter_by(product_id=product.id).scalar()
-                
-                qty_problem = 0
-                if latest_date:
-                    cd_rows = StockCD.query.filter_by(product_id=product.id, as_of_date=latest_date).all()
-                    for row in cd_rows:
-                        if row.quality_status == 'PROBLEM':
-                            qty_problem += int(row.quantity)
-                
-                result = {
-                    "sku": product.sku,
-                    "product": product.name,
-                    "scope": "cd",
-                    "as_of_date": latest_date,
-                    "quantity": quantity,
-                    "quantity_ok": quantity,
-                    "quantity_problem": qty_problem,
-                    "is_on_hold": product.is_on_hold,
-                    "hold_info": hold_info,
-                    "product_id": product.id
-                }
+    q = Product.query
 
-            else:
-                # Stock de tiendas: use operational stock bulk helper
-                # Get all stores, optionally filtered by store_name
-                stores_query = Store.query.order_by(Store.name.asc())
-                if store_name:
-                    stores_query = stores_query.filter(Store.name == store_name)
-                
-                filtered_stores = stores_query.all()
-                store_ids = [st.id for st in filtered_stores]
-                
-                # Get operational stock for all stores using bulk helper
-                store_stock = get_store_operational_stock_bulk(
-                    store_ids=store_ids if store_ids else None,
-                    product_ids=[product.id],
-                    session=db.session
-                )
-                
-                # Build result dict from operational stock
-                latest_by_store = {}
-                for st in filtered_stores:
-                    qty = store_stock.get((st.id, product.id), 0)
-                    latest_by_store[st.id] = {
-                        "store": st.name,
-                        "quantity": qty
+    if search:
+        norm_search = normalize_sku(search)
+        like_pat = f"%{search}%"
+        q = q.filter(
+            db.or_(
+                Product.sku.ilike(like_pat),
+                Product.sku == norm_search,
+                Product.name.ilike(like_pat),
+                Product.category.ilike(like_pat),
+            )
+        )
+
+    if category_filter:
+        q = q.filter(Product.category == category_filter)
+    if show_blocked:
+        q = q.filter(Product.is_on_hold == True)
+
+    needs_stock_filter = show_with_stock or show_broken or show_overstock
+    needs_lifecycle_filter = show_no_movement
+
+    if needs_stock_filter or needs_lifecycle_filter:
+        all_pids = [r[0] for r in q.with_entities(Product.id).all()]
+
+        cd_stock_map = {}
+        store_total_map = defaultdict(int)
+        store_count_map = defaultdict(int)
+        weekly_demand_map = {}
+        lifecycle_map = {}
+
+        if all_pids:
+            cd_stock_map = get_cd_stock_map()
+
+            store_op = get_store_operational_stock_bulk(product_ids=all_pids)
+            for (sid, pid), qty in store_op.items():
+                if qty > 0:
+                    store_total_map[pid] += qty
+                    store_count_map[pid] += 1
+
+            if needs_lifecycle_filter:
+                lc_rows = db.session.query(
+                    SkuLifecycle.product_id,
+                    SkuLifecycle.days_since_last_sale_global,
+                    SkuLifecycle.days_since_last_purchase_global
+                ).filter(SkuLifecycle.product_id.in_(all_pids)).all()
+                for row in lc_rows:
+                    lifecycle_map[row.product_id] = {
+                        'duv': row.days_since_last_sale_global,
+                        'duc': row.days_since_last_purchase_global,
                     }
 
-                result = {
-                    "sku": product.sku,
-                    "product": product.name,
-                    "scope": "tiendas",
-                    "stores": list(latest_by_store.values()),
-                    "is_on_hold": product.is_on_hold,
-                    "hold_info": hold_info,
-                    "product_id": product.id
-                }
+            if show_broken or show_overstock:
+                analysis_end = get_analysis_end_date()
+                demand_cutoff = analysis_end - timedelta(weeks=12)
+                demand_rows = db.session.query(
+                    SalesWeeklyAgg.product_id,
+                    db.func.sum(SalesWeeklyAgg.units)
+                ).filter(
+                    SalesWeeklyAgg.product_id.in_(all_pids),
+                    SalesWeeklyAgg.week_start >= demand_cutoff
+                ).group_by(SalesWeeklyAgg.product_id).all()
+                for pid, total_units in demand_rows:
+                    weekly_demand_map[pid] = (total_units or 0) / 12.0
 
+        filtered_pids = all_pids
+        if show_with_stock:
+            filtered_pids = [pid for pid in filtered_pids if cd_stock_map.get(pid, 0) + store_total_map.get(pid, 0) > 0]
+        if show_broken:
+            filtered_pids = [pid for pid in filtered_pids if store_total_map.get(pid, 0) == 0 and weekly_demand_map.get(pid, 0) > 0]
+        if show_no_movement:
+            filtered_pids = [pid for pid in filtered_pids if lifecycle_map.get(pid, {}).get('duv') is not None and lifecycle_map[pid]['duv'] >= NO_MOVEMENT_DAYS]
+        if show_overstock:
+            def _is_overstock(pid):
+                wd = weekly_demand_map.get(pid, 0)
+                if wd <= 0:
+                    return False
+                total = cd_stock_map.get(pid, 0) + store_total_map.get(pid, 0)
+                return (total / wd) >= OVERSTOCK_WOC
+            filtered_pids = [pid for pid in filtered_pids if _is_overstock(pid)]
+
+        total_count = len(filtered_pids)
+        pagination = Pagination(page, per_page, total_count, [])
+        start_idx = (page - 1) * per_page
+        page_pids = filtered_pids[start_idx:start_idx + per_page]
+    else:
+        total_count = q.count()
+        pagination = Pagination(page, per_page, total_count, [])
+        page_pids = [r[0] for r in q.with_entities(Product.id).order_by(Product.id).offset((page - 1) * per_page).limit(per_page).all()]
+
+        cd_stock_map = {}
+        store_total_map = defaultdict(int)
+        store_count_map = defaultdict(int)
+        lifecycle_map = {}
+        weekly_demand_map = {}
+
+    if page_pids:
+        if not cd_stock_map:
+            cd_stock_map = get_cd_stock_map()
+        if not store_total_map:
+            store_op = get_store_operational_stock_bulk(product_ids=page_pids)
+            for (sid, pid), qty in store_op.items():
+                if qty > 0:
+                    store_total_map[pid] += qty
+                    store_count_map[pid] += 1
+        if not lifecycle_map:
+            lc_rows = db.session.query(
+                SkuLifecycle.product_id,
+                SkuLifecycle.days_since_last_sale_global,
+                SkuLifecycle.days_since_last_purchase_global
+            ).filter(SkuLifecycle.product_id.in_(page_pids)).all()
+            for row in lc_rows:
+                lifecycle_map[row.product_id] = {
+                    'duv': row.days_since_last_sale_global,
+                    'duc': row.days_since_last_purchase_global,
+                }
+        if not weekly_demand_map:
+            analysis_end = get_analysis_end_date()
+            demand_cutoff = analysis_end - timedelta(weeks=12)
+            demand_rows = db.session.query(
+                SalesWeeklyAgg.product_id,
+                db.func.sum(SalesWeeklyAgg.units)
+            ).filter(
+                SalesWeeklyAgg.product_id.in_(page_pids),
+                SalesWeeklyAgg.week_start >= demand_cutoff
+            ).group_by(SalesWeeklyAgg.product_id).all()
+            for pid, total_units in demand_rows:
+                weekly_demand_map[pid] = (total_units or 0) / 12.0
+
+    page_products = Product.query.filter(Product.id.in_(page_pids)).all() if page_pids else []
+    pid_order = {pid: i for i, pid in enumerate(page_pids)}
+    page_products.sort(key=lambda p: pid_order.get(p.id, 0))
+
+    rows = []
+    for p in page_products:
+        cd = cd_stock_map.get(p.id, 0)
+        st = store_total_map.get(p.id, 0)
+        lc = lifecycle_map.get(p.id, {})
+        wd = weekly_demand_map.get(p.id, 0)
+        total = cd + st
+        woc = round(total / wd, 1) if wd > 0 else None
+
+        if p.is_on_hold:
+            status = 'blocked'
+        elif lc.get('duv') is not None and lc['duv'] >= NO_MOVEMENT_DAYS:
+            status = 'risk'
+        elif total == 0:
+            status = 'risk'
+        elif woc is not None and woc >= OVERSTOCK_WOC:
+            status = 'risk'
         else:
-            result = {"error": f"No existe producto con SKU: {sku}"}
+            status = 'ok'
+
+        rows.append({
+            'id': p.id,
+            'sku': p.sku,
+            'name': p.name or '',
+            'category': p.category or '',
+            'cd_stock': cd,
+            'store_stock': st,
+            'total_stock': total,
+            'stores_with_stock': store_count_map.get(p.id, 0),
+            'duv': lc.get('duv'),
+            'duc': lc.get('duc'),
+            'woc': woc,
+            'status': status,
+            'is_on_hold': p.is_on_hold,
+        })
+
+    categories = [r[0] for r in db.session.query(Product.category).filter(Product.category.isnot(None), Product.category != '').distinct().order_by(Product.category).all()]
+
+    kpi_total_products = Product.query.count()
+    kpi_blocked = Product.query.filter(Product.is_on_hold == True).count()
 
     return render_template(
         "stock_query.html",
-        stores=stores,
-        selected_scope=scope,
-        selected_store=store_name,
-        sku=sku,
-        result=result
+        rows=rows,
+        pagination=pagination,
+        page=page,
+        per_page=per_page,
+        search=search,
+        category_filter=category_filter,
+        show_with_stock=show_with_stock,
+        show_broken=show_broken,
+        show_blocked=show_blocked,
+        show_no_movement=show_no_movement,
+        show_overstock=show_overstock,
+        categories=categories,
+        kpi_total_products=kpi_total_products,
+        kpi_blocked=kpi_blocked,
     )
+
+
+def _stock_query_detail_json(sku, no_movement_days):
+    product = Product.query.filter_by(sku=sku).first()
+    if not product:
+        return jsonify({'error': f'No existe producto con SKU: {sku}'}), 404
+
+    cd_stock_all = get_cd_stock_map()
+    cd_stock = cd_stock_all.get(product.id, 0)
+    store_stock_bulk = get_store_operational_stock_bulk(product_ids=[product.id])
+
+    store_rows = []
+    store_total = 0
+    all_stores = Store.query.order_by(Store.name).all()
+    store_map = {s.id: s.name for s in all_stores}
+
+    lc = SkuLifecycle.query.filter_by(product_id=product.id).first()
+    duv = lc.days_since_last_sale_global if lc else None
+    duc = lc.days_since_last_purchase_global if lc else None
+
+    analysis_end = get_analysis_end_date()
+    demand_cutoff = analysis_end - timedelta(weeks=12)
+    weekly_demand_row = db.session.query(
+        db.func.sum(SalesWeeklyAgg.units)
+    ).filter(
+        SalesWeeklyAgg.product_id == product.id,
+        SalesWeeklyAgg.week_start >= demand_cutoff
+    ).scalar() or 0
+    weekly_demand = weekly_demand_row / 12.0
+
+    store_woc_data = {}
+    if weekly_demand > 0:
+        store_demand_rows = db.session.query(
+            SalesWeeklyAgg.store_id,
+            db.func.sum(SalesWeeklyAgg.units)
+        ).filter(
+            SalesWeeklyAgg.product_id == product.id,
+            SalesWeeklyAgg.week_start >= demand_cutoff
+        ).group_by(SalesWeeklyAgg.store_id).all()
+        for sid, total_u in store_demand_rows:
+            wd = (total_u or 0) / 12.0
+            if wd > 0:
+                store_woc_data[sid] = wd
+
+    for sid, sname in store_map.items():
+        qty = store_stock_bulk.get((sid, product.id), 0)
+        if qty > 0:
+            store_total += qty
+            wd = store_woc_data.get(sid, 0)
+            swoc = round(qty / wd, 1) if wd > 0 else None
+            store_rows.append({'store': sname, 'qty': qty, 'woc': swoc})
+
+    store_rows.sort(key=lambda r: r['qty'], reverse=True)
+
+    total = cd_stock + store_total
+    woc = round(total / weekly_demand, 1) if weekly_demand > 0 else None
+
+    OVERSTOCK_WOC = 12
+    if product.is_on_hold:
+        status = 'blocked'
+    elif duv is not None and duv >= no_movement_days:
+        status = 'risk'
+    elif total == 0:
+        status = 'risk'
+    elif woc is not None and woc >= OVERSTOCK_WOC:
+        status = 'risk'
+    else:
+        status = 'ok'
+
+    cd_snapshots = []
+    cd_rows = db.session.query(
+        StockCD.as_of_date, StockCD.quantity, StockCD.quality_status
+    ).filter_by(product_id=product.id).order_by(StockCD.as_of_date.desc()).limit(20).all()
+    for row in cd_rows:
+        cd_snapshots.append({
+            'date': row.as_of_date.isoformat() if row.as_of_date else '',
+            'qty': int(row.quantity),
+            'status': row.quality_status,
+        })
+
+    chart_cutoff = analysis_end - timedelta(weeks=12)
+    sales_rows = db.session.query(
+        SalesWeeklyAgg.week_start,
+        db.func.sum(SalesWeeklyAgg.units)
+    ).filter(
+        SalesWeeklyAgg.product_id == product.id,
+        SalesWeeklyAgg.week_start >= chart_cutoff
+    ).group_by(SalesWeeklyAgg.week_start).order_by(SalesWeeklyAgg.week_start).all()
+
+    chart_labels = [r[0].isoformat() for r in sales_rows]
+    chart_values = [int(r[1] or 0) for r in sales_rows]
+
+    hold_info = None
+    if product.is_on_hold:
+        hold_info = {
+            'reason': product.hold_reason or 'Sin especificar',
+            'source': product.hold_source or 'Manual',
+            'created_at': product.hold_created_at.strftime('%Y-%m-%d %H:%M') if product.hold_created_at else None,
+        }
+
+    return jsonify({
+        'sku': product.sku,
+        'name': product.name or '',
+        'category': product.category or '',
+        'cd_stock': cd_stock,
+        'store_stock': store_total,
+        'total_stock': total,
+        'stores_with_stock': len(store_rows),
+        'woc': woc,
+        'duv': duv,
+        'duc': duc,
+        'status': status,
+        'is_on_hold': product.is_on_hold,
+        'hold_info': hold_info,
+        'store_breakdown': store_rows,
+        'cd_snapshots': cd_snapshots,
+        'chart_labels': chart_labels,
+        'chart_values': chart_values,
+    })
 
 
 @app.route('/product/<int:product_id>/clear_hold', methods=['POST'])

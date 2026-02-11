@@ -3,174 +3,363 @@
 
 <div class="query-wrap">
   <div class="query-header">
-    <h1 class="query-title">Consulta de stock</h1>
-    <p class="query-subtitle">Consulta disponibilidad en CD o stock por tienda</p>
+    <h1 class="query-title">Consulta de Stock</h1>
+    <p class="query-subtitle">Inventario consolidado: CD, tiendas, lifecycle y estado de SKUs</p>
   </div>
 
-  <div class="query-card">
-    <form method="get" action="{{ url_for('stock_query') }}" class="query-form" data-loader="true" data-loader-title="Consultando stock" data-loader-msg="Buscando disponibilidad en CD / tiendas..." data-loader-icon="warehouse">
-      <div class="query-field">
-        <label class="query-label">SKU</label>
-        <input class="form-control query-input-mono" name="sku" value="{{ sku }}" placeholder="Ej: 000123">
+  <div class="d-flex gap-3 flex-wrap mb-4">
+    <div class="query-kpi-card">
+      <div class="query-kpi-badge"><i class="bi bi-box-seam"></i></div>
+      <div class="query-kpi-body">
+        <div class="query-kpi-label">Productos</div>
+        <div class="query-kpi-number">{{ "{:,}".format(kpi_total_products) }}</div>
       </div>
+    </div>
+    <div class="query-kpi-card" style="border-left:4px solid #dc3545;">
+      <div class="query-kpi-badge" style="background:#dc354520;color:#dc3545;"><i class="bi bi-exclamation-octagon"></i></div>
+      <div class="query-kpi-body">
+        <div class="query-kpi-label">Bloqueados</div>
+        <div class="query-kpi-number text-danger">{{ kpi_blocked }}</div>
+      </div>
+    </div>
+    <div class="query-kpi-card">
+      <div class="query-kpi-badge"><i class="bi bi-funnel"></i></div>
+      <div class="query-kpi-body">
+        <div class="query-kpi-label">Resultados</div>
+        <div class="query-kpi-number">{{ "{:,}".format(pagination.total) }}</div>
+      </div>
+    </div>
+  </div>
 
-      <div class="query-field">
-        <label class="query-label">Tipo</label>
-        <select class="form-select" name="scope">
-          <option value="cd" {% if selected_scope=='cd' %}selected{% endif %}>Stock CD</option>
-          <option value="tiendas" {% if selected_scope=='tiendas' %}selected{% endif %}>Stock Tiendas</option>
-        </select>
+  <div class="query-card mb-3">
+    <form method="get" action="{{ url_for('stock_query') }}" id="sqForm">
+      <div class="row g-2 align-items-end">
+        <div class="col-md-4">
+          <label class="form-label fw-semibold" style="font-size:.82rem;">Buscar SKU / Nombre / Categoría</label>
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="text" class="form-control" name="search" value="{{ search }}" placeholder="Ej: 000123 o nombre...">
+          </div>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label fw-semibold" style="font-size:.82rem;">Categoría</label>
+          <select class="form-select" name="category">
+            <option value="">Todas</option>
+            {% for c in categories %}
+            <option value="{{ c }}" {% if category_filter == c %}selected{% endif %}>{{ c }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-5">
+          <label class="form-label fw-semibold" style="font-size:.82rem;">Filtros</label>
+          <div class="d-flex flex-wrap gap-2">
+            <div class="form-check form-check-inline mb-0">
+              <input class="form-check-input" type="checkbox" name="with_stock" value="1" id="fWs" {% if show_with_stock %}checked{% endif %}>
+              <label class="form-check-label" for="fWs" style="font-size:.82rem;">Con stock</label>
+            </div>
+            <div class="form-check form-check-inline mb-0">
+              <input class="form-check-input" type="checkbox" name="broken" value="1" id="fBr" {% if show_broken %}checked{% endif %}>
+              <label class="form-check-label" for="fBr" style="font-size:.82rem;">Quiebre tiendas</label>
+            </div>
+            <div class="form-check form-check-inline mb-0">
+              <input class="form-check-input" type="checkbox" name="blocked" value="1" id="fBl" {% if show_blocked %}checked{% endif %}>
+              <label class="form-check-label" for="fBl" style="font-size:.82rem;">Bloqueados</label>
+            </div>
+            <div class="form-check form-check-inline mb-0">
+              <input class="form-check-input" type="checkbox" name="no_movement" value="1" id="fNm" {% if show_no_movement %}checked{% endif %}>
+              <label class="form-check-label" for="fNm" style="font-size:.82rem;">Sin movimiento</label>
+            </div>
+            <div class="form-check form-check-inline mb-0">
+              <input class="form-check-input" type="checkbox" name="overstock" value="1" id="fOs" {% if show_overstock %}checked{% endif %}>
+              <label class="form-check-label" for="fOs" style="font-size:.82rem;">Sobrestock</label>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-1 text-end">
+          <button class="btn btn-primary w-100"><i class="bi bi-search"></i></button>
+        </div>
       </div>
-
-      <div class="query-field query-field-wide">
-        <label class="query-label">Tienda (opcional)</label>
-        <select class="form-select" name="store">
-          <option value="">Todas</option>
-          {% for s in stores %}
-            <option value="{{ s.name }}" {% if selected_store==s.name %}selected{% endif %}>{{ s.name }}</option>
-          {% endfor %}
-        </select>
-      </div>
-
-      <div class="query-field query-field-btn">
-        <button class="btn btn-primary query-btn">Consultar</button>
-      </div>
+      <input type="hidden" name="per_page" value="{{ per_page }}">
     </form>
   </div>
 
-  {% if result %}
-    {% if result.error %}
-      <div class="query-card query-empty">
-        <div class="query-empty-wrap">
-          <i class="bi bi-exclamation-circle query-empty-icon query-empty-icon-warn"></i>
-          <div class="query-empty-title">{{ result.error }}</div>
-          <div class="query-empty-hint">Verifica el formato del SKU (ceros a la izquierda) e intenta de nuevo.</div>
-        </div>
-      </div>
-    {% else %}
-      <div class="query-strip">
-        <span class="query-strip-sku">{{ result.sku }}</span>
-        <span class="query-strip-sep">—</span>
-        <span class="query-strip-product">{{ result.product }}</span>
-        <span class="query-strip-badge">{{ 'CD' if result.scope == 'cd' else 'Tiendas' }}</span>
-        {% if result.scope == 'cd' and result.as_of_date %}
-          <span class="query-strip-date">{{ result.as_of_date }}</span>
-        {% endif %}
-        {% if result.is_on_hold %}
-          <span class="badge bg-danger ms-2"><i class="bi bi-exclamation-octagon me-1"></i>EN HOLD</span>
-        {% endif %}
-      </div>
-      
-      {% if result.is_on_hold %}
-      <div class="alert alert-danger mt-3 d-flex align-items-start gap-3" style="font-size: 0.9rem;">
-        <i class="bi bi-shield-exclamation fs-4"></i>
-        <div class="flex-grow-1">
-          <strong>SKU bloqueado para distribución</strong>
-          <div class="mt-1">
-            <strong>Motivo:</strong> {{ result.hold_info.reason or 'Sin especificar' }}<br>
-            <strong>Origen:</strong> {{ result.hold_info.source or 'Manual' }}
-            {% if result.hold_info.created_at %}<br><strong>Fecha:</strong> {{ result.hold_info.created_at }}{% endif %}
-          </div>
-          {% if current_user.role == 'Admin' %}
-          <button type="button" class="btn btn-sm btn-outline-light mt-2" data-bs-toggle="modal" data-bs-target="#clearHoldModal">
-            <i class="bi bi-unlock me-1"></i>Liberar Hold
-          </button>
-          {% endif %}
-        </div>
-      </div>
-      {% endif %}
+  {% if rows %}
+  <div class="query-card">
+    <div class="dash-table-scroll">
+      <table class="table table-sm table-hover mb-0 dash-table" style="font-size:.85rem;">
+        <thead>
+          <tr>
+            <th>SKU</th>
+            <th>Producto</th>
+            <th>Categoría</th>
+            <th class="text-end">Stock CD</th>
+            <th class="text-end">Stock Tiendas</th>
+            <th class="text-end">Total</th>
+            <th class="text-center">Tiendas</th>
+            <th class="text-center">DUV</th>
+            <th class="text-center">DUC</th>
+            <th class="text-center">Estado</th>
+            <th class="text-center">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr class="sq-row" data-sku="{{ r.sku }}" style="cursor:pointer;">
+            <td><code class="sq-sku-code">{{ r.sku }}</code></td>
+            <td class="text-truncate" style="max-width:180px;" title="{{ r.name }}">{{ r.name }}</td>
+            <td><span class="badge bg-light text-dark border" style="font-size:.75rem;">{{ r.category or '—' }}</span></td>
+            <td class="text-end fw-semibold">{{ "{:,}".format(r.cd_stock) }}</td>
+            <td class="text-end">{{ "{:,}".format(r.store_stock) }}</td>
+            <td class="text-end fw-bold">{{ "{:,}".format(r.total_stock) }}</td>
+            <td class="text-center">{{ r.stores_with_stock }}</td>
+            <td class="text-center">{% if r.duv is not none %}<span class="{% if r.duv >= 60 %}text-danger fw-bold{% elif r.duv >= 30 %}text-warning{% endif %}">{{ r.duv }}d</span>{% else %}—{% endif %}</td>
+            <td class="text-center">{% if r.duc is not none %}{{ r.duc }}d{% else %}—{% endif %}</td>
+            <td class="text-center">
+              {% if r.status == 'blocked' %}
+                <span class="badge bg-danger"><i class="bi bi-lock-fill me-1"></i>Bloqueado</span>
+              {% elif r.status == 'risk' %}
+                <span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle me-1"></i>Riesgo</span>
+              {% else %}
+                <span class="badge bg-success">OK</span>
+              {% endif %}
+            </td>
+            <td class="text-center text-nowrap">
+              <div class="btn-group btn-group-sm">
+                <a href="{{ url_for('purchase_forecast_v2') }}?sku={{ r.sku }}" class="btn btn-outline-primary btn-sm" title="Forecast" onclick="event.stopPropagation();"><i class="bi bi-graph-up"></i></a>
+                <a href="{{ url_for('slow_stock') }}?search={{ r.sku }}" class="btn btn-outline-secondary btn-sm" title="Slow Stock" onclick="event.stopPropagation();"><i class="bi bi-clock-history"></i></a>
+                <a href="{{ url_for('rebalancing') }}?search={{ r.sku }}" class="btn btn-outline-info btn-sm" title="Rebalanceo" onclick="event.stopPropagation();"><i class="bi bi-arrow-left-right"></i></a>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
 
-      {% if result.scope == 'cd' %}
-        <div class="d-flex gap-3 flex-wrap">
-          <div class="query-kpi-card">
-            <div class="query-kpi-badge">
-              <i class="bi bi-box-seam"></i>
-            </div>
-            <div class="query-kpi-body">
-              <div class="query-kpi-label">Stock CD Disponible</div>
-              <div class="query-kpi-number text-success">{{ "{:,}".format(result.quantity_ok|default(result.quantity)|int) }}</div>
-            </div>
-          </div>
-          {% if result.quantity_problem and result.quantity_problem > 0 %}
-          <div class="query-kpi-card" style="border-left: 4px solid #dc3545;">
-            <div class="query-kpi-badge" style="background: #dc354520; color: #dc3545;">
-              <i class="bi bi-exclamation-triangle"></i>
-            </div>
-            <div class="query-kpi-body">
-              <div class="query-kpi-label">Stock Problema <span class="badge bg-danger ms-1">No distribuible</span></div>
-              <div class="query-kpi-number text-danger">{{ "{:,}".format(result.quantity_problem|int) }}</div>
-            </div>
-          </div>
-          {% endif %}
-        </div>
-        {% if result.quantity_problem and result.quantity_problem > 0 %}
-        <div class="alert alert-warning mt-3 mb-0" style="font-size: 0.85rem;">
-          <i class="bi bi-info-circle me-1"></i> El stock problema proviene de excepciones de cierre de folios en FastPlanner. Este stock no es elegible para distribución.
-        </div>
-        {% endif %}
-      {% else %}
-        {% if result.stores and result.stores|length > 0 %}
-          <div class="query-card">
-            <div class="dash-table-scroll">
-              <table class="table table-sm mb-0 dash-table">
-                <thead>
-                  <tr>
-                    <th>Tienda</th>
-                    <th>Fecha</th>
-                    <th class="text-end">Stock</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {% for r in result.stores %}
-                    <tr>
-                      <td>{{ r.store }}</td>
-                      <td>{{ r.as_of_date }}</td>
-                      <td class="text-end">{{ "{:,}".format(r.quantity|int) }}</td>
-                    </tr>
-                  {% endfor %}
-                </tbody>
-              </table>
-            </div>
-          </div>
+  {% if pagination and pagination.total > 0 %}
+  <div class="runs-pagination-bar mt-3">
+    <div class="runs-pagination-info">
+      <span>Mostrando {{ rows|length }} de {{ pagination.total }}</span>
+      <select class="form-select form-select-sm d-inline-block ms-2" style="width:auto;" onchange="var u=new URL(window.location);u.searchParams.set('per_page',this.value);u.searchParams.set('page','1');window.location=u;">
+        <option value="10" {% if per_page == 10 %}selected{% endif %}>10</option>
+        <option value="25" {% if per_page == 25 %}selected{% endif %}>25</option>
+        <option value="50" {% if per_page == 50 %}selected{% endif %}>50</option>
+      </select>
+    </div>
+    <nav class="runs-pagination-nav">
+      <a href="{{ url_for('stock_query', page=pagination.prev_num or 1, per_page=per_page, search=search, category=category_filter, with_stock='1' if show_with_stock else '', broken='1' if show_broken else '', blocked='1' if show_blocked else '', no_movement='1' if show_no_movement else '', overstock='1' if show_overstock else '') }}"
+         class="runs-page-btn {% if not pagination.has_prev %}disabled{% endif %}">
+        <i class="bi bi-chevron-left"></i>
+      </a>
+      {% for p in pagination.iter_pages() %}
+        {% if p %}
+          <a href="{{ url_for('stock_query', page=p, per_page=per_page, search=search, category=category_filter, with_stock='1' if show_with_stock else '', broken='1' if show_broken else '', blocked='1' if show_blocked else '', no_movement='1' if show_no_movement else '', overstock='1' if show_overstock else '') }}"
+             class="runs-page-btn {% if p == pagination.page %}active{% endif %}">{{ p }}</a>
         {% else %}
-          <div class="query-card query-empty">
-            <div class="query-empty-wrap">
-              <i class="bi bi-inbox query-empty-icon"></i>
-              <div class="query-empty-title">Sin snapshots para este SKU</div>
-              <div class="query-empty-hint">Carga stock de tiendas para ver disponibilidad.</div>
-            </div>
-          </div>
+          <span class="runs-page-btn disabled">&hellip;</span>
         {% endif %}
-      {% endif %}
-    {% endif %}
+      {% endfor %}
+      <a href="{{ url_for('stock_query', page=pagination.next_num or pagination.pages, per_page=per_page, search=search, category=category_filter, with_stock='1' if show_with_stock else '', broken='1' if show_broken else '', blocked='1' if show_blocked else '', no_movement='1' if show_no_movement else '', overstock='1' if show_overstock else '') }}"
+         class="runs-page-btn {% if not pagination.has_next %}disabled{% endif %}">
+        <i class="bi bi-chevron-right"></i>
+      </a>
+    </nav>
+  </div>
+  {% endif %}
+
+  {% else %}
+  <div class="query-card query-empty">
+    <div class="query-empty-wrap">
+      <i class="bi bi-inbox query-empty-icon"></i>
+      <div class="query-empty-title">Sin resultados</div>
+      <div class="query-empty-hint">Ajusta los filtros o busca por SKU, nombre o categoría.</div>
+    </div>
+  </div>
   {% endif %}
 </div>
 
-{% if result and result.is_on_hold and current_user.role == 'Admin' %}
-<div class="modal fade" id="clearHoldModal" tabindex="-1">
-  <div class="modal-dialog">
+<div class="modal fade" id="skuDetailModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-unlock me-2"></i>Liberar Hold de SKU</h5>
+        <h5 class="modal-title" id="detailModalTitle"><i class="bi bi-box-seam me-2"></i>Detalle de SKU</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
-      <form method="post" action="{{ url_for('clear_product_hold', product_id=result.product_id) }}">
-        <div class="modal-body">
-          <p>Está por liberar el hold del SKU <strong>{{ result.sku }}</strong>.</p>
-          <p class="text-muted small">El SKU volverá a ser elegible para distribución y redistribución.</p>
-          <div class="mb-3">
-            <label class="form-label">Motivo de liberación <span class="text-danger">*</span></label>
-            <textarea class="form-control" name="clear_reason" rows="2" required placeholder="Ej: Stock verificado y OK para distribución"></textarea>
+      <div class="modal-body" id="detailModalBody">
+        <div class="text-center py-5" id="detailLoading">
+          <div class="spinner-border text-primary" role="status"></div>
+          <div class="mt-2 text-muted">Cargando detalle...</div>
+        </div>
+        <div id="detailContent" style="display:none;">
+          <div class="d-flex gap-3 flex-wrap mb-4" id="detailKpis"></div>
+          <ul class="nav nav-tabs" id="detailTabs" role="tablist">
+            <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tabStores" role="tab">Tiendas</a></li>
+            <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabCD" role="tab">Snapshots CD</a></li>
+            <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabChart" role="tab">Ventas 12 sem</a></li>
+            <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabNotes" role="tab">Notas / Flags</a></li>
+          </ul>
+          <div class="tab-content pt-3" id="detailTabContent">
+            <div class="tab-pane fade show active" id="tabStores" role="tabpanel">
+              <div class="dash-table-scroll" style="max-height:350px;">
+                <table class="table table-sm table-hover mb-0" style="font-size:.85rem;">
+                  <thead class="table-light"><tr><th>Tienda</th><th class="text-end">Stock</th><th class="text-end">WOC</th></tr></thead>
+                  <tbody id="storeTableBody"></tbody>
+                </table>
+              </div>
+              <div class="text-muted small mt-2" id="storeEmptyMsg" style="display:none;"><i class="bi bi-info-circle me-1"></i>Sin stock en tiendas para este SKU.</div>
+            </div>
+            <div class="tab-pane fade" id="tabCD" role="tabpanel">
+              <div class="dash-table-scroll" style="max-height:350px;">
+                <table class="table table-sm mb-0" style="font-size:.85rem;">
+                  <thead class="table-light"><tr><th>Fecha</th><th class="text-end">Cantidad</th><th>Estado</th></tr></thead>
+                  <tbody id="cdTableBody"></tbody>
+                </table>
+              </div>
+              <div class="text-muted small mt-2" id="cdEmptyMsg" style="display:none;"><i class="bi bi-info-circle me-1"></i>Sin snapshots CD.</div>
+            </div>
+            <div class="tab-pane fade" id="tabChart" role="tabpanel">
+              <div id="salesChartContainer" style="min-height:300px;"></div>
+              <div class="text-muted small mt-2" id="chartEmptyMsg" style="display:none;"><i class="bi bi-info-circle me-1"></i>Sin datos de ventas semanales.</div>
+            </div>
+            <div class="tab-pane fade" id="tabNotes" role="tabpanel">
+              <div id="notesContent"></div>
+            </div>
           </div>
         </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-          <button type="submit" class="btn btn-success"><i class="bi bi-check-lg me-1"></i>Confirmar Liberación</button>
-        </div>
-      </form>
+      </div>
     </div>
   </div>
 </div>
-{% endif %}
+
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  var modal = new bootstrap.Modal(document.getElementById('skuDetailModal'));
+
+  document.querySelectorAll('.sq-row').forEach(function(row) {
+    row.addEventListener('click', function() {
+      var sku = this.dataset.sku;
+      openDetail(sku);
+    });
+  });
+
+  function openDetail(sku) {
+    document.getElementById('detailLoading').style.display = '';
+    document.getElementById('detailContent').style.display = 'none';
+    document.getElementById('detailModalTitle').textContent = 'Detalle: ' + sku;
+    modal.show();
+
+    fetch('{{ url_for("stock_query") }}?detail_sku=' + encodeURIComponent(sku))
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.error) {
+          document.getElementById('detailLoading').innerHTML = '<div class="text-danger"><i class="bi bi-exclamation-circle me-1"></i>' + d.error + '</div>';
+          return;
+        }
+        document.getElementById('detailLoading').style.display = 'none';
+        document.getElementById('detailContent').style.display = '';
+        renderKpis(d);
+        renderStores(d.store_breakdown);
+        renderCD(d.cd_snapshots);
+        renderChart(d.chart_labels, d.chart_values);
+        renderNotes(d);
+      })
+      .catch(function(e) {
+        document.getElementById('detailLoading').innerHTML = '<div class="text-danger">Error al cargar detalle.</div>';
+      });
+  }
+
+  function statusBadge(s) {
+    if (s === 'blocked') return '<span class="badge bg-danger">Bloqueado</span>';
+    if (s === 'risk') return '<span class="badge bg-warning text-dark">Riesgo</span>';
+    return '<span class="badge bg-success">OK</span>';
+  }
+
+  function fmtNum(n) { return n == null ? '—' : n.toLocaleString('es-CL'); }
+
+  function renderKpis(d) {
+    var h = '';
+    h += kpiCard('bi-building', 'Stock CD', fmtNum(d.cd_stock), '');
+    h += kpiCard('bi-shop', 'Stock Tiendas', fmtNum(d.store_stock), '');
+    h += kpiCard('bi-box-seam', 'Total', fmtNum(d.total_stock), 'fw-bold');
+    h += kpiCard('bi-calendar-week', 'WOC', d.woc != null ? d.woc + ' sem' : '—', '');
+    h += kpiCard('bi-clock', 'DUV', d.duv != null ? d.duv + 'd' : '—', d.duv != null && d.duv >= 60 ? 'text-danger' : '');
+    h += kpiCard('bi-truck', 'DUC', d.duc != null ? d.duc + 'd' : '—', '');
+    h += '<div class="query-kpi-card" style="min-width:80px;"><div class="query-kpi-body text-center">' + statusBadge(d.status) + '</div></div>';
+    document.getElementById('detailKpis').innerHTML = h;
+  }
+
+  function kpiCard(icon, label, value, cls) {
+    return '<div class="query-kpi-card" style="min-width:100px;"><div class="query-kpi-badge"><i class="bi ' + icon + '"></i></div><div class="query-kpi-body"><div class="query-kpi-label">' + label + '</div><div class="query-kpi-number ' + cls + '">' + value + '</div></div></div>';
+  }
+
+  function renderStores(rows) {
+    var tb = document.getElementById('storeTableBody');
+    var msg = document.getElementById('storeEmptyMsg');
+    if (!rows || rows.length === 0) { tb.innerHTML = ''; msg.style.display = ''; return; }
+    msg.style.display = 'none';
+    var h = '';
+    rows.forEach(function(r) {
+      h += '<tr><td>' + r.store + '</td><td class="text-end">' + fmtNum(r.qty) + '</td><td class="text-end">' + (r.woc != null ? r.woc + ' sem' : '—') + '</td></tr>';
+    });
+    tb.innerHTML = h;
+  }
+
+  function renderCD(rows) {
+    var tb = document.getElementById('cdTableBody');
+    var msg = document.getElementById('cdEmptyMsg');
+    if (!rows || rows.length === 0) { tb.innerHTML = ''; msg.style.display = ''; return; }
+    msg.style.display = 'none';
+    var h = '';
+    rows.forEach(function(r) {
+      var badge = r.status === 'PROBLEM' ? '<span class="badge bg-danger">Problema</span>' : '<span class="badge bg-success">OK</span>';
+      h += '<tr><td>' + r.date + '</td><td class="text-end">' + fmtNum(r.qty) + '</td><td>' + badge + '</td></tr>';
+    });
+    tb.innerHTML = h;
+  }
+
+  function renderChart(labels, values) {
+    var ct = document.getElementById('salesChartContainer');
+    var msg = document.getElementById('chartEmptyMsg');
+    if (!labels || labels.length === 0) { ct.innerHTML = ''; msg.style.display = ''; return; }
+    msg.style.display = 'none';
+    Plotly.newPlot(ct, [{
+      x: labels, y: values, type: 'bar',
+      marker: { color: '#4f46e5', borderRadius: 4 },
+      hovertemplate: 'Semana: %{x}<br>Unidades: %{y}<extra></extra>'
+    }], {
+      margin: { t: 30, b: 50, l: 50, r: 20 },
+      xaxis: { title: 'Semana', tickangle: -45, dtick: 1 },
+      yaxis: { title: 'Unidades' },
+      paper_bgcolor: 'transparent', plot_bgcolor: 'transparent',
+      font: { size: 12 }
+    }, { responsive: true, displayModeBar: false });
+  }
+
+  function renderNotes(d) {
+    var el = document.getElementById('notesContent');
+    var h = '';
+    if (d.is_on_hold && d.hold_info) {
+      h += '<div class="alert alert-danger"><i class="bi bi-shield-exclamation me-2"></i><strong>SKU Bloqueado</strong>';
+      h += '<div class="mt-1"><strong>Motivo:</strong> ' + (d.hold_info.reason || 'Sin especificar') + '</div>';
+      h += '<div><strong>Origen:</strong> ' + (d.hold_info.source || 'Manual') + '</div>';
+      if (d.hold_info.created_at) h += '<div><strong>Fecha:</strong> ' + d.hold_info.created_at + '</div>';
+      h += '</div>';
+    } else {
+      h += '<div class="text-muted"><i class="bi bi-check-circle me-1"></i>Sin bloqueos ni flags activos para este SKU.</div>';
+    }
+    if (d.duv != null && d.duv >= 60) {
+      h += '<div class="alert alert-warning mt-2"><i class="bi bi-clock me-2"></i><strong>Sin movimiento:</strong> ' + d.duv + ' días desde última venta.</div>';
+    }
+    el.innerHTML = h;
+  }
+});
+</script>
+
+<style>
+.sq-sku-code { font-size:.82rem; padding:2px 6px; background:#f0f0f5; border-radius:4px; color:#333; }
+.sq-row:hover { background:#f8f9ff !important; }
+</style>
 
 {% endblock %}

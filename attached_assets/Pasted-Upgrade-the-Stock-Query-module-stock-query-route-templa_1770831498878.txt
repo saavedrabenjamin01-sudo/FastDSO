@@ -1,0 +1,46 @@
+Upgrade the Stock Query module (stock_query route + template stock_query.html) to provide richer operational context while keeping current functionality.
+
+Requirements:
+
+1) Search & filters
+- Add search input supporting SKU, product name, and category.
+- Add filters: category dropdown, show_only_with_stock (checkbox), show_broken_in_stores (checkbox: store_stock==0 but has sales recently), show_blocked_skus (checkbox), show_no_movement (checkbox based on DUV / sales agg), show_overstock (checkbox based on WOC threshold).
+- Paginate results (default 10), with 10/25/50 selector, consistent with dashboard pagination controls.
+
+2) Result table (list view)
+Columns:
+- SKU
+- Product name
+- Category
+- CD stock (latest snapshot)
+- Store stock total
+- Total stock
+- Stores with stock (count)
+- DUV (days since last sale) + DUC (days since last purchase) if available from Macro Sales
+- Status badge: OK / Risk / Blocked
+Actions per row:
+- “Open Forecast” (link with sku prefilled)
+- “Open Stock Slow” (link with sku/category filter)
+- “Open Rebalancing” (link with sku prefilled)
+
+3) Single-SKU detail drawer/modal (or separate detail page)
+When clicking a SKU, show:
+- KPI cards (CD, stores, total, WOC, DUV/DUC, status)
+- Tabs:
+  a) Store stock breakdown table (store name, qty, WOC by store if possible)
+  b) CD snapshots (date, qty, mode/source)
+  c) Last 12 weeks sales chart (weekly units) using Macro Sales weekly agg
+  d) Notes/flags: show “problem SKU / blocked” and reason if stored
+
+4) Data consistency
+- Use the same global helper functions for SKU normalization and CD stock retrieval (latest snapshot) implemented in the fix.
+- Never cast SKU to int; preserve leading zeros.
+
+5) Performance
+- Use aggregated queries instead of per-row queries (preload maps).
+- Add indexes if needed (product.sku, product.category, stock snapshot product_id+date, sales weekly agg sku/store/week).
+
+Deliverables:
+- Update templates/stock_query.html with the new UI (aligned with FastDSO styling).
+- Update the Flask route to support new filters + pagination + detail data.
+- Ensure permissions remain unchanged (stock:query).
