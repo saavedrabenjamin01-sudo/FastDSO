@@ -184,7 +184,7 @@
   <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title" id="detailModalTitle"><i class="bi bi-box-seam me-2"></i>Detalle de SKU</h5>
+        <h5 class="modal-title fw-semibold text-truncate" id="detailModalTitle" style="max-width:calc(100% - 40px)"><i class="bi bi-box-seam me-2"></i>Detalle de SKU</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body" id="detailModalBody">
@@ -260,7 +260,7 @@ document.addEventListener('DOMContentLoaded', function() {
   function openDetail(sku) {
     document.getElementById('detailLoading').style.display = '';
     document.getElementById('detailContent').style.display = 'none';
-    document.getElementById('detailModalTitle').textContent = 'Detalle: ' + sku;
+    document.getElementById('detailModalTitle').innerHTML = '<i class="bi bi-box-seam me-2"></i>' + sku;
     modal.show();
 
     fetch('{{ url_for("stock_query") }}?detail_sku=' + encodeURIComponent(sku))
@@ -270,6 +270,8 @@ document.addEventListener('DOMContentLoaded', function() {
           document.getElementById('detailLoading').innerHTML = '<div class="text-danger"><i class="bi bi-exclamation-circle me-1"></i>' + d.error + '</div>';
           return;
         }
+        var titleText = d.sku + (d.name ? ' - ' + d.name : ' - Producto sin nombre');
+        document.getElementById('detailModalTitle').innerHTML = '<i class="bi bi-box-seam me-2"></i><span class="text-truncate">' + titleText + '</span>';
         document.getElementById('detailLoading').style.display = 'none';
         document.getElementById('detailContent').style.display = '';
         renderKpis(d);
