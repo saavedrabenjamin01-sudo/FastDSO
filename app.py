@@ -8713,6 +8713,155 @@ def stock_query():
     )
 
 
+@app.route('/stock_query/export', methods=['GET'])
+@login_required
+@require_permission('stock:query')
+def stock_query_export():
+    NO_MOVEMENT_DAYS = 60
+    OVERSTOCK_WOC = 12
+    BATCH_SIZE = 500
+    MAX_EXPORT_ROWS = 200000
+
+    search = (request.args.get("search") or "").strip()
+    category_filter = (request.args.get("category") or "").strip()
+    show_with_stock = request.args.get("with_stock") == "1"
+    show_broken = request.args.get("broken") == "1"
+    show_blocked = request.args.get("blocked") == "1"
+    show_no_movement = request.args.get("no_movement") == "1"
+    show_overstock = request.args.get("overstock") == "1"
+
+    q = Product.query
+    if search:
+        norm_search = normalize_sku(search)
+        like_pat = f"%{search}%"
+        q = q.filter(
+            db.or_(
+                Product.sku.ilike(like_pat),
+                Product.sku == norm_search,
+                Product.name.ilike(like_pat),
+                Product.category.ilike(like_pat),
+            )
+        )
+    if category_filter:
+        q = q.filter(Product.category == category_filter)
+    if show_blocked:
+        q = q.filter(Product.is_on_hold == True)
+
+    all_pids = [r[0] for r in q.with_entities(Product.id).order_by(Product.id).all()]
+
+    if len(all_pids) > MAX_EXPORT_ROWS:
+        flash(f'El resultado tiene {len(all_pids):,} filas, lo que excede el máximo de {MAX_EXPORT_ROWS:,}. Refine los filtros.', 'warning')
+        return redirect(url_for('stock_query', **request.args))
+
+    cd_stock_map = get_cd_stock_map()
+
+    store_total_map = defaultdict(int)
+    store_count_map = defaultdict(int)
+    for i in range(0, len(all_pids), BATCH_SIZE):
+        batch = all_pids[i:i + BATCH_SIZE]
+        store_op = get_store_operational_stock_bulk(product_ids=batch)
+        for (sid, pid), qty_val in store_op.items():
+            if qty_val > 0:
+                store_total_map[pid] += qty_val
+                store_count_map[pid] += 1
+
+    lifecycle_map = {}
+    for i in range(0, len(all_pids), BATCH_SIZE):
+        batch = all_pids[i:i + BATCH_SIZE]
+        lc_rows = db.session.query(
+            SkuLifecycle.product_id,
+            SkuLifecycle.days_since_last_sale_global,
+            SkuLifecycle.days_since_last_purchase_global
+        ).filter(SkuLifecycle.product_id.in_(batch)).all()
+        for row in lc_rows:
+            lifecycle_map[row.product_id] = {
+                'duv': row.days_since_last_sale_global,
+                'duc': row.days_since_last_purchase_global,
+            }
+
+    weekly_demand_map = {}
+    analysis_end = get_analysis_end_date()
+    demand_cutoff = analysis_end - timedelta(weeks=12)
+    for i in range(0, len(all_pids), BATCH_SIZE):
+        batch = all_pids[i:i + BATCH_SIZE]
+        demand_rows = db.session.query(
+            SalesWeeklyAgg.product_id,
+            db.func.sum(SalesWeeklyAgg.units)
+        ).filter(
+            SalesWeeklyAgg.product_id.in_(batch),
+            SalesWeeklyAgg.week_start >= demand_cutoff
+        ).group_by(SalesWeeklyAgg.product_id).all()
+        for pid, total_units in demand_rows:
+            weekly_demand_map[pid] = (total_units or 0) / 12.0
+
+    needs_stock_filter = show_with_stock or show_broken or show_overstock
+    filtered_pids = all_pids
+    if show_with_stock:
+        filtered_pids = [pid for pid in filtered_pids if cd_stock_map.get(pid, 0) + store_total_map.get(pid, 0) > 0]
+    if show_broken:
+        filtered_pids = [pid for pid in filtered_pids if store_total_map.get(pid, 0) == 0 and weekly_demand_map.get(pid, 0) > 0]
+    if show_no_movement:
+        filtered_pids = [pid for pid in filtered_pids if lifecycle_map.get(pid, {}).get('duv') is not None and lifecycle_map[pid]['duv'] >= NO_MOVEMENT_DAYS]
+    if show_overstock:
+        filtered_pids = [pid for pid in filtered_pids if
+            weekly_demand_map.get(pid, 0) > 0 and
+            (cd_stock_map.get(pid, 0) + store_total_map.get(pid, 0)) / weekly_demand_map[pid] >= OVERSTOCK_WOC]
+
+    products_by_id = {}
+    for i in range(0, len(filtered_pids), BATCH_SIZE):
+        batch = filtered_pids[i:i + BATCH_SIZE]
+        for p in Product.query.filter(Product.id.in_(batch)).all():
+            products_by_id[p.id] = p
+
+    export_rows = []
+    for pid in filtered_pids:
+        p = products_by_id.get(pid)
+        if not p:
+            continue
+        cd = cd_stock_map.get(pid, 0)
+        st = store_total_map.get(pid, 0)
+        total = cd + st
+        lc = lifecycle_map.get(pid, {})
+        wd = weekly_demand_map.get(pid, 0)
+        woc = round(total / wd, 1) if wd > 0 else None
+
+        if p.is_on_hold:
+            status = 'Bloqueado'
+        elif lc.get('duv') is not None and lc['duv'] >= NO_MOVEMENT_DAYS:
+            status = 'Riesgo'
+        elif total == 0:
+            status = 'Riesgo'
+        elif woc is not None and woc >= OVERSTOCK_WOC:
+            status = 'Riesgo'
+        else:
+            status = 'OK'
+
+        export_rows.append({
+            'SKU': p.sku,
+            'Producto': p.name or '',
+            'Categoría': p.category or '',
+            'Stock CD': cd,
+            'Stock Tiendas': st,
+            'Stock Total': total,
+            'Tiendas c/Stock': store_count_map.get(pid, 0),
+            'WOC': woc,
+            'DUV (días)': lc.get('duv'),
+            'DUC (días)': lc.get('duc'),
+            'Estado': status,
+        })
+
+    df = pd.DataFrame(export_rows)
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Stock Query')
+    output.seek(0)
+
+    today_str = date.today().strftime('%Y%m%d')
+    filename = f'FastDSO_StockQuery_{today_str}.xlsx'
+    return send_file(output, as_attachment=True, download_name=filename,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
 def _stock_query_detail_json(sku, no_movement_days):
     product = Product.query.filter_by(sku=sku).first()
     if not product:

@@ -75,8 +75,9 @@
             </div>
           </div>
         </div>
-        <div class="col-md-1 text-end">
-          <button class="btn btn-primary w-100"><i class="bi bi-search"></i></button>
+        <div class="col-md-1 text-end d-flex gap-1">
+          <button class="btn btn-primary flex-grow-1"><i class="bi bi-search"></i></button>
+          <a id="exportBtn" class="btn btn-success" title="Exportar Excel"><i class="bi bi-download"></i></a>
         </div>
       </div>
       <input type="hidden" name="per_page" value="{{ per_page }}">
@@ -236,6 +237,18 @@
 <script>
 document.addEventListener('DOMContentLoaded', function() {
   var modal = new bootstrap.Modal(document.getElementById('skuDetailModal'));
+
+  var exportBtn = document.getElementById('exportBtn');
+  if (exportBtn) {
+    function updateExportUrl() {
+      var params = new URLSearchParams(window.location.search);
+      params.delete('page');
+      params.delete('per_page');
+      params.delete('detail_sku');
+      exportBtn.href = '{{ url_for("stock_query_export") }}?' + params.toString();
+    }
+    updateExportUrl();
+  }
 
   document.querySelectorAll('.sq-row').forEach(function(row) {
     row.addEventListener('click', function() {

@@ -1,0 +1,52 @@
+Add an “Export to Excel” button to Stock Query that exports the current filtered dataset (same filters/search/sort as the UI).
+
+Requirements:
+1) UI
+- In stock_query.html, add a primary button “Export” (with download icon) near the filters/search area.
+- The button must export using the CURRENT FILTERS selected in the UI:
+  - search text
+  - checkbox filters (has_stock, has_cd_stock, has_store_stock, etc.)
+  - category filter (if exists)
+  - any sort option (if exists)
+- The export must NOT be limited by pagination. It should export all rows matching the active filters.
+
+2) Backend route
+- Create a new Flask route, e.g.:
+  - GET /stock_query/export
+  - endpoint name: stock_query_export
+- This route must read the same request.args params as stock_query (reuse the same filter parsing function if possible).
+- IMPORTANT: Do NOT build giant Python lists and DO NOT use product_id IN (...) lists.
+  - Reuse the fixed SQL pattern (EXISTS / JOIN / subqueries) used in stock_query to avoid “too many SQL variables”.
+- Build the query with the same filters applied, then fetch all rows.
+
+3) Output format (Excel)
+- Use pandas to create a DataFrame and return an .xlsx file (BytesIO) as attachment.
+- Columns (recommended, keep consistent with the new Stock Query view):
+  - sku
+  - product_name
+  - category (if available)
+  - cd_stock (as of selected date)
+  - total_store_stock (as of selected date)
+  - total_stock (cd + stores)
+  - last_sale_days (DUV) if available
+  - last_purchase_days (DUC) if available
+  - flags (e.g., “blocked/problematic” if you already have them)
+- File name should include date and key filters, e.g.:
+  FastDSO_StockQuery_YYYYMMDD.xlsx
+
+4) Button wiring
+- The Export button should link to url_for('stock_query_export', **current_query_params).
+- Implement this by copying current URL search params:
+  - simplest: href = request.full_path replacing the path with /stock_query/export (or generate via url_for + request.args)
+  - ensure it preserves all query parameters.
+
+5) Performance safety
+- Add a reasonable maximum export cap safeguard (optional):
+  - if row count > 200k, show a friendly message and require narrowing filters.
+- Ensure this runs fast and does not load unnecessary relationships.
+
+Deliverables:
+- stock_query_export route implemented in app.py
+- Export button added in stock_query.html that exports exactly what the user filtered
+- Excel download works in local and cloudflared environments
+- No SQLite variable overflow regressions
