@@ -1,0 +1,103 @@
+Fix Stock Query checkbox filters: only “has_stock” works, others return empty results. Implement robust backend filtering for:
+- store_stockout (Quiebre de tiendas)
+- blocked (Bloqueados)
+- no_movement (Sin movimientos)
+- overstock (Sobrestock)
+
+Goal:
+All checkboxes must actually filter results, using SQL/CTEs/EXISTS (no giant IN lists). Must work with pagination + export and keep performance.
+
+1) Verify checkbox <-> request.args wiring
+- In stock_query.html confirm the checkbox input names match backend keys exactly:
+  - name="has_stock"
+  - name="store_stockout"
+  - name="blocked"
+  - name="no_movement"
+  - name="overstock"
+- Ensure checked checkboxes submit "1" or "true". Normalize in backend:
+  def is_on(k): return request.args.get(k) in ("1","true","on","yes")
+
+2) Centralize filter logic into one query builder used by:
+- stock_query page
+- stock_query_export
+Create function build_stock_query(filters) that returns a SQLAlchemy query.
+
+3) Build base dataset using aggregated stock + product fields (avoid IN)
+Use subqueries/CTEs for the selected snapshot_date:
+- cd_sq: product_id, cd_qty (StockCDSnapshot on snapshot_date)
+- store_sq: product_id, store_qty_total (SUM StockSnapshot on snapshot_date)
+- store_min_sq: product_id, store_qty_min (MIN StockSnapshot on snapshot_date)  <-- helps store stockout logic
+- product table join for sku/name/category and flags
+
+Example pattern (SQLAlchemy):
+base = (
+  db.session.query(Product, func.coalesce(cd_sq.c.cd_qty,0).label("cd_qty"),
+                          func.coalesce(store_sq.c.store_qty_total,0).label("store_qty_total"),
+                          func.coalesce(store_min_sq.c.store_qty_min,0).label("store_qty_min"))
+  .outerjoin(cd_sq, cd_sq.c.product_id==Product.id)
+  .outerjoin(store_sq, store_sq.c.product_id==Product.id)
+  .outerjoin(store_min_sq, store_min_sq.c.product_id==Product.id)
+)
+
+4) Implement each filter with correct semantics (do NOT over-restrict)
+Important: when multiple checkboxes are selected, treat them as OR by default (users expect union),
+unless you explicitly want AND. Implement union logic as:
+- Build list of conditions, then apply OR across them.
+- If none selected, no special filter.
+
+Define conditions:
+A) has_stock:
+  (cd_qty + store_qty_total) > 0
+
+B) store_stockout (Quiebre de tiendas):
+  We want SKUs that have at least one store at 0 stock AND there is category/sales relevance OR CD has stock.
+  Minimal version:
+    store_qty_min == 0 AND (cd_qty > 0 OR store_qty_total > 0)
+  (This detects at least one store at zero without scanning all stores.)
+
+C) blocked:
+  Use Product.eligible_for_distribution == False OR Product.blocked == True (depending on your model)
+  If you use “problematic” flag from FastPlanner returns, include that too.
+
+D) no_movement:
+  Use Product.DUV (days since last sale) if present:
+    Product.duv_days >= NO_MOVEMENT_DAYS (e.g. 45) AND (cd_qty + store_qty_total) > 0
+  If DUV not available, fall back to alerts table type='no_movement' via EXISTS.
+
+E) overstock:
+  Prefer using Alerts table type='overstock' via EXISTS (cheap and consistent).
+  If alerts are not available, approximate:
+    (cd_qty + store_qty_total) >= OVERSTOCK_MIN_UNITS (configurable) AND Product.duv_days >= 14
+  (But alerts is strongly preferred.)
+
+5) Prefer Alerts table if it exists (recommended)
+If you already have an Alert model/table with sku/product_id and alert_type + severity + created_at/active:
+- For no_movement and overstock and stockout you can do:
+  exists(select 1 from alerts where alerts.product_id==Product.id and alerts.type=='overstock' and alerts.active==1)
+This avoids recalculating complex logic and stays consistent with Dashboard/Alerts module.
+Implement:
+  if is_on("overstock"): conditions.append(exists_overstock)
+  if is_on("no_movement"): conditions.append(exists_no_movement)
+  if is_on("store_stockout"): conditions.append(exists_stockout) OR store_qty_min==0 pattern
+
+6) Apply OR logic correctly
+- If user selects multiple status checkboxes, show results matching ANY selected status.
+- Keep “has_stock” separate: if user checks has_stock plus another, apply has_stock AND (OR of other statuses),
+because has_stock is more like a base constraint.
+
+Pseudo:
+cond_union = or_(*status_conditions) if status_conditions else None
+if has_stock_on: base = base.filter((cd_qty + store_qty_total) > 0)
+if cond_union: base = base.filter(cond_union)
+
+7) Ensure export uses same builder
+- stock_query_export must call build_stock_query(filters) so export matches UI.
+
+8) Add quick debug logging temporarily
+- Log parsed filters and how many rows returned for each filter combination.
+
+Deliverables:
+- Updated stock_query route + export route using shared builder
+- Fixed checkbox names if mismatch
+- OR logic implemented so the filters actually return data
+- No “too many SQL variables” regressions

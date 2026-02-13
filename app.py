@@ -8495,17 +8495,161 @@ def upload_stock_cd():
 
     return render_template('upload_stock_cd.html')
 
+def _stock_query_build_filtered_data(search, category_filter, show_with_stock,
+                                      show_broken, show_blocked, show_no_movement,
+                                      show_overstock, force_load_all=False):
+    NO_MOVEMENT_DAYS = 60
+    OVERSTOCK_WOC = 12
+    BATCH_SIZE = 500
+
+    q = Product.query
+    if search:
+        norm_search = normalize_sku(search)
+        like_pat = f"%{search}%"
+        q = q.filter(
+            db.or_(
+                Product.sku.ilike(like_pat),
+                Product.sku == norm_search,
+                Product.name.ilike(like_pat),
+                Product.category.ilike(like_pat),
+            )
+        )
+    if category_filter:
+        q = q.filter(Product.category == category_filter)
+
+    has_status_filter = show_broken or show_blocked or show_no_movement or show_overstock
+    needs_stock_data = force_load_all or show_with_stock or show_broken or show_overstock or has_status_filter
+
+    all_pids = [r[0] for r in q.with_entities(Product.id).order_by(Product.id).all()]
+
+    cd_stock_map = {}
+    store_total_map = defaultdict(int)
+    store_count_map = defaultdict(int)
+    lifecycle_map = {}
+    weekly_demand_map = {}
+    blocked_set = set()
+
+    if all_pids and (needs_stock_data or show_no_movement or force_load_all):
+        cd_stock_map = get_cd_stock_map()
+
+        for i in range(0, len(all_pids), BATCH_SIZE):
+            batch = all_pids[i:i + BATCH_SIZE]
+            store_op = get_store_operational_stock_bulk(product_ids=batch)
+            for (sid, pid), qty_val in store_op.items():
+                if qty_val > 0:
+                    store_total_map[pid] += qty_val
+                    store_count_map[pid] += 1
+
+        for i in range(0, len(all_pids), BATCH_SIZE):
+            batch = all_pids[i:i + BATCH_SIZE]
+            lc_rows = db.session.query(
+                SkuLifecycle.product_id,
+                SkuLifecycle.days_since_last_sale_global,
+                SkuLifecycle.days_since_last_purchase_global
+            ).filter(SkuLifecycle.product_id.in_(batch)).all()
+            for row in lc_rows:
+                lifecycle_map[row.product_id] = {
+                    'duv': row.days_since_last_sale_global,
+                    'duc': row.days_since_last_purchase_global,
+                }
+
+        if show_broken or show_overstock or force_load_all:
+            analysis_end = get_analysis_end_date()
+            demand_cutoff = analysis_end - timedelta(weeks=12)
+            for i in range(0, len(all_pids), BATCH_SIZE):
+                batch = all_pids[i:i + BATCH_SIZE]
+                demand_rows = db.session.query(
+                    SalesWeeklyAgg.product_id,
+                    db.func.sum(SalesWeeklyAgg.units)
+                ).filter(
+                    SalesWeeklyAgg.product_id.in_(batch),
+                    SalesWeeklyAgg.week_start >= demand_cutoff
+                ).group_by(SalesWeeklyAgg.product_id).all()
+                for pid, total_units in demand_rows:
+                    weekly_demand_map[pid] = (total_units or 0) / 12.0
+
+        if show_blocked:
+            for i in range(0, len(all_pids), BATCH_SIZE):
+                batch = all_pids[i:i + BATCH_SIZE]
+                bl_rows = Product.query.filter(
+                    Product.id.in_(batch), Product.is_on_hold == True
+                ).with_entities(Product.id).all()
+                for r in bl_rows:
+                    blocked_set.add(r[0])
+
+    if show_with_stock:
+        all_pids = [pid for pid in all_pids if cd_stock_map.get(pid, 0) + store_total_map.get(pid, 0) > 0]
+
+    if has_status_filter:
+        status_matched = set()
+        for pid in all_pids:
+            if show_blocked and pid in blocked_set:
+                status_matched.add(pid)
+            if show_broken:
+                if store_total_map.get(pid, 0) == 0 and weekly_demand_map.get(pid, 0) > 0:
+                    status_matched.add(pid)
+            if show_no_movement:
+                lc = lifecycle_map.get(pid, {})
+                if lc.get('duv') is not None and lc['duv'] >= NO_MOVEMENT_DAYS:
+                    status_matched.add(pid)
+            if show_overstock:
+                wd = weekly_demand_map.get(pid, 0)
+                if wd > 0:
+                    total = cd_stock_map.get(pid, 0) + store_total_map.get(pid, 0)
+                    if (total / wd) >= OVERSTOCK_WOC:
+                        status_matched.add(pid)
+        all_pids = [pid for pid in all_pids if pid in status_matched]
+
+    return (all_pids, cd_stock_map, store_total_map, store_count_map,
+            lifecycle_map, weekly_demand_map, NO_MOVEMENT_DAYS, OVERSTOCK_WOC)
+
+
+def _stock_query_compute_row(p, cd_stock_map, store_total_map, store_count_map,
+                              lifecycle_map, weekly_demand_map,
+                              no_movement_days, overstock_woc):
+    cd = cd_stock_map.get(p.id, 0)
+    st = store_total_map.get(p.id, 0)
+    lc = lifecycle_map.get(p.id, {})
+    wd = weekly_demand_map.get(p.id, 0)
+    total = cd + st
+    woc = round(total / wd, 1) if wd > 0 else None
+
+    if p.is_on_hold:
+        status = 'blocked'
+    elif lc.get('duv') is not None and lc['duv'] >= no_movement_days:
+        status = 'risk'
+    elif total == 0:
+        status = 'risk'
+    elif woc is not None and woc >= overstock_woc:
+        status = 'risk'
+    else:
+        status = 'ok'
+
+    return {
+        'id': p.id,
+        'sku': p.sku,
+        'name': p.name or '',
+        'category': p.category or '',
+        'cd_stock': cd,
+        'store_stock': st,
+        'total_stock': total,
+        'stores_with_stock': store_count_map.get(p.id, 0),
+        'duv': lc.get('duv'),
+        'duc': lc.get('duc'),
+        'woc': woc,
+        'status': status,
+        'is_on_hold': p.is_on_hold,
+    }
+
+
 @app.route('/stock_query', methods=['GET'])
 @login_required
 @require_permission('stock:query')
 def stock_query():
-    NO_MOVEMENT_DAYS = 60
-    OVERSTOCK_WOC = 12
-
     detail_sku = (request.args.get("detail_sku") or "").strip()
     if detail_sku:
         detail_sku = normalize_sku(detail_sku)
-        return _stock_query_detail_json(detail_sku, NO_MOVEMENT_DAYS)
+        return _stock_query_detail_json(detail_sku, 60)
 
     search = (request.args.get("search") or "").strip()
     category_filter = (request.args.get("category") or "").strip()
@@ -8519,175 +8663,92 @@ def stock_query():
     if per_page not in (10, 25, 50):
         per_page = 10
 
-    q = Product.query
+    has_any_filter = show_with_stock or show_broken or show_blocked or show_no_movement or show_overstock
 
-    if search:
-        norm_search = normalize_sku(search)
-        like_pat = f"%{search}%"
-        q = q.filter(
-            db.or_(
-                Product.sku.ilike(like_pat),
-                Product.sku == norm_search,
-                Product.name.ilike(like_pat),
-                Product.category.ilike(like_pat),
-            )
-        )
-
-    if category_filter:
-        q = q.filter(Product.category == category_filter)
-    if show_blocked:
-        q = q.filter(Product.is_on_hold == True)
-
-    BATCH_SIZE = 500
-    needs_stock_filter = show_with_stock or show_broken or show_overstock
-    needs_lifecycle_filter = show_no_movement
-
-    def _query_in_batches_lifecycle(pid_list):
-        lc_map = {}
-        for i in range(0, len(pid_list), BATCH_SIZE):
-            batch = pid_list[i:i + BATCH_SIZE]
-            rows = db.session.query(
-                SkuLifecycle.product_id,
-                SkuLifecycle.days_since_last_sale_global,
-                SkuLifecycle.days_since_last_purchase_global
-            ).filter(SkuLifecycle.product_id.in_(batch)).all()
-            for row in rows:
-                lc_map[row.product_id] = {
-                    'duv': row.days_since_last_sale_global,
-                    'duc': row.days_since_last_purchase_global,
-                }
-        return lc_map
-
-    def _query_in_batches_demand(pid_list, demand_cutoff):
-        wd_map = {}
-        for i in range(0, len(pid_list), BATCH_SIZE):
-            batch = pid_list[i:i + BATCH_SIZE]
-            rows = db.session.query(
-                SalesWeeklyAgg.product_id,
-                db.func.sum(SalesWeeklyAgg.units)
-            ).filter(
-                SalesWeeklyAgg.product_id.in_(batch),
-                SalesWeeklyAgg.week_start >= demand_cutoff
-            ).group_by(SalesWeeklyAgg.product_id).all()
-            for pid, total_units in rows:
-                wd_map[pid] = (total_units or 0) / 12.0
-        return wd_map
-
-    def _store_stock_batched(pid_list):
-        st_total = defaultdict(int)
-        st_count = defaultdict(int)
-        for i in range(0, len(pid_list), BATCH_SIZE):
-            batch = pid_list[i:i + BATCH_SIZE]
-            store_op = get_store_operational_stock_bulk(product_ids=batch)
-            for (sid, pid), qty in store_op.items():
-                if qty > 0:
-                    st_total[pid] += qty
-                    st_count[pid] += 1
-        return st_total, st_count
-
-    if needs_stock_filter or needs_lifecycle_filter:
-        all_pids = [r[0] for r in q.with_entities(Product.id).all()]
-
-        cd_stock_map = {}
-        store_total_map = defaultdict(int)
-        store_count_map = defaultdict(int)
-        weekly_demand_map = {}
-        lifecycle_map = {}
-
-        if all_pids:
-            cd_stock_map = get_cd_stock_map()
-            store_total_map, store_count_map = _store_stock_batched(all_pids)
-
-            if needs_lifecycle_filter:
-                lifecycle_map = _query_in_batches_lifecycle(all_pids)
-
-            if show_broken or show_overstock:
-                analysis_end = get_analysis_end_date()
-                demand_cutoff = analysis_end - timedelta(weeks=12)
-                weekly_demand_map = _query_in_batches_demand(all_pids, demand_cutoff)
-
-        filtered_pids = all_pids
-        if show_with_stock:
-            filtered_pids = [pid for pid in filtered_pids if cd_stock_map.get(pid, 0) + store_total_map.get(pid, 0) > 0]
-        if show_broken:
-            filtered_pids = [pid for pid in filtered_pids if store_total_map.get(pid, 0) == 0 and weekly_demand_map.get(pid, 0) > 0]
-        if show_no_movement:
-            filtered_pids = [pid for pid in filtered_pids if lifecycle_map.get(pid, {}).get('duv') is not None and lifecycle_map[pid]['duv'] >= NO_MOVEMENT_DAYS]
-        if show_overstock:
-            def _is_overstock(pid):
-                wd = weekly_demand_map.get(pid, 0)
-                if wd <= 0:
-                    return False
-                total = cd_stock_map.get(pid, 0) + store_total_map.get(pid, 0)
-                return (total / wd) >= OVERSTOCK_WOC
-            filtered_pids = [pid for pid in filtered_pids if _is_overstock(pid)]
+    if has_any_filter:
+        (filtered_pids, cd_stock_map, store_total_map, store_count_map,
+         lifecycle_map, weekly_demand_map, NO_MOVEMENT_DAYS,
+         OVERSTOCK_WOC) = _stock_query_build_filtered_data(
+            search, category_filter, show_with_stock,
+            show_broken, show_blocked, show_no_movement, show_overstock)
 
         total_count = len(filtered_pids)
         pagination = Pagination(page, per_page, total_count, [])
         start_idx = (page - 1) * per_page
         page_pids = filtered_pids[start_idx:start_idx + per_page]
     else:
+        NO_MOVEMENT_DAYS = 60
+        OVERSTOCK_WOC = 12
+        q = Product.query
+        if search:
+            norm_search = normalize_sku(search)
+            like_pat = f"%{search}%"
+            q = q.filter(
+                db.or_(
+                    Product.sku.ilike(like_pat),
+                    Product.sku == norm_search,
+                    Product.name.ilike(like_pat),
+                    Product.category.ilike(like_pat),
+                )
+            )
+        if category_filter:
+            q = q.filter(Product.category == category_filter)
+
         total_count = q.count()
         pagination = Pagination(page, per_page, total_count, [])
         page_pids = [r[0] for r in q.with_entities(Product.id).order_by(Product.id).offset((page - 1) * per_page).limit(per_page).all()]
 
-        cd_stock_map = {}
+        cd_stock_map = get_cd_stock_map() if page_pids else {}
         store_total_map = defaultdict(int)
         store_count_map = defaultdict(int)
         lifecycle_map = {}
         weekly_demand_map = {}
 
-    if page_pids:
-        if not cd_stock_map:
-            cd_stock_map = get_cd_stock_map()
-        if not store_total_map:
-            store_total_map, store_count_map = _store_stock_batched(page_pids)
-        if not lifecycle_map:
-            lifecycle_map = _query_in_batches_lifecycle(page_pids)
-        if not weekly_demand_map:
+        BATCH_SIZE = 500
+        if page_pids:
+            for i in range(0, len(page_pids), BATCH_SIZE):
+                batch = page_pids[i:i + BATCH_SIZE]
+                store_op = get_store_operational_stock_bulk(product_ids=batch)
+                for (sid, pid), qty_val in store_op.items():
+                    if qty_val > 0:
+                        store_total_map[pid] += qty_val
+                        store_count_map[pid] += 1
+
+            for i in range(0, len(page_pids), BATCH_SIZE):
+                batch = page_pids[i:i + BATCH_SIZE]
+                lc_rows = db.session.query(
+                    SkuLifecycle.product_id,
+                    SkuLifecycle.days_since_last_sale_global,
+                    SkuLifecycle.days_since_last_purchase_global
+                ).filter(SkuLifecycle.product_id.in_(batch)).all()
+                for row in lc_rows:
+                    lifecycle_map[row.product_id] = {
+                        'duv': row.days_since_last_sale_global,
+                        'duc': row.days_since_last_purchase_global,
+                    }
+
             analysis_end = get_analysis_end_date()
             demand_cutoff = analysis_end - timedelta(weeks=12)
-            weekly_demand_map = _query_in_batches_demand(page_pids, demand_cutoff)
+            for i in range(0, len(page_pids), BATCH_SIZE):
+                batch = page_pids[i:i + BATCH_SIZE]
+                demand_rows = db.session.query(
+                    SalesWeeklyAgg.product_id,
+                    db.func.sum(SalesWeeklyAgg.units)
+                ).filter(
+                    SalesWeeklyAgg.product_id.in_(batch),
+                    SalesWeeklyAgg.week_start >= demand_cutoff
+                ).group_by(SalesWeeklyAgg.product_id).all()
+                for pid, total_units in demand_rows:
+                    weekly_demand_map[pid] = (total_units or 0) / 12.0
 
     page_products = Product.query.filter(Product.id.in_(page_pids)).all() if page_pids else []
     pid_order = {pid: i for i, pid in enumerate(page_pids)}
     page_products.sort(key=lambda p: pid_order.get(p.id, 0))
 
-    rows = []
-    for p in page_products:
-        cd = cd_stock_map.get(p.id, 0)
-        st = store_total_map.get(p.id, 0)
-        lc = lifecycle_map.get(p.id, {})
-        wd = weekly_demand_map.get(p.id, 0)
-        total = cd + st
-        woc = round(total / wd, 1) if wd > 0 else None
-
-        if p.is_on_hold:
-            status = 'blocked'
-        elif lc.get('duv') is not None and lc['duv'] >= NO_MOVEMENT_DAYS:
-            status = 'risk'
-        elif total == 0:
-            status = 'risk'
-        elif woc is not None and woc >= OVERSTOCK_WOC:
-            status = 'risk'
-        else:
-            status = 'ok'
-
-        rows.append({
-            'id': p.id,
-            'sku': p.sku,
-            'name': p.name or '',
-            'category': p.category or '',
-            'cd_stock': cd,
-            'store_stock': st,
-            'total_stock': total,
-            'stores_with_stock': store_count_map.get(p.id, 0),
-            'duv': lc.get('duv'),
-            'duc': lc.get('duc'),
-            'woc': woc,
-            'status': status,
-            'is_on_hold': p.is_on_hold,
-        })
+    rows = [_stock_query_compute_row(p, cd_stock_map, store_total_map, store_count_map,
+                                      lifecycle_map, weekly_demand_map,
+                                      NO_MOVEMENT_DAYS, OVERSTOCK_WOC)
+            for p in page_products]
 
     categories = [r[0] for r in db.session.query(Product.category).filter(Product.category.isnot(None), Product.category != '').distinct().order_by(Product.category).all()]
 
@@ -8717,9 +8778,6 @@ def stock_query():
 @login_required
 @require_permission('stock:query')
 def stock_query_export():
-    NO_MOVEMENT_DAYS = 60
-    OVERSTOCK_WOC = 12
-    BATCH_SIZE = 500
     MAX_EXPORT_ROWS = 200000
 
     search = (request.args.get("search") or "").strip()
@@ -8730,83 +8788,18 @@ def stock_query_export():
     show_no_movement = request.args.get("no_movement") == "1"
     show_overstock = request.args.get("overstock") == "1"
 
-    q = Product.query
-    if search:
-        norm_search = normalize_sku(search)
-        like_pat = f"%{search}%"
-        q = q.filter(
-            db.or_(
-                Product.sku.ilike(like_pat),
-                Product.sku == norm_search,
-                Product.name.ilike(like_pat),
-                Product.category.ilike(like_pat),
-            )
-        )
-    if category_filter:
-        q = q.filter(Product.category == category_filter)
-    if show_blocked:
-        q = q.filter(Product.is_on_hold == True)
+    (filtered_pids, cd_stock_map, store_total_map, store_count_map,
+     lifecycle_map, weekly_demand_map, NO_MOVEMENT_DAYS,
+     OVERSTOCK_WOC) = _stock_query_build_filtered_data(
+        search, category_filter, show_with_stock,
+        show_broken, show_blocked, show_no_movement, show_overstock,
+        force_load_all=True)
 
-    all_pids = [r[0] for r in q.with_entities(Product.id).order_by(Product.id).all()]
-
-    if len(all_pids) > MAX_EXPORT_ROWS:
-        flash(f'El resultado tiene {len(all_pids):,} filas, lo que excede el máximo de {MAX_EXPORT_ROWS:,}. Refine los filtros.', 'warning')
+    if len(filtered_pids) > MAX_EXPORT_ROWS:
+        flash(f'El resultado tiene {len(filtered_pids):,} filas, lo que excede el máximo de {MAX_EXPORT_ROWS:,}. Refine los filtros.', 'warning')
         return redirect(url_for('stock_query', **request.args))
 
-    cd_stock_map = get_cd_stock_map()
-
-    store_total_map = defaultdict(int)
-    store_count_map = defaultdict(int)
-    for i in range(0, len(all_pids), BATCH_SIZE):
-        batch = all_pids[i:i + BATCH_SIZE]
-        store_op = get_store_operational_stock_bulk(product_ids=batch)
-        for (sid, pid), qty_val in store_op.items():
-            if qty_val > 0:
-                store_total_map[pid] += qty_val
-                store_count_map[pid] += 1
-
-    lifecycle_map = {}
-    for i in range(0, len(all_pids), BATCH_SIZE):
-        batch = all_pids[i:i + BATCH_SIZE]
-        lc_rows = db.session.query(
-            SkuLifecycle.product_id,
-            SkuLifecycle.days_since_last_sale_global,
-            SkuLifecycle.days_since_last_purchase_global
-        ).filter(SkuLifecycle.product_id.in_(batch)).all()
-        for row in lc_rows:
-            lifecycle_map[row.product_id] = {
-                'duv': row.days_since_last_sale_global,
-                'duc': row.days_since_last_purchase_global,
-            }
-
-    weekly_demand_map = {}
-    analysis_end = get_analysis_end_date()
-    demand_cutoff = analysis_end - timedelta(weeks=12)
-    for i in range(0, len(all_pids), BATCH_SIZE):
-        batch = all_pids[i:i + BATCH_SIZE]
-        demand_rows = db.session.query(
-            SalesWeeklyAgg.product_id,
-            db.func.sum(SalesWeeklyAgg.units)
-        ).filter(
-            SalesWeeklyAgg.product_id.in_(batch),
-            SalesWeeklyAgg.week_start >= demand_cutoff
-        ).group_by(SalesWeeklyAgg.product_id).all()
-        for pid, total_units in demand_rows:
-            weekly_demand_map[pid] = (total_units or 0) / 12.0
-
-    needs_stock_filter = show_with_stock or show_broken or show_overstock
-    filtered_pids = all_pids
-    if show_with_stock:
-        filtered_pids = [pid for pid in filtered_pids if cd_stock_map.get(pid, 0) + store_total_map.get(pid, 0) > 0]
-    if show_broken:
-        filtered_pids = [pid for pid in filtered_pids if store_total_map.get(pid, 0) == 0 and weekly_demand_map.get(pid, 0) > 0]
-    if show_no_movement:
-        filtered_pids = [pid for pid in filtered_pids if lifecycle_map.get(pid, {}).get('duv') is not None and lifecycle_map[pid]['duv'] >= NO_MOVEMENT_DAYS]
-    if show_overstock:
-        filtered_pids = [pid for pid in filtered_pids if
-            weekly_demand_map.get(pid, 0) > 0 and
-            (cd_stock_map.get(pid, 0) + store_total_map.get(pid, 0)) / weekly_demand_map[pid] >= OVERSTOCK_WOC]
-
+    BATCH_SIZE = 500
     products_by_id = {}
     for i in range(0, len(filtered_pids), BATCH_SIZE):
         batch = filtered_pids[i:i + BATCH_SIZE]
@@ -8818,36 +8811,22 @@ def stock_query_export():
         p = products_by_id.get(pid)
         if not p:
             continue
-        cd = cd_stock_map.get(pid, 0)
-        st = store_total_map.get(pid, 0)
-        total = cd + st
-        lc = lifecycle_map.get(pid, {})
-        wd = weekly_demand_map.get(pid, 0)
-        woc = round(total / wd, 1) if wd > 0 else None
-
-        if p.is_on_hold:
-            status = 'Bloqueado'
-        elif lc.get('duv') is not None and lc['duv'] >= NO_MOVEMENT_DAYS:
-            status = 'Riesgo'
-        elif total == 0:
-            status = 'Riesgo'
-        elif woc is not None and woc >= OVERSTOCK_WOC:
-            status = 'Riesgo'
-        else:
-            status = 'OK'
-
+        r = _stock_query_compute_row(p, cd_stock_map, store_total_map, store_count_map,
+                                      lifecycle_map, weekly_demand_map,
+                                      NO_MOVEMENT_DAYS, OVERSTOCK_WOC)
+        status_label = {'blocked': 'Bloqueado', 'risk': 'Riesgo', 'ok': 'OK'}.get(r['status'], r['status'])
         export_rows.append({
-            'SKU': p.sku,
-            'Producto': p.name or '',
-            'Categoría': p.category or '',
-            'Stock CD': cd,
-            'Stock Tiendas': st,
-            'Stock Total': total,
-            'Tiendas c/Stock': store_count_map.get(pid, 0),
-            'WOC': woc,
-            'DUV (días)': lc.get('duv'),
-            'DUC (días)': lc.get('duc'),
-            'Estado': status,
+            'SKU': r['sku'],
+            'Producto': r['name'],
+            'Categoría': r['category'],
+            'Stock CD': r['cd_stock'],
+            'Stock Tiendas': r['store_stock'],
+            'Stock Total': r['total_stock'],
+            'Tiendas c/Stock': r['stores_with_stock'],
+            'WOC': r['woc'],
+            'DUV (días)': r['duv'],
+            'DUC (días)': r['duc'],
+            'Estado': status_label,
         })
 
     df = pd.DataFrame(export_rows)
