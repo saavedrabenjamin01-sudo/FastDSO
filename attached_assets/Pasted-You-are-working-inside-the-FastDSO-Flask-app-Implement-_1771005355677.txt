@@ -1,0 +1,112 @@
+You are working inside the FastDSO Flask app. Implement “GPT V1 Cross FastDSO” as a SAFE copiloting layer (no AI writes to stock/prediction tables). Add three features: (1) Explain this run, (2) Suggest parameter tweaks, (3) Detect anomalies. Keep all existing business logic and distribution engine unchanged.
+
+TECH REQUIREMENTS
+- Add an environment flag AI_ENABLED (default False locally). If False, UI buttons should show “AI disabled” tooltip and do nothing.
+- Add OPENAI_API_KEY support (read from env). Add dependency in requirements if needed.
+- IMPORTANT: AI must never mutate stock, predictions, runs, planner states. AI only writes to its own tables.
+- Provide graceful fallback: if API fails, show a friendly message, do not crash.
+
+1) DATABASE
+Create a new SQLAlchemy model/table:
+- AiRunInsight
+  - id (pk)
+  - run_id (string, indexed, unique)  # one insight set per run
+  - created_at (datetime)
+  - model_version (string)            # e.g. “gpt-v1-cross”
+  - insights_md (text)                # executive narrative in Markdown
+  - anomalies_json (text)             # JSON string
+  - suggested_params_json (text)      # JSON string
+  - tokens_used (int, nullable)
+  - status (string)                   # ok / failed
+  - error_msg (text, nullable)
+
+Run migrations strategy: since we use sqlite and no alembic, add a safe “ensure_ai_tables()” function called at startup within app_context to db.create_all() (or equivalent existing init). Do not break existing reset_db scripts.
+
+2) SERVER-SIDE: DATA SNAPSHOT BUILDER
+Create a function build_run_ai_snapshot(run_id) that returns a compact dict to feed GPT:
+- run metadata: folio, responsable, created_at, model_name used
+- totals: total_units, total_rows, total_skus, total_stores
+- top10_rows_by_qty: [{sku, product_name, store, qty, reason(if exists)}]
+- top10_skus_by_qty: [{sku, product_name, qty_total}]
+- top10_stores_by_qty: [{store, qty_total}]
+- quality counters:
+  - pct_zero_rows
+  - capped_rows_count
+  - max_row_qty
+  - count_by_reason (if you have reason codes; else infer using simple heuristics)
+- “weird_examples” (max 10):
+  heuristics:
+   - qty > P95 row qty
+   - or store_rank high but received large qty
+   - or stock_covers but still received (if debug data exists)
+If some fields are not available in current schema, skip them safely.
+
+Do NOT send large raw tables to GPT. Keep snapshot JSON under ~15KB.
+
+3) OPENAI CLIENT
+Implement a small utility ai_call(prompt, json_payload) using the OpenAI API chat completions.
+- Use model: a reliable GPT-4.1/4o equivalent available in OpenAI, configurable via env AI_MODEL default “gpt-4o-mini”.
+- Temperature low (0.2).
+- Response must be JSON with strict keys:
+  {
+    "insights_md": "...",
+    "anomalies": [{"severity":"low|med|high","code":"...","title":"...","evidence":"...","suggested_action":"..."}],
+    "suggested_params": {
+        "analysis_mode_suggestion":"sma1_no_min|sma2_min2|sma3_min3|...",
+        "horizon_weeks": int,
+        "target_woc": float,
+        "min_fill_units": int,
+        "topN_new_sku": int,
+        "caps": {"max_units_per_row": int, "max_total_units": int},
+        "notes": "..."
+    }
+  }
+Validate JSON. If invalid, mark status failed and show an error.
+
+4) ROUTES / ENDPOINTS
+Add endpoints (login required, permission “runs:view”):
+- POST /ai/run/<run_id>/generate
+  - builds snapshot
+  - calls GPT
+  - upserts AiRunInsight by run_id
+  - returns JSON success + rendered HTML partial or redirect
+- GET /ai/run/<run_id>/view
+  - returns a page or modal content showing insights/anomalies/params
+
+5) UI INTEGRATION
+A) Run Detail page (run_detail.html) and Runs list:
+- Add an “AI” section with:
+  - Button: “Explain this run”
+  - Button: “Detect anomalies”
+  - Button: “Suggest parameter tweaks”
+These can all call the same generate endpoint and then display the three outputs together.
+
+B) Dashboard:
+- If selected_run_id exists, show a small “AI Status” chip:
+  - Green: no high anomalies
+  - Yellow: has medium anomalies
+  - Red: has high anomalies
+Click opens AI view.
+
+C) Parameter prefill:
+- In “Generador de Distribución” (distribution request / generator form), add a button “Use AI suggested params” that:
+  - fetches suggested_params_json for last run
+  - pre-fills the form controls (analysis_mode and any numeric knobs you already expose)
+  - DOES NOT auto-submit.
+
+6) SECURITY / PRIVACY
+- Never send user passwords or emails to GPT.
+- Only send run snapshot summary.
+- Log minimal metadata (tokens and status). No raw payload storage except the snapshot hash (optional).
+
+7) TESTS / VALIDATION
+Add a minimal test route or unit tests:
+- Generate AI insights for a run with predictions.
+- Ensure it never writes to Prediction/Stock tables.
+- If OPENAI_API_KEY missing, it should show “AI disabled” and not crash.
+
+DELIVERABLES
+- Modify app.py (or split into ai_service.py + models.py if your structure allows).
+- Update templates: run_detail.html, runs.html, dashboard.html, distribution generator template.
+- Add minimal CSS for the AI panels consistent with existing FastDSO visual style (cards, pills).
+- Ensure app starts without errors even if AI disabled.
