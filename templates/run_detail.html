@@ -37,6 +37,68 @@
   </div>
 </div>
 
+{% if run.run_type in ['distribution', 'forecast_v2'] %}
+<div class="card mb-3 border-0" style="background:linear-gradient(135deg,#f0f4ff 0%,#e8eeff 100%);border-radius:12px;">
+  <div class="card-body">
+    <div class="d-flex align-items-center justify-content-between mb-2">
+      <div class="d-flex align-items-center gap-2">
+        <span style="font-size:1.3rem;">🤖</span>
+        <h6 class="mb-0 fw-semibold">GPT V1 Cross FastDSO</h6>
+      </div>
+      <span class="badge" id="aiStatusBadge" style="display:none;"></span>
+    </div>
+
+    <div id="aiDisabled" style="display:none;">
+      <div class="text-muted small"><i class="bi bi-info-circle me-1"></i>AI está deshabilitado. Configure <code>AI_ENABLED=true</code> para activar.</div>
+    </div>
+
+    <div id="aiActions" style="display:none;">
+      <div class="d-flex gap-2 flex-wrap mb-3">
+        <button class="btn btn-sm btn-outline-primary" id="btnAiGenerate" onclick="aiGenerate()">
+          <i class="bi bi-stars me-1"></i>Analizar corrida con AI
+        </button>
+      </div>
+      <div id="aiLoading" style="display:none;" class="text-center py-3">
+        <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+        <span class="ms-2 text-muted small">Consultando AI...</span>
+      </div>
+      <div id="aiError" style="display:none;" class="alert alert-danger py-2 small"></div>
+      <div id="aiResult" style="display:none;">
+        <ul class="nav nav-pills nav-fill mb-3" role="tablist" id="aiTabs">
+          <li class="nav-item" role="presentation">
+            <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#aiInsights" type="button" role="tab">
+              <i class="bi bi-file-text me-1"></i>Resumen Ejecutivo
+            </button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="pill" data-bs-target="#aiAnomalies" type="button" role="tab">
+              <i class="bi bi-exclamation-triangle me-1"></i>Anomalías
+            </button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="pill" data-bs-target="#aiParams" type="button" role="tab">
+              <i class="bi bi-sliders me-1"></i>Parámetros Sugeridos
+            </button>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane fade show active" id="aiInsights" role="tabpanel">
+            <div id="aiInsightsMd" class="ai-md-content"></div>
+          </div>
+          <div class="tab-pane fade" id="aiAnomalies" role="tabpanel">
+            <div id="aiAnomaliesList"></div>
+          </div>
+          <div class="tab-pane fade" id="aiParams" role="tabpanel">
+            <div id="aiParamsContent"></div>
+          </div>
+        </div>
+        <div class="text-muted small mt-2" id="aiMeta"></div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% if run.run_type == 'distribution' and predictions %}
 <div class="card">
   <div class="card-header d-flex justify-content-between align-items-center">
@@ -132,6 +194,174 @@
     </div>
   </div>
 </div>
+{% endif %}
+
+{% if run.run_type in ['distribution', 'forecast_v2'] %}
+<style>
+.ai-md-content { font-size: 0.9rem; line-height: 1.6; }
+.ai-md-content h1,.ai-md-content h2,.ai-md-content h3 { font-size: 1.05rem; font-weight: 600; margin-top: 0.8rem; }
+.ai-md-content ul { padding-left: 1.2rem; }
+.ai-anomaly-card { border-radius: 8px; padding: 0.75rem; margin-bottom: 0.5rem; border: 1px solid #dee2e6; }
+.ai-anomaly-high { border-left: 4px solid #dc3545; background: #fff5f5; }
+.ai-anomaly-med { border-left: 4px solid #ffc107; background: #fffdf0; }
+.ai-anomaly-low { border-left: 4px solid #0d6efd; background: #f0f4ff; }
+.ai-param-row { display: flex; justify-content: space-between; padding: 0.4rem 0; border-bottom: 1px solid #f0f0f0; font-size: 0.9rem; }
+.ai-param-row:last-child { border-bottom: none; }
+.ai-param-key { color: #6c757d; }
+.ai-param-val { font-weight: 600; }
+</style>
+<script>
+var AI_ENABLED = {{ 'true' if ai_enabled else 'false' }};
+var RUN_ID = '{{ run.run_id }}';
+
+document.addEventListener('DOMContentLoaded', function() {
+  if (!AI_ENABLED) {
+    document.getElementById('aiDisabled').style.display = '';
+    return;
+  }
+  document.getElementById('aiActions').style.display = '';
+  loadExistingInsight();
+});
+
+function loadExistingInsight() {
+  fetch('/ai/run/' + RUN_ID + '/view')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.found && d.status === 'ok') {
+        renderAiResult(d);
+      } else if (d.found && d.status === 'failed') {
+        showAiError(d.error_msg || 'El análisis anterior falló.');
+      }
+    })
+    .catch(function() {});
+}
+
+function aiGenerate() {
+  var btn = document.getElementById('btnAiGenerate');
+  btn.disabled = true;
+  document.getElementById('aiLoading').style.display = '';
+  document.getElementById('aiError').style.display = 'none';
+  document.getElementById('aiResult').style.display = 'none';
+
+  fetch('/ai/run/' + RUN_ID + '/generate', { method: 'POST', headers: {'Content-Type': 'application/json'} })
+    .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
+    .then(function(res) {
+      document.getElementById('aiLoading').style.display = 'none';
+      btn.disabled = false;
+      if (!res.ok) {
+        showAiError(res.data.error || 'Error desconocido');
+        return;
+      }
+      loadExistingInsight();
+    })
+    .catch(function(e) {
+      document.getElementById('aiLoading').style.display = 'none';
+      btn.disabled = false;
+      showAiError('Error de conexión: ' + e.message);
+    });
+}
+
+function showAiError(msg) {
+  var el = document.getElementById('aiError');
+  el.innerHTML = '<i class="bi bi-exclamation-circle me-1"></i>' + msg;
+  el.style.display = '';
+}
+
+function renderAiResult(d) {
+  document.getElementById('aiResult').style.display = '';
+
+  var insightsEl = document.getElementById('aiInsightsMd');
+  insightsEl.innerHTML = simpleMarkdown(d.insights_md || '');
+
+  var anomaliesEl = document.getElementById('aiAnomaliesList');
+  var anomalies = d.anomalies || [];
+  if (anomalies.length === 0) {
+    anomaliesEl.innerHTML = '<div class="text-muted small py-2"><i class="bi bi-check-circle me-1"></i>No se detectaron anomalías.</div>';
+  } else {
+    var html = '';
+    for (var i = 0; i < anomalies.length; i++) {
+      var a = anomalies[i];
+      var sev = a.severity || 'low';
+      html += '<div class="ai-anomaly-card ai-anomaly-' + sev + '">';
+      html += '<div class="d-flex justify-content-between align-items-center mb-1">';
+      html += '<strong>' + escHtml(a.title || '') + '</strong>';
+      html += '<span class="badge bg-' + (sev === 'high' ? 'danger' : sev === 'med' ? 'warning text-dark' : 'primary') + '">' + sev.toUpperCase() + '</span>';
+      html += '</div>';
+      if (a.evidence) html += '<div class="small text-muted">' + escHtml(a.evidence) + '</div>';
+      if (a.suggested_action) html += '<div class="small mt-1"><i class="bi bi-lightbulb me-1"></i>' + escHtml(a.suggested_action) + '</div>';
+      html += '</div>';
+    }
+    anomaliesEl.innerHTML = html;
+  }
+
+  var badge = document.getElementById('aiStatusBadge');
+  var hasHigh = anomalies.some(function(a) { return a.severity === 'high'; });
+  var hasMed = anomalies.some(function(a) { return a.severity === 'med'; });
+  if (hasHigh) {
+    badge.className = 'badge bg-danger';
+    badge.textContent = anomalies.length + ' anomalía(s)';
+  } else if (hasMed) {
+    badge.className = 'badge bg-warning text-dark';
+    badge.textContent = anomalies.length + ' anomalía(s)';
+  } else if (anomalies.length > 0) {
+    badge.className = 'badge bg-info';
+    badge.textContent = anomalies.length + ' anomalía(s)';
+  } else {
+    badge.className = 'badge bg-success';
+    badge.textContent = 'Sin anomalías';
+  }
+  badge.style.display = '';
+
+  var paramsEl = document.getElementById('aiParamsContent');
+  var params = d.suggested_params || {};
+  var phtml = '';
+  var paramLabels = {
+    'analysis_mode_suggestion': 'Modo de análisis',
+    'horizon_weeks': 'Horizonte (semanas)',
+    'target_woc': 'WOC objetivo',
+    'min_fill_units': 'Unidades mínimas',
+    'topN_new_sku': 'Top N SKUs nuevos',
+    'notes': 'Notas'
+  };
+  for (var key in params) {
+    if (key === 'caps') {
+      var caps = params[key] || {};
+      for (var ck in caps) {
+        phtml += '<div class="ai-param-row"><span class="ai-param-key">' + escHtml(ck) + '</span><span class="ai-param-val">' + escHtml(String(caps[ck])) + '</span></div>';
+      }
+    } else {
+      var label = paramLabels[key] || key;
+      phtml += '<div class="ai-param-row"><span class="ai-param-key">' + escHtml(label) + '</span><span class="ai-param-val">' + escHtml(String(params[key])) + '</span></div>';
+    }
+  }
+  paramsEl.innerHTML = phtml || '<div class="text-muted small">Sin parámetros sugeridos.</div>';
+
+  var metaEl = document.getElementById('aiMeta');
+  metaEl.innerHTML = '<i class="bi bi-clock me-1"></i>' + (d.created_at || '') + ' | Modelo: ' + (d.model_version || '') + (d.tokens_used ? ' | Tokens: ' + d.tokens_used : '');
+}
+
+function simpleMarkdown(md) {
+  if (!md) return '';
+  var s = md
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
+    .replace(/\n\n/g, '<br><br>')
+    .replace(/\n/g, '<br>');
+  return s;
+}
+
+function escHtml(s) {
+  var d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+</script>
 {% endif %}
 
 {% endblock %}

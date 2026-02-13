@@ -193,6 +193,11 @@
                   <a href="{{ url_for('view_run', run_id=r.run_id) }}" class="runs-action-btn" title="Ver detalles">
                     <i class="bi bi-eye"></i>
                   </a>
+                  {% if r.run_type in ['distribution', 'forecast_v2'] %}
+                  <span class="runs-action-btn ai-chip-placeholder" data-run-id="{{ r.run_id }}" title="Estado AI" style="display:none;">
+                    <i class="bi bi-stars"></i>
+                  </span>
+                  {% endif %}
                   {% if r.run_type == 'distribution' %}
                     <a href="{{ url_for('dashboard', run_id=r.run_id) }}" class="runs-action-btn" title="Ver en Dashboard">
                       <i class="bi bi-graph-up"></i>
@@ -456,6 +461,32 @@ document.addEventListener('DOMContentLoaded', function() {
   window.history.replaceState({}, document.title, url.toString());
 });
 {% endif %}
+
+document.addEventListener('DOMContentLoaded', function() {
+  var chips = document.querySelectorAll('.ai-chip-placeholder');
+  chips.forEach(function(chip) {
+    var rid = chip.getAttribute('data-run-id');
+    fetch('/ai/status/' + rid)
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.has_insight) {
+          chip.style.display = '';
+          var icon = chip.querySelector('i');
+          if (d.level === 'high') {
+            chip.style.color = '#dc3545';
+            chip.title = d.count + ' anomalía(s) - alto';
+          } else if (d.level === 'med') {
+            chip.style.color = '#ffc107';
+            chip.title = d.count + ' anomalía(s) - medio';
+          } else {
+            chip.style.color = '#198754';
+            chip.title = 'AI: sin anomalías críticas';
+          }
+        }
+      })
+      .catch(function() {});
+  });
+});
 </script>
 
 <style>

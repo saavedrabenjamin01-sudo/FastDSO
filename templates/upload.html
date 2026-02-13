@@ -87,9 +87,12 @@
           </div>
           {% endif %}
 
-          <div class="upload-actions">
+          <div class="upload-actions d-flex gap-2 flex-wrap align-items-center">
             <button type="submit" class="btn btn-primary query-btn">
               <i class="bi bi-arrow-up-circle me-2"></i>Generar distribución sugerida
+            </button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="btnAiPrefill" onclick="aiPrefillParams()" title="Prellenar parámetros con sugerencia AI">
+              <i class="bi bi-stars me-1"></i>Usar parámetros AI
             </button>
           </div>
         </form>
@@ -186,4 +189,41 @@
   </div>
 </div>
 
+<script>
+function aiPrefillParams() {
+  var btn = document.getElementById('btnAiPrefill');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Cargando...';
+  fetch('/ai/run/latest_params')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-stars me-1"></i>Usar parámetros AI';
+      if (!d.found) {
+        alert('No hay parámetros AI disponibles. Genere un análisis AI desde el detalle de una corrida primero.');
+        return;
+      }
+      var p = d.suggested_params;
+      if (p.analysis_mode_suggestion) {
+        var sel = document.querySelector('select[name="analysis_mode"]');
+        if (sel) {
+          for (var i = 0; i < sel.options.length; i++) {
+            if (sel.options[i].value === p.analysis_mode_suggestion) {
+              sel.selectedIndex = i;
+              break;
+            }
+          }
+        }
+      }
+      var msg = 'Parámetros AI aplicados (corrida ' + (d.run_id || '').substring(0, 8) + ')';
+      if (p.notes) msg += '\nNotas: ' + p.notes;
+      alert(msg);
+    })
+    .catch(function() {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-stars me-1"></i>Usar parámetros AI';
+      alert('Error al cargar parámetros AI.');
+    });
+}
+</script>
 {% endblock %}

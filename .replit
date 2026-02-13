@@ -1,10 +1,11 @@
 modules = ["web", "python-3.11", "postgresql-16"]
 [agent]
 expertMode = true
+integrations = ["python_openai_ai_integrations:1.0.0"]
 
 [nix]
 channel = "stable-25_05"
-packages = ["glibcLocales", "gist"]
+packages = ["gist", "glibcLocales"]
 
 [workflows]
 runButton = "Project"
@@ -37,3 +38,8 @@ externalPort = 80
 [deployment]
 deploymentTarget = "autoscale"
 run = ["python", "app.py"]
+
+[userenv]
+
+[userenv.shared]
+AI_ENABLED = "true"

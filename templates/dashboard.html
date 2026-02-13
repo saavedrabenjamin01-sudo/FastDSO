@@ -76,6 +76,7 @@
           {% if responsable %} | Resp: <strong>{{ responsable }}</strong>{% endif %}
           {% if current_run.created_at %} — <span class="text-muted">{{ current_run.created_at.strftime('%Y-%m-%d %H:%M') }}</span>{% endif %}
         </span>
+        <span id="dashAiChip" style="display:none;cursor:pointer;" class="badge ms-2" onclick="window.location.href='/run/{{ selected_run_id }}'"></span>
       {% else %}
         <span class="dashv1-runtext">Corrida activa: —</span>
       {% endif %}
@@ -886,4 +887,31 @@ async function showDistExplanation(productId, storeId, qty, runId) {
   font-weight: bold;
 }
 </style>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  var chip = document.getElementById('dashAiChip');
+  if (!chip) return;
+  var rid = '{{ selected_run_id or "" }}';
+  if (!rid) return;
+  fetch('/ai/status/' + rid)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.has_insight) {
+        chip.style.display = '';
+        if (d.level === 'high') {
+          chip.className = 'badge bg-danger ms-2';
+          chip.innerHTML = '<i class="bi bi-stars me-1"></i>AI: ' + d.count + ' anomalía(s)';
+        } else if (d.level === 'med') {
+          chip.className = 'badge bg-warning text-dark ms-2';
+          chip.innerHTML = '<i class="bi bi-stars me-1"></i>AI: ' + d.count + ' anomalía(s)';
+        } else {
+          chip.className = 'badge bg-success ms-2';
+          chip.innerHTML = '<i class="bi bi-stars me-1"></i>AI: OK';
+        }
+        chip.style.cursor = 'pointer';
+      }
+    })
+    .catch(function() {});
+});
+</script>
 {% endblock %}

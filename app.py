@@ -783,6 +783,20 @@ class ProductHold(db.Model):
     resolved_by = db.relationship('User', foreign_keys=[resolved_by_user_id])
 
 
+class AiRunInsight(db.Model):
+    __tablename__ = 'ai_run_insight'
+    id = db.Column(db.Integer, primary_key=True)
+    run_id = db.Column(db.String(36), nullable=False, unique=True, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    model_version = db.Column(db.String(50), default='gpt-v1-cross')
+    insights_md = db.Column(db.Text, nullable=True)
+    anomalies_json = db.Column(db.Text, nullable=True)
+    suggested_params_json = db.Column(db.Text, nullable=True)
+    tokens_used = db.Column(db.Integer, nullable=True)
+    status = db.Column(db.String(20), default='ok', nullable=False)
+    error_msg = db.Column(db.Text, nullable=True)
+
+
 # ------------------ Operational Stock Helpers ------------------
 def _get_baseline_date(scope, session=None):
     s = session or db.session
@@ -9211,7 +9225,7 @@ def view_run(run_id):
             .limit(100)
             .all()
         )
-        return render_template('run_detail.html', run=run, predictions=predictions)
+        return render_template('run_detail.html', run=run, predictions=predictions, ai_enabled=AI_ENABLED)
 
     elif run.run_type == 'forecast_v2':
         forecast_results = (
@@ -9221,7 +9235,7 @@ def view_run(run_id):
             .limit(100)
             .all()
         )
-        return render_template('run_detail.html', run=run, forecast_results=forecast_results)
+        return render_template('run_detail.html', run=run, forecast_results=forecast_results, ai_enabled=AI_ENABLED)
 
     elif run.run_type == 'sales_upload':
         sales_summary = (
@@ -9237,9 +9251,9 @@ def view_run(run_id):
             .limit(50)
             .all()
         )
-        return render_template('run_detail.html', run=run, sales_summary=sales_summary)
+        return render_template('run_detail.html', run=run, sales_summary=sales_summary, ai_enabled=AI_ENABLED)
 
-    return render_template('run_detail.html', run=run)
+    return render_template('run_detail.html', run=run, ai_enabled=AI_ENABLED)
 
 
 @app.route('/runs/<run_id>/activate', methods=['POST'])
@@ -15668,6 +15682,323 @@ def planner_export_picking(plan_id):
         as_attachment=True,
         download_name=filename
     )
+
+
+# ==================== AI COPILOT V1 ====================
+AI_ENABLED = os.environ.get('AI_ENABLED', 'false').lower() in ('1', 'true', 'yes')
+AI_MODEL = os.environ.get('AI_MODEL', 'gpt-4o-mini')
+
+def _get_openai_client():
+    from openai import OpenAI
+    api_key = os.environ.get('AI_INTEGRATIONS_OPENAI_API_KEY')
+    base_url = os.environ.get('AI_INTEGRATIONS_OPENAI_BASE_URL')
+    if not api_key or not base_url:
+        return None
+    return OpenAI(api_key=api_key, base_url=base_url)
+
+
+def build_run_ai_snapshot(run_id):
+    run = Run.query.filter_by(run_id=run_id).first()
+    if not run:
+        return None
+
+    snap = {
+        'run_id': run.run_id,
+        'folio': run.folio or '',
+        'responsable': run.responsable or '',
+        'created_at': run.created_at.strftime('%Y-%m-%d %H:%M') if run.created_at else '',
+        'run_type': run.run_type or '',
+        'mode': run.mode or '',
+        'categoria': run.categoria or '',
+        'status': run.status or '',
+    }
+
+    if run.run_type == 'distribution':
+        preds = (
+            db.session.query(
+                Prediction.quantity,
+                Product.sku,
+                Product.name.label('product_name'),
+                Store.name.label('store_name'),
+                Prediction.model_name,
+                Prediction.debug_json,
+            )
+            .join(Product, Prediction.product_id == Product.id)
+            .join(Store, Prediction.store_id == Store.id)
+            .filter(Prediction.run_id == run_id)
+            .all()
+        )
+
+        total_units = sum(p.quantity for p in preds)
+        total_rows = len(preds)
+        skus_set = set()
+        stores_set = set()
+        qtys = []
+        reason_counts = defaultdict(int)
+
+        for p in preds:
+            skus_set.add(p.sku)
+            stores_set.add(p.store_name)
+            qtys.append(p.quantity)
+            if p.debug_json:
+                try:
+                    dbg = json.loads(p.debug_json)
+                    rc = dbg.get('reason_code') or dbg.get('reason') or ''
+                    if rc:
+                        reason_counts[rc] += 1
+                except:
+                    pass
+
+        snap['totals'] = {
+            'total_units': total_units,
+            'total_rows': total_rows,
+            'total_skus': len(skus_set),
+            'total_stores': len(stores_set),
+        }
+
+        sorted_preds = sorted(preds, key=lambda p: p.quantity, reverse=True)
+        snap['top10_rows_by_qty'] = [
+            {'sku': p.sku, 'product_name': p.product_name, 'store': p.store_name, 'qty': p.quantity}
+            for p in sorted_preds[:10]
+        ]
+
+        sku_totals = defaultdict(lambda: {'qty': 0, 'name': ''})
+        for p in preds:
+            sku_totals[p.sku]['qty'] += p.quantity
+            sku_totals[p.sku]['name'] = p.product_name or ''
+        top_skus = sorted(sku_totals.items(), key=lambda x: x[1]['qty'], reverse=True)[:10]
+        snap['top10_skus_by_qty'] = [
+            {'sku': s, 'product_name': d['name'], 'qty_total': d['qty']}
+            for s, d in top_skus
+        ]
+
+        store_totals = defaultdict(int)
+        for p in preds:
+            store_totals[p.store_name] += p.quantity
+        top_stores = sorted(store_totals.items(), key=lambda x: x[1], reverse=True)[:10]
+        snap['top10_stores_by_qty'] = [
+            {'store': s, 'qty_total': q} for s, q in top_stores
+        ]
+
+        zero_rows = sum(1 for q in qtys if q == 0)
+        snap['quality'] = {
+            'pct_zero_rows': round(zero_rows / max(total_rows, 1) * 100, 1),
+            'max_row_qty': max(qtys) if qtys else 0,
+            'count_by_reason': dict(reason_counts) if reason_counts else {},
+        }
+
+        if qtys:
+            sorted_qtys = sorted(qtys)
+            p95_idx = int(len(sorted_qtys) * 0.95)
+            p95 = sorted_qtys[min(p95_idx, len(sorted_qtys) - 1)]
+            weird = [
+                {'sku': p.sku, 'store': p.store_name, 'qty': p.quantity, 'note': 'qty > P95'}
+                for p in sorted_preds if p.quantity > p95
+            ][:10]
+            snap['weird_examples'] = weird
+
+    elif run.run_type == 'forecast_v2':
+        forecasts = (
+            ForecastResult.query
+            .filter_by(run_id=run_id)
+            .order_by(ForecastResult.suggested.desc())
+            .all()
+        )
+        snap['totals'] = {
+            'total_rows': len(forecasts),
+            'total_skus': len(set(f.sku for f in forecasts)),
+            'total_units': sum(f.suggested for f in forecasts),
+        }
+        snap['top10_skus_by_qty'] = [
+            {'sku': f.sku, 'product_name': f.name or '', 'suggested': f.suggested, 'reason_code': f.reason_code or ''}
+            for f in forecasts[:10]
+        ]
+
+    return snap
+
+
+def ai_call(snapshot):
+    client = _get_openai_client()
+    if not client:
+        return None, 'OpenAI client not configured'
+
+    system_prompt = (
+        "Eres un analista experto en supply chain y distribución. "
+        "Recibes un resumen de una corrida de distribución o forecast. "
+        "Responde SIEMPRE en español. Tu respuesta debe ser un JSON válido con estas claves exactas:\n"
+        "{\n"
+        '  "insights_md": "... narrativa ejecutiva en Markdown ...",\n'
+        '  "anomalies": [{"severity":"low|med|high","code":"...","title":"...","evidence":"...","suggested_action":"..."}],\n'
+        '  "suggested_params": {\n'
+        '    "analysis_mode_suggestion": "sma1_no_min|sma2_min2|sma3_min3|sma3_ignore_stock",\n'
+        '    "horizon_weeks": 4,\n'
+        '    "target_woc": 4.0,\n'
+        '    "min_fill_units": 1,\n'
+        '    "topN_new_sku": 5,\n'
+        '    "caps": {"max_units_per_row": 100, "max_total_units": 5000},\n'
+        '    "notes": "..."\n'
+        "  }\n"
+        "}\n"
+        "No incluyas texto fuera del JSON. No uses bloques de código markdown."
+    )
+
+    user_msg = json.dumps(snapshot, ensure_ascii=False, default=str)
+
+    try:
+        response = client.chat.completions.create(
+            model=AI_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg},
+            ],
+            temperature=0.2,
+            response_format={"type": "json_object"},
+            max_completion_tokens=4096,
+        )
+        content = response.choices[0].message.content or ''
+        tokens = response.usage.total_tokens if response.usage else None
+
+        parsed = json.loads(content)
+        required_keys = {'insights_md', 'anomalies', 'suggested_params'}
+        if not required_keys.issubset(set(parsed.keys())):
+            return None, f'Respuesta AI incompleta: faltan claves {required_keys - set(parsed.keys())}'
+
+        return {'data': parsed, 'tokens': tokens}, None
+
+    except json.JSONDecodeError as e:
+        return None, f'Respuesta AI no es JSON válido: {str(e)}'
+    except Exception as e:
+        return None, f'Error al llamar a OpenAI: {str(e)}'
+
+
+@app.route('/ai/run/<run_id>/generate', methods=['POST'])
+@login_required
+@require_permission('runs:view')
+def ai_generate_insight(run_id):
+    if not AI_ENABLED:
+        return jsonify({'error': 'AI está deshabilitado. Configure AI_ENABLED=true.'}), 400
+
+    run = Run.query.filter_by(run_id=run_id).first()
+    if not run:
+        return jsonify({'error': 'Corrida no encontrada.'}), 404
+
+    snapshot = build_run_ai_snapshot(run_id)
+    if not snapshot:
+        return jsonify({'error': 'No se pudo construir el snapshot de datos.'}), 400
+
+    result, error = ai_call(snapshot)
+
+    existing = AiRunInsight.query.filter_by(run_id=run_id).first()
+    if not existing:
+        existing = AiRunInsight(run_id=run_id)
+        db.session.add(existing)
+
+    existing.created_at = datetime.utcnow()
+    existing.model_version = f'gpt-v1-cross ({AI_MODEL})'
+
+    if error:
+        existing.status = 'failed'
+        existing.error_msg = error
+        existing.insights_md = None
+        existing.anomalies_json = None
+        existing.suggested_params_json = None
+        existing.tokens_used = None
+        db.session.commit()
+        return jsonify({'error': error}), 500
+
+    data = result['data']
+    existing.status = 'ok'
+    existing.error_msg = None
+    existing.insights_md = data.get('insights_md', '')
+    existing.anomalies_json = json.dumps(data.get('anomalies', []), ensure_ascii=False)
+    existing.suggested_params_json = json.dumps(data.get('suggested_params', {}), ensure_ascii=False)
+    existing.tokens_used = result.get('tokens')
+    db.session.commit()
+
+    return jsonify({'success': True, 'run_id': run_id})
+
+
+@app.route('/ai/run/<run_id>/view', methods=['GET'])
+@login_required
+@require_permission('runs:view')
+def ai_view_insight(run_id):
+    insight = AiRunInsight.query.filter_by(run_id=run_id).first()
+    if not insight:
+        return jsonify({'found': False})
+
+    anomalies = []
+    if insight.anomalies_json:
+        try:
+            anomalies = json.loads(insight.anomalies_json)
+        except:
+            anomalies = []
+
+    suggested_params = {}
+    if insight.suggested_params_json:
+        try:
+            suggested_params = json.loads(insight.suggested_params_json)
+        except:
+            suggested_params = {}
+
+    return jsonify({
+        'found': True,
+        'status': insight.status,
+        'error_msg': insight.error_msg,
+        'insights_md': insight.insights_md or '',
+        'anomalies': anomalies,
+        'suggested_params': suggested_params,
+        'model_version': insight.model_version or '',
+        'tokens_used': insight.tokens_used,
+        'created_at': insight.created_at.strftime('%Y-%m-%d %H:%M') if insight.created_at else '',
+    })
+
+
+@app.route('/ai/run/latest_params', methods=['GET'])
+@login_required
+@require_permission('runs:view')
+def ai_latest_params():
+    insight = (
+        AiRunInsight.query
+        .filter_by(status='ok')
+        .order_by(AiRunInsight.created_at.desc())
+        .first()
+    )
+    if not insight or not insight.suggested_params_json:
+        return jsonify({'found': False})
+
+    try:
+        params = json.loads(insight.suggested_params_json)
+    except:
+        return jsonify({'found': False})
+
+    return jsonify({'found': True, 'suggested_params': params, 'run_id': insight.run_id})
+
+
+@app.route('/ai/status/<run_id>', methods=['GET'])
+@login_required
+def ai_status_chip(run_id):
+    insight = AiRunInsight.query.filter_by(run_id=run_id).first()
+    if not insight or insight.status != 'ok':
+        return jsonify({'has_insight': False})
+
+    anomalies = []
+    if insight.anomalies_json:
+        try:
+            anomalies = json.loads(insight.anomalies_json)
+        except:
+            anomalies = []
+
+    severities = [a.get('severity', 'low') for a in anomalies]
+    if 'high' in severities:
+        level = 'high'
+    elif 'med' in severities:
+        level = 'med'
+    else:
+        level = 'low'
+
+    return jsonify({'has_insight': True, 'level': level, 'count': len(anomalies)})
+
+# ==================== END AI COPILOT V1 ====================
 
 
 def ensure_inventory_schema():

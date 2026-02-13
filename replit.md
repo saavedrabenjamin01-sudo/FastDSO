@@ -63,6 +63,8 @@ Do not make changes to the folder `Excel tipo/`.
 - **Dashboard por Categoría**: An executive dashboard for category-level analytics.
 - **Stock Query Module**: Rich list+detail view for inventory consultation. List view: paginated product table with search (SKU/name/category), filters (con stock, quiebre tiendas, bloqueados, sin movimiento 60d, sobrestock WOC>=12), and status badges (OK/Riesgo/Bloqueado). Action links per row: Forecast, Slow Stock, Rebalanceo. Detail modal (AJAX via `?detail_sku=XXX`): KPI cards (CD, tiendas, total, WOC, DUV, DUC, status), 4 tabs (store breakdown with per-store WOC, CD snapshots, 12-week sales chart via Plotly, notes/flags). Performance: two-path routing — SQL-only pagination when no stock filters active; stock map loading only when needed. Uses `get_cd_stock_map()`, `get_store_operational_stock_bulk()`, `normalize_sku()`, `get_analysis_end_date()`.
 
+- **AI Copilot (GPT V1 Cross FastDSO)**: Read-only AI analysis layer for distribution runs and forecasts. Uses OpenAI via Replit AI Integrations. Features: (1) "Explain this run" executive narrative in Markdown, (2) Anomaly detection with severity levels (low/med/high), (3) Suggested parameter tweaks for the distribution generator. Model: `AiRunInsight` table stores one insight set per run_id. Snapshot builder `build_run_ai_snapshot(run_id)` extracts compact data summaries (<15KB) including top SKUs/stores, quality counters, and weird examples. AI never mutates stock/prediction/run tables. Env flags: `AI_ENABLED` (default false), `AI_MODEL` (default gpt-4o-mini). UI integration: AI section in run_detail.html, status badges in runs.html, AI chip in dashboard.html run strip, "Use AI suggested params" prefill button in distribution generator. Routes: `POST /ai/run/<run_id>/generate`, `GET /ai/run/<run_id>/view`, `GET /ai/run/latest_params`, `GET /ai/status/<run_id>`.
+
 ## External Dependencies
 - **Database**: SQLite (for `app.db`)
 - **Python Libraries**:
@@ -72,3 +74,4 @@ Do not make changes to the folder `Excel tipo/`.
     - Pandas
     - OpenPyXL
     - Plotly
+    - OpenAI (via Replit AI Integrations)
