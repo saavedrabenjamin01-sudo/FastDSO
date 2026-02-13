@@ -1,0 +1,70 @@
+You are working on the FastDSO Flask app.
+
+GOAL
+Finish GPT V1 Copilot integration end-to-end. Currently the Distribution Generator shows a button “Use AI parameters” but it says there are no AI parameters available. That means we have the consumer UI but the producer flow (generate AI analysis from a run detail) is missing or not wired to templates/routes. We need to add a minimal, safe, read-only AI layer that:
+1) Adds an “AI Copilot” section in the Distribution Run detail page with a button to generate AI analysis for that run.
+2) Saves AI output (suggested params + summary + flags) in DB so “Use AI parameters” can load it.
+3) Adds a small AI status indicator on Dashboard and Runs list (Centro de Corridas) showing last AI analysis status/time.
+4) Must degrade gracefully if AI is disabled/unavailable.
+5) Must not modify business data automatically. Only returns suggestions + explanations; applying params still requires user action.
+
+CONSTRAINTS
+- Keep changes minimal. Do NOT refactor distribution logic.
+- No ERP integration.
+- Must work locally and on Replit.
+- AI calls must be behind AI_ENABLED flag (env var). If not enabled, UI shows “AI disabled” and buttons are hidden or disabled.
+- Store AI results in a new table AIAnalysis linked to DistributionRun (or Run ID) with:
+  - id (uuid), run_id (string/uuid), analysis_type (string), payload_json (text), created_at
+- Provide a helper function get_latest_ai_params(run_id) that returns a dict or None.
+- Provide a route to generate analysis:
+  POST /ai/analyze_run/<run_id>
+  It computes a compact run snapshot (counts, totals, key parameters used, top stores, top SKUs, outliers if available) and sends it to the AI model to return:
+    - suggested_parameters: {target_woc, min_fill, max_units_per_row, top_n_new_sku, break_adjust_enabled, etc.}
+    - narrative_summary: short bullet points (Spanish)
+    - risk_flags: list (e.g., “possible over-allocation”, “cold start heavy”, “stock coverage skip high”)
+    - recommended_actions: list with “where to click next” (e.g., forecast sku, stock lento)
+- Also add a GET /ai/latest_params/<run_id> returning latest suggested_parameters JSON.
+
+UI UPDATES (TEMPLATES)
+A) Distribution Generator (where the “Use AI parameters” button exists):
+- When the user clicks “Use AI parameters”, fetch GET /ai/latest_params/<run_id_of_last_run_or_selected_run>
+- If exists, fill the parameter inputs (target_woc, min_fill, etc.) and show a toast “Parámetros AI aplicados (sólo sugerencia)”.
+- If not exists, show a toast explaining: “No hay parámetros AI. Abra el detalle de una corrida y genere el análisis AI.”
+
+B) Run Detail page (Distribution Run detail):
+- Add an “AI Copilot” card:
+   - Status line: “AI: Disponible/No disponible/Último análisis: <date>”
+   - Button: “Generar análisis AI”
+   - Button triggers POST /ai/analyze_run/<run_id> via fetch, shows loading spinner, then renders:
+       - Summary bullets
+       - Suggested parameter chips (click “Aplicar a generador” which stores them for later use)
+       - Risk flags badges
+- Add a lightweight “Copy to clipboard” for the summary.
+
+C) Dashboard:
+- Add a small badge/card “AI” showing:
+   - Enabled/Disabled
+   - Latest AI analysis timestamp (global latest)
+   - Link: “Ver última corrida con AI”
+Keep it subtle (don’t clutter UI).
+
+BACKEND DETAILS
+- Implement AI client wrapper with try/except. If call fails, store an AIAnalysis row with payload_json containing {"error": "..."} and return 200 with status=error and message for UI.
+- Use a very compact prompt. Spanish output.
+- Ensure payload JSON is stored safely (json.dumps).
+- Avoid huge headers (do not put JSON into cookies/session). Keep responses small.
+- Make sure all endpoints return JSON.
+
+ROUTING CHECKS
+- Verify template links use correct endpoints and do not break existing routes.
+- Add url_for references accordingly.
+
+DELIVERABLES
+- Implement DB migration via SQLAlchemy create_all (since this is SQLite). If table doesn’t exist, create it.
+- Ensure “Use AI parameters” works after generating AI analysis from a run detail.
+- Add minimal UI for run detail + dashboard to expose AI features.
+
+After implementing, print in console:
+[AI] AI_ENABLED=<value>
+[AI] AIAnalysis table ready
+and log when an analysis is generated.

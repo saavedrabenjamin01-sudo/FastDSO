@@ -91,9 +91,15 @@
             <button type="submit" class="btn btn-primary query-btn">
               <i class="bi bi-arrow-up-circle me-2"></i>Generar distribución sugerida
             </button>
+            {% if ai_enabled %}
             <button type="button" class="btn btn-outline-secondary btn-sm" id="btnAiPrefill" onclick="aiPrefillParams()" title="Prellenar parámetros con sugerencia AI">
               <i class="bi bi-stars me-1"></i>Usar parámetros AI
             </button>
+            {% else %}
+            <button type="button" class="btn btn-outline-secondary btn-sm" disabled title="AI está deshabilitado">
+              <i class="bi bi-stars me-1"></i>AI deshabilitado
+            </button>
+            {% endif %}
           </div>
         </form>
       </div>
@@ -189,7 +195,23 @@
   </div>
 </div>
 
+<div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index:1090;">
+  <div id="aiToast" class="toast align-items-center border-0" role="alert">
+    <div class="d-flex">
+      <div class="toast-body" id="aiToastBody"></div>
+      <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+    </div>
+  </div>
+</div>
 <script>
+function showAiToast(msg, type) {
+  var t = document.getElementById('aiToast');
+  var b = document.getElementById('aiToastBody');
+  t.className = 'toast align-items-center border-0 text-bg-' + (type || 'info');
+  b.innerHTML = msg;
+  var toast = new bootstrap.Toast(t, {delay: 6000});
+  toast.show();
+}
 function aiPrefillParams() {
   var btn = document.getElementById('btnAiPrefill');
   btn.disabled = true;
@@ -200,7 +222,7 @@ function aiPrefillParams() {
       btn.disabled = false;
       btn.innerHTML = '<i class="bi bi-stars me-1"></i>Usar parámetros AI';
       if (!d.found) {
-        alert('No hay parámetros AI disponibles. Genere un análisis AI desde el detalle de una corrida primero.');
+        showAiToast('<i class="bi bi-info-circle me-1"></i>No hay parámetros AI disponibles. Abra el detalle de una corrida y genere el análisis AI.', 'warning');
         return;
       }
       var p = d.suggested_params;
@@ -215,14 +237,24 @@ function aiPrefillParams() {
           }
         }
       }
-      var msg = 'Parámetros AI aplicados (corrida ' + (d.run_id || '').substring(0, 8) + ')';
-      if (p.notes) msg += '\nNotas: ' + p.notes;
-      alert(msg);
+      var details = [];
+      if (p.horizon_weeks) details.push('Horizonte: ' + p.horizon_weeks + ' sem');
+      if (p.target_woc) details.push('WOC objetivo: ' + p.target_woc);
+      if (p.min_fill_units) details.push('Min fill: ' + p.min_fill_units);
+      if (p.topN_new_sku) details.push('Top N nuevos: ' + p.topN_new_sku);
+      if (p.caps) {
+        if (p.caps.max_units_per_row) details.push('Max/fila: ' + p.caps.max_units_per_row);
+        if (p.caps.max_total_units) details.push('Max total: ' + p.caps.max_total_units);
+      }
+      var msg = '<strong><i class="bi bi-stars me-1"></i>Parámetros AI aplicados</strong> (corrida ' + (d.run_id || '').substring(0, 8) + '...)';
+      if (details.length) msg += '<br><small>' + details.join(' · ') + '</small>';
+      if (p.notes) msg += '<br><small class="text-white-50">' + p.notes + '</small>';
+      showAiToast(msg, 'success');
     })
     .catch(function() {
       btn.disabled = false;
       btn.innerHTML = '<i class="bi bi-stars me-1"></i>Usar parámetros AI';
-      alert('Error al cargar parámetros AI.');
+      showAiToast('<i class="bi bi-exclamation-triangle me-1"></i>Error al cargar parámetros AI.', 'danger');
     });
 }
 </script>

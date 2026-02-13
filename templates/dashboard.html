@@ -85,6 +85,10 @@
     {% endif %}
   </div>
 
+  <div id="dashAiBar" class="dashv1-ai-bar" style="display:none;">
+    <span id="dashAiBarContent" class="small"></span>
+  </div>
+
   {# B) Filters row (compact) #}
   <form class="dashv1-filters" method="get" action="{{ url_for('dashboard') }}">
     <div class="dashv1-filter">
@@ -886,30 +890,60 @@ async function showDistExplanation(productId, storeId, qty, runId) {
   color: #3b82f6;
   font-weight: bold;
 }
+.dashv1-ai-bar {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 6px 16px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+}
 </style>
 <script>
 document.addEventListener('DOMContentLoaded', function() {
   var chip = document.getElementById('dashAiChip');
-  if (!chip) return;
   var rid = '{{ selected_run_id or "" }}';
-  if (!rid) return;
-  fetch('/ai/status/' + rid)
+  if (chip && rid) {
+    fetch('/ai/status/' + rid)
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.has_insight) {
+          chip.style.display = '';
+          if (d.level === 'high') {
+            chip.className = 'badge bg-danger ms-2';
+            chip.innerHTML = '<i class="bi bi-stars me-1"></i>AI: ' + d.count + ' anomalía(s)';
+          } else if (d.level === 'med') {
+            chip.className = 'badge bg-warning text-dark ms-2';
+            chip.innerHTML = '<i class="bi bi-stars me-1"></i>AI: ' + d.count + ' anomalía(s)';
+          } else {
+            chip.className = 'badge bg-success ms-2';
+            chip.innerHTML = '<i class="bi bi-stars me-1"></i>AI: OK';
+          }
+          chip.style.cursor = 'pointer';
+        }
+      })
+      .catch(function() {});
+  }
+  fetch('/ai/global_status')
     .then(function(r) { return r.json(); })
     .then(function(d) {
-      if (d.has_insight) {
-        chip.style.display = '';
-        if (d.level === 'high') {
-          chip.className = 'badge bg-danger ms-2';
-          chip.innerHTML = '<i class="bi bi-stars me-1"></i>AI: ' + d.count + ' anomalía(s)';
-        } else if (d.level === 'med') {
-          chip.className = 'badge bg-warning text-dark ms-2';
-          chip.innerHTML = '<i class="bi bi-stars me-1"></i>AI: ' + d.count + ' anomalía(s)';
-        } else {
-          chip.className = 'badge bg-success ms-2';
-          chip.innerHTML = '<i class="bi bi-stars me-1"></i>AI: OK';
-        }
-        chip.style.cursor = 'pointer';
+      var bar = document.getElementById('dashAiBar');
+      var content = document.getElementById('dashAiBarContent');
+      if (!bar || !content) return;
+      var html = '<i class="bi bi-stars me-1"></i>';
+      if (!d.ai_enabled) {
+        html += '<span class="text-muted">AI Copilot: Deshabilitado</span>';
+      } else if (d.has_any_insight) {
+        html += '<span class="text-success fw-semibold">AI Copilot: Habilitado</span>';
+        html += ' · Último análisis: ' + d.latest_created_at;
+        html += ' <a href="/run/' + d.latest_run_id + '" class="ms-2 small">Ver última corrida con AI</a>';
+      } else {
+        html += '<span class="text-success fw-semibold">AI Copilot: Habilitado</span>';
+        html += ' · <span class="text-muted">Sin análisis aún</span>';
       }
+      content.innerHTML = html;
+      bar.style.display = '';
     })
     .catch(function() {});
 });

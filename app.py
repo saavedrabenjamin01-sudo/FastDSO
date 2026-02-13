@@ -7646,7 +7646,8 @@ def upload():
     pending_mode = session.get('distribution_request_mode', 'sma3_min3')
     pending_meta = session.get('distribution_request_meta', {})
     return render_template('upload.html', require_stock_confirm=require_stock_confirm, 
-                           pending_skus=pending_skus, pending_mode=pending_mode, pending_meta=pending_meta)
+                           pending_skus=pending_skus, pending_mode=pending_mode, pending_meta=pending_meta,
+                           ai_enabled=AI_ENABLED)
 
 
 @app.route('/generate_from_pending', methods=['POST'])
@@ -15998,7 +15999,70 @@ def ai_status_chip(run_id):
 
     return jsonify({'has_insight': True, 'level': level, 'count': len(anomalies)})
 
+def get_latest_ai_params(run_id=None):
+    if run_id:
+        insight = AiRunInsight.query.filter_by(run_id=run_id, status='ok').first()
+    else:
+        insight = (
+            AiRunInsight.query
+            .filter_by(status='ok')
+            .order_by(AiRunInsight.created_at.desc())
+            .first()
+        )
+    if not insight or not insight.suggested_params_json:
+        return None
+    try:
+        return json.loads(insight.suggested_params_json)
+    except:
+        return None
+
+
+@app.route('/ai/analyze_run/<run_id>', methods=['POST'])
+@login_required
+@require_permission('runs:view')
+def ai_analyze_run(run_id):
+    return ai_generate_insight(run_id)
+
+
+@app.route('/ai/latest_params/<run_id>', methods=['GET'])
+@login_required
+@require_permission('runs:view')
+def ai_latest_params_for_run(run_id):
+    params = get_latest_ai_params(run_id)
+    if not params:
+        return jsonify({'found': False})
+    return jsonify({'found': True, 'suggested_params': params, 'run_id': run_id})
+
+
+@app.route('/ai/global_status', methods=['GET'])
+@login_required
+def ai_global_status():
+    latest = (
+        AiRunInsight.query
+        .filter_by(status='ok')
+        .order_by(AiRunInsight.created_at.desc())
+        .first()
+    )
+    return jsonify({
+        'ai_enabled': AI_ENABLED,
+        'has_any_insight': latest is not None,
+        'latest_run_id': latest.run_id if latest else None,
+        'latest_created_at': latest.created_at.strftime('%Y-%m-%d %H:%M') if latest and latest.created_at else None,
+    })
+
+
 # ==================== END AI COPILOT V1 ====================
+
+
+def ensure_ai_schema():
+    from sqlalchemy import inspect
+    inspector = inspect(db.engine)
+    table_names = inspector.get_table_names()
+    if 'ai_run_insight' not in table_names:
+        AiRunInsight.__table__.create(db.engine)
+        print("[AI] Created ai_run_insight table")
+    print(f"[AI] AI_ENABLED={AI_ENABLED}")
+    print("[AI] AIAnalysis table ready")
 
 
 def ensure_inventory_schema():
@@ -16063,6 +16127,7 @@ def init_database():
     
     db.create_all()
     ensure_inventory_schema()
+    ensure_ai_schema()
     
     inspector = inspect(db.engine)
     
