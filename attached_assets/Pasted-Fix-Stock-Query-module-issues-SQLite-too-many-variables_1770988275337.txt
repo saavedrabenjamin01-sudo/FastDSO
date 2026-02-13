@@ -1,0 +1,56 @@
+Fix Stock Query module issues (SQLite too many variables, action buttons not pre-filling SKU, and show zero-stock stores).
+
+Context:
+- In Stock Query page, filtering via checkboxes triggers:
+  sqlite3.OperationalError: too many SQL variables
+  This happens because the backend builds a huge Python list of product_ids and uses WHERE product_id IN (...) which exceeds SQLite variable limit.
+- Action buttons per SKU navigate to other modules but do not prefill SKU.
+- When expanding a SKU, the store stock list only shows stores with stock > 0; we need to show ALL stores including stock=0 and highlight zero rows.
+
+Tasks:
+
+1) FIX "too many SQL variables" (remove large IN lists)
+   - Locate the stock query route (stock_query) and identify where it builds a product_id list and then queries StockSnapshot with `product_id.in_(...)`.
+   - Replace the IN-list approach with SQL-native subqueries / joins.
+   - Preferred pattern (SQLAlchemy):
+     a) Build a base query that joins Product + StockCD (latest) and optionally aggregates Store stock via subquery.
+     b) For checkbox filters (has_cd_stock, has_store_stock, etc.), express them as EXISTS or JOIN conditions, not Python lists.
+   - Examples:
+     - "Only products with store stock" should be:
+       EXISTS(SELECT 1 FROM stock_snapshot ss WHERE ss.product_id=Product.id AND ss.as_of_date=as_of_date AND ss.quantity > 0)
+     - "Only products with CD stock" should be:
+       EXISTS(SELECT 1 FROM stock_cd_snapshot cd WHERE cd.product_id=Product.id AND cd.as_of_date=as_of_date AND cd.quantity > 0)
+   - If you already have subqueries like store_stock_sum_by_product, reuse them:
+     - Filter with `store_sum_subq.c.store_qty > 0` rather than IN.
+   - Ensure pagination still works and no giant lists are materialized in Python.
+
+2) ACTION BUTTONS must prefill SKU in target modules
+   - Update the action links for each SKU row to pass sku as query param:
+     - Forecast: url_for('purchase_forecast_v2', sku=product.sku)
+     - Alerts: url_for('alerts_page', sku=product.sku) (or whatever endpoint exists)
+     - Stock Lento: url_for('slow_stock', sku=product.sku) (or correct endpoint)
+     - Distribution generator / redistribute: pass sku and category if helpful.
+   - Then update each target module route/template to read request.args.get('sku') and prefill:
+     - input value in the SKU field
+     - and auto-run/search if the module already supports it (optional), otherwise just prefill.
+
+3) EXPAND SKU: show ALL stores including stock=0 and highlight zero
+   - Currently the expanded store list is based on rows existing in stock_snapshot (so missing rows mean “not shown”).
+   - Change the store list query to:
+     - LEFT OUTER JOIN Store to StockSnapshot on (store_id AND product_id AND as_of_date)
+     - COALESCE(quantity, 0) as qty
+   - Sort stores so zero-stock appear first or last (choose best UX); highlight zero stock rows:
+     - Add a CSS class (e.g., .qty-zero) for qty == 0
+     - Use a subtle red background or red badge for qty=0 (consistent with FastDSO palette).
+   - Also show a “No stock” badge and optionally “Broken” label when qty=0.
+
+Deliverables:
+- Patch the stock query route to avoid IN(...) lists and remove SQLite variable overflow.
+- Update stock_query.html to pass sku params in action buttons.
+- Update target modules to accept ?sku= and prefill forms.
+- Update the expanded store stock rendering to show all stores with COALESCE(qty, 0) and highlight zero stock.
+
+After changes:
+- Checkboxes must work with large datasets (no OperationalError).
+- Clicking actions should open target module with SKU already set.
+- Expanding SKU should list every store, including those with qty=0 clearly marked.

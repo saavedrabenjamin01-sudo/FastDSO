@@ -126,8 +126,8 @@
             <td class="text-center text-nowrap">
               <div class="btn-group btn-group-sm">
                 <a href="{{ url_for('purchase_forecast_v2') }}?sku={{ r.sku }}" class="btn btn-outline-primary btn-sm" title="Forecast" onclick="event.stopPropagation();"><i class="bi bi-graph-up"></i></a>
-                <a href="{{ url_for('slow_stock') }}?search={{ r.sku }}" class="btn btn-outline-secondary btn-sm" title="Slow Stock" onclick="event.stopPropagation();"><i class="bi bi-clock-history"></i></a>
-                <a href="{{ url_for('rebalancing') }}?search={{ r.sku }}" class="btn btn-outline-info btn-sm" title="Rebalanceo" onclick="event.stopPropagation();"><i class="bi bi-arrow-left-right"></i></a>
+                <a href="{{ url_for('slow_stock') }}?sku_search={{ r.sku }}" class="btn btn-outline-secondary btn-sm" title="Slow Stock" onclick="event.stopPropagation();"><i class="bi bi-clock-history"></i></a>
+                <a href="{{ url_for('rebalancing') }}?sku={{ r.sku }}" class="btn btn-outline-info btn-sm" title="Rebalanceo" onclick="event.stopPropagation();"><i class="bi bi-arrow-left-right"></i></a>
               </div>
             </td>
           </tr>
@@ -207,7 +207,7 @@
                   <tbody id="storeTableBody"></tbody>
                 </table>
               </div>
-              <div class="text-muted small mt-2" id="storeEmptyMsg" style="display:none;"><i class="bi bi-info-circle me-1"></i>Sin stock en tiendas para este SKU.</div>
+              <div class="text-muted small mt-2" id="storeEmptyMsg" style="display:none;"><i class="bi bi-info-circle me-1"></i>Sin tiendas registradas.</div>
             </div>
             <div class="tab-pane fade" id="tabCD" role="tabpanel">
               <div class="dash-table-scroll" style="max-height:350px;">
@@ -301,7 +301,9 @@ document.addEventListener('DOMContentLoaded', function() {
     msg.style.display = 'none';
     var h = '';
     rows.forEach(function(r) {
-      h += '<tr><td>' + r.store + '</td><td class="text-end">' + fmtNum(r.qty) + '</td><td class="text-end">' + (r.woc != null ? r.woc + ' sem' : '—') + '</td></tr>';
+      var cls = r.is_zero ? ' class="sq-store-zero"' : '';
+      var qtyCell = r.is_zero ? '<span class="badge bg-danger" style="font-size:.75rem;">Sin stock</span>' : fmtNum(r.qty);
+      h += '<tr' + cls + '><td>' + r.store + '</td><td class="text-end">' + qtyCell + '</td><td class="text-end">' + (r.woc != null ? r.woc + ' sem' : '—') + '</td></tr>';
     });
     tb.innerHTML = h;
   }
@@ -360,6 +362,8 @@ document.addEventListener('DOMContentLoaded', function() {
 <style>
 .sq-sku-code { font-size:.82rem; padding:2px 6px; background:#f0f0f5; border-radius:4px; color:#333; }
 .sq-row:hover { background:#f8f9ff !important; }
+.sq-store-zero { background:#fff5f5 !important; }
+.sq-store-zero td { color:#999; }
 </style>
 
 {% endblock %}
