@@ -66,30 +66,46 @@
       <div id="aiResult" style="display:none;">
         <ul class="nav nav-pills nav-fill mb-3" role="tablist" id="aiTabs">
           <li class="nav-item" role="presentation">
-            <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#aiInsights" type="button" role="tab">
-              <i class="bi bi-file-text me-1"></i>Resumen Ejecutivo
+            <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#aiTabResumen" type="button" role="tab">
+              <i class="bi bi-file-text me-1"></i>Resumen
             </button>
           </li>
           <li class="nav-item" role="presentation">
-            <button class="nav-link" data-bs-toggle="pill" data-bs-target="#aiAnomalies" type="button" role="tab">
+            <button class="nav-link" data-bs-toggle="pill" data-bs-target="#aiTabAnomalias" type="button" role="tab">
               <i class="bi bi-exclamation-triangle me-1"></i>Anomalías
             </button>
           </li>
           <li class="nav-item" role="presentation">
-            <button class="nav-link" data-bs-toggle="pill" data-bs-target="#aiParams" type="button" role="tab">
-              <i class="bi bi-sliders me-1"></i>Parámetros Sugeridos
+            <button class="nav-link" data-bs-toggle="pill" data-bs-target="#aiTabAcciones" type="button" role="tab">
+              <i class="bi bi-lightning me-1"></i>Acciones
+            </button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="pill" data-bs-target="#aiTabParams" type="button" role="tab">
+              <i class="bi bi-sliders me-1"></i>Parámetros
+            </button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link" data-bs-toggle="pill" data-bs-target="#aiTabSalud" type="button" role="tab">
+              <i class="bi bi-heart-pulse me-1"></i>Salud
             </button>
           </li>
         </ul>
         <div class="tab-content">
-          <div class="tab-pane fade show active" id="aiInsights" role="tabpanel">
-            <div id="aiInsightsMd" class="ai-md-content"></div>
+          <div class="tab-pane fade show active" id="aiTabResumen" role="tabpanel">
+            <div id="aiResumenContent" class="ai-md-content"></div>
           </div>
-          <div class="tab-pane fade" id="aiAnomalies" role="tabpanel">
-            <div id="aiAnomaliesList"></div>
+          <div class="tab-pane fade" id="aiTabAnomalias" role="tabpanel">
+            <div id="aiAnomaliasContent"></div>
           </div>
-          <div class="tab-pane fade" id="aiParams" role="tabpanel">
+          <div class="tab-pane fade" id="aiTabAcciones" role="tabpanel">
+            <div id="aiAccionesContent"></div>
+          </div>
+          <div class="tab-pane fade" id="aiTabParams" role="tabpanel">
             <div id="aiParamsContent"></div>
+          </div>
+          <div class="tab-pane fade" id="aiTabSalud" role="tabpanel">
+            <div id="aiSaludContent"></div>
           </div>
         </div>
         <div class="text-muted small mt-2" id="aiMeta"></div>
@@ -199,16 +215,22 @@
 {% if run.run_type in ['distribution', 'forecast_v2'] %}
 <style>
 .ai-md-content { font-size: 0.9rem; line-height: 1.6; }
-.ai-md-content h1,.ai-md-content h2,.ai-md-content h3 { font-size: 1.05rem; font-weight: 600; margin-top: 0.8rem; }
-.ai-md-content ul { padding-left: 1.2rem; }
+.ai-kpi-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 20px; background: #e8eeff; font-size: 0.8rem; font-weight: 600; margin: 2px; }
+.ai-kpi-chip .kpi-val { color: #2c3e50; }
+.ai-kpi-chip .kpi-label { color: #6c757d; font-weight: 400; }
 .ai-anomaly-card { border-radius: 8px; padding: 0.75rem; margin-bottom: 0.5rem; border: 1px solid #dee2e6; }
 .ai-anomaly-high { border-left: 4px solid #dc3545; background: #fff5f5; }
-.ai-anomaly-med { border-left: 4px solid #ffc107; background: #fffdf0; }
+.ai-anomaly-medium { border-left: 4px solid #ffc107; background: #fffdf0; }
 .ai-anomaly-low { border-left: 4px solid #0d6efd; background: #f0f4ff; }
-.ai-param-row { display: flex; justify-content: space-between; padding: 0.4rem 0; border-bottom: 1px solid #f0f0f0; font-size: 0.9rem; }
-.ai-param-row:last-child { border-bottom: none; }
-.ai-param-key { color: #6c757d; }
-.ai-param-val { font-weight: 600; }
+.ai-action-card { border-radius: 8px; padding: 0.75rem; margin-bottom: 0.75rem; border: 1px solid #dee2e6; background: #fff; }
+.ai-scope-chip { display: inline-block; padding: 1px 6px; border-radius: 4px; background: #f1f3f5; font-size: 0.75rem; margin: 1px; color: #495057; }
+.ai-health-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 500; }
+.ai-health-high { background: #d4edda; color: #155724; }
+.ai-health-medium { background: #fff3cd; color: #856404; }
+.ai-health-low { background: #f8d7da; color: #721c24; }
+.ai-param-table { width: 100%; font-size: 0.85rem; }
+.ai-param-table th { font-weight: 600; color: #6c757d; padding: 6px 8px; border-bottom: 2px solid #dee2e6; }
+.ai-param-table td { padding: 6px 8px; border-bottom: 1px solid #f0f0f0; }
 </style>
 <script>
 var AI_ENABLED = {{ 'true' if ai_enabled else 'false' }};
@@ -230,7 +252,13 @@ function loadExistingInsight() {
       if (d.found && d.status === 'ok') {
         renderAiResult(d);
       } else if (d.found && d.status === 'failed') {
-        showAiError(d.error_msg || 'El análisis anterior falló.');
+        var errMsg = d.error_msg || 'El análisis anterior falló.';
+        var rawText = d.raw_text || d.insights_md || '';
+        if (rawText) {
+          showAiError(errMsg + '<br><details><summary>Respuesta sin formato</summary><pre style="white-space:pre-wrap;font-size:0.8rem;max-height:300px;overflow:auto;">' + escHtml(rawText) + '</pre></details>');
+        } else {
+          showAiError(errMsg);
+        }
       }
     })
     .catch(function() {});
@@ -268,39 +296,218 @@ function showAiError(msg) {
 }
 
 function renderAiResult(d) {
-  document.getElementById('aiResult').style.display = '';
-
-  var insightsEl = document.getElementById('aiInsightsMd');
-  insightsEl.innerHTML = simpleMarkdown(d.insights_md || '');
-
-  var anomaliesEl = document.getElementById('aiAnomaliesList');
-  var anomalies = d.anomalies || [];
-  if (anomalies.length === 0) {
-    anomaliesEl.innerHTML = '<div class="text-muted small py-2"><i class="bi bi-check-circle me-1"></i>No se detectaron anomalías.</div>';
-  } else {
-    var html = '';
-    for (var i = 0; i < anomalies.length; i++) {
-      var a = anomalies[i];
-      var sev = a.severity || 'low';
-      html += '<div class="ai-anomaly-card ai-anomaly-' + sev + '">';
-      html += '<div class="d-flex justify-content-between align-items-center mb-1">';
-      html += '<strong>' + escHtml(a.title || '') + '</strong>';
-      html += '<span class="badge bg-' + (sev === 'high' ? 'danger' : sev === 'med' ? 'warning text-dark' : 'primary') + '">' + sev.toUpperCase() + '</span>';
-      html += '</div>';
-      if (a.evidence) html += '<div class="small text-muted">' + escHtml(a.evidence) + '</div>';
-      if (a.suggested_action) html += '<div class="small mt-1"><i class="bi bi-lightbulb me-1"></i>' + escHtml(a.suggested_action) + '</div>';
-      html += '</div>';
-    }
-    anomaliesEl.innerHTML = html;
+  if (typeof d !== 'object' || d === null) {
+    document.getElementById('aiResult').style.display = '';
+    document.getElementById('aiResumenContent').innerHTML = '<details><summary>Respuesta sin formato</summary><pre style="white-space:pre-wrap;font-size:0.8rem;">' + escHtml(String(d)) + '</pre></details>';
+    return;
   }
 
+  var exec = d.executive_summary || {};
+  var health = d.health || {};
+  var qs = d.quick_stats || {};
+  var anomalies = d.anomalies || [];
+  var actions = d.actions || [];
+  var sugParams = d.suggested_parameters || [];
+  var healthNotes = health.notes || [];
+
+  if (!d.executive_summary && d.insights_md) {
+    document.getElementById('aiResult').style.display = '';
+    document.getElementById('aiResumenContent').innerHTML = simpleMarkdown(d.insights_md);
+
+    var oldAnomalies = d.anomalies || [];
+    var anomHtml = '';
+    if (oldAnomalies.length === 0) {
+      anomHtml = '<div class="text-muted small py-2"><i class="bi bi-check-circle me-1"></i>No se detectaron anomalías.</div>';
+    } else {
+      for (var oi = 0; oi < oldAnomalies.length; oi++) {
+        var oa = oldAnomalies[oi];
+        var osev = oa.severity || 'low';
+        anomHtml += '<div class="ai-anomaly-card ai-anomaly-' + osev + '">';
+        anomHtml += '<strong>' + escHtml(oa.title || oa.what || '') + '</strong>';
+        if (oa.evidence) anomHtml += '<div class="small text-muted">' + escHtml(typeof oa.evidence === 'string' ? oa.evidence : JSON.stringify(oa.evidence)) + '</div>';
+        anomHtml += '</div>';
+      }
+    }
+    document.getElementById('aiAnomaliasContent').innerHTML = anomHtml;
+    document.getElementById('aiAccionesContent').innerHTML = '<div class="text-muted small">No disponible en formato anterior.</div>';
+    document.getElementById('aiParamsContent').innerHTML = '<div class="text-muted small">No disponible en formato anterior.</div>';
+    document.getElementById('aiSaludContent').innerHTML = '<div class="text-muted small">No disponible en formato anterior.</div>';
+
+    var metaEl = document.getElementById('aiMeta');
+    metaEl.innerHTML = '<i class="bi bi-clock me-1"></i>' + escHtml(d.created_at || '') + ' | Modelo: ' + escHtml(d.model_version || '') + (d.tokens_used ? ' | Tokens: ' + d.tokens_used : '');
+    return;
+  }
+
+  document.getElementById('aiResult').style.display = '';
+
+  var resumenHtml = '';
+  if (exec.title) {
+    resumenHtml += '<h6 class="fw-semibold mb-2">' + escHtml(exec.title) + '</h6>';
+  }
+  var bullets = exec.bullets || [];
+  if (bullets.length > 0) {
+    resumenHtml += '<ul class="mb-3">';
+    for (var bi = 0; bi < bullets.length; bi++) {
+      resumenHtml += '<li>' + escHtml(bullets[bi]) + '</li>';
+    }
+    resumenHtml += '</ul>';
+  }
+
+  var kpiKeys = [
+    {k: 'total_units', l: 'Unidades'},
+    {k: 'distinct_skus', l: 'SKUs'},
+    {k: 'distinct_stores', l: 'Tiendas'},
+    {k: 'capped_rows', l: 'Filas cap.'},
+    {k: 'max_row_qty', l: 'Máx qty'}
+  ];
+  var hasKpi = false;
+  var kpiHtml = '<div class="mb-3">';
+  for (var ki = 0; ki < kpiKeys.length; ki++) {
+    var kv = qs[kpiKeys[ki].k];
+    if (kv !== undefined && kv !== null) {
+      hasKpi = true;
+      kpiHtml += '<span class="ai-kpi-chip"><span class="kpi-val">' + escHtml(String(kv)) + '</span><span class="kpi-label">' + escHtml(kpiKeys[ki].l) + '</span></span>';
+    }
+  }
+  kpiHtml += '</div>';
+  if (hasKpi) resumenHtml += kpiHtml;
+
+  if (health.data_quality || health.confidence) {
+    resumenHtml += '<div class="mb-2">';
+    if (health.data_quality) {
+      resumenHtml += '<span class="ai-health-badge ai-health-' + escHtml(health.data_quality) + ' me-2">Calidad Datos: ' + escHtml(health.data_quality.toUpperCase()) + '</span>';
+    }
+    if (health.confidence) {
+      resumenHtml += '<span class="ai-health-badge ai-health-' + escHtml(health.confidence) + '">Confianza: ' + escHtml(health.confidence.toUpperCase()) + '</span>';
+    }
+    resumenHtml += '</div>';
+  }
+  document.getElementById('aiResumenContent').innerHTML = resumenHtml;
+
+  var anomHtml2 = '';
+  if (anomalies.length === 0) {
+    anomHtml2 = '<div class="text-muted small py-2"><i class="bi bi-check-circle me-1"></i>No se detectaron anomalías.</div>';
+  } else {
+    for (var ai2 = 0; ai2 < anomalies.length; ai2++) {
+      var an = anomalies[ai2];
+      var sev = an.severity || 'low';
+      var sevClass = sev === 'high' ? 'high' : sev === 'medium' ? 'medium' : 'low';
+      var sevBg = sev === 'high' ? 'danger' : sev === 'medium' ? 'warning text-dark' : 'primary';
+      anomHtml2 += '<div class="ai-anomaly-card ai-anomaly-' + sevClass + '">';
+      anomHtml2 += '<div class="d-flex justify-content-between align-items-center mb-1">';
+      anomHtml2 += '<div><strong>' + escHtml(an.what || '') + '</strong>';
+      if (an.code) anomHtml2 += ' <span class="badge bg-light text-dark ms-1" style="font-size:0.7rem;">' + escHtml(an.code) + '</span>';
+      anomHtml2 += '</div>';
+      anomHtml2 += '<span class="badge bg-' + sevBg + '">' + escHtml(sev.toUpperCase()) + '</span>';
+      anomHtml2 += '</div>';
+      var evArr = an.evidence || [];
+      if (evArr.length > 0) {
+        anomHtml2 += '<ul class="small text-muted mb-1" style="padding-left:1.2rem;">';
+        for (var ei = 0; ei < evArr.length; ei++) {
+          anomHtml2 += '<li>' + escHtml(evArr[ei]) + '</li>';
+        }
+        anomHtml2 += '</ul>';
+      }
+      if (an.impact) anomHtml2 += '<div class="small fst-italic text-muted"><i class="bi bi-arrow-right me-1"></i>' + escHtml(an.impact) + '</div>';
+      anomHtml2 += '</div>';
+    }
+  }
+  document.getElementById('aiAnomaliasContent').innerHTML = anomHtml2;
+
+  var actHtml = '';
+  if (actions.length === 0) {
+    actHtml = '<div class="text-muted small py-2"><i class="bi bi-check-circle me-1"></i>No hay acciones sugeridas.</div>';
+  } else {
+    for (var ac = 0; ac < actions.length; ac++) {
+      var act = actions[ac];
+      var pri = act.priority || 'P2';
+      var priBg = pri === 'P0' ? 'danger' : pri === 'P1' ? 'warning text-dark' : 'info';
+      actHtml += '<div class="ai-action-card">';
+      actHtml += '<div class="d-flex justify-content-between align-items-center mb-1">';
+      actHtml += '<strong>' + escHtml(act.title || '') + '</strong>';
+      actHtml += '<span class="badge bg-' + priBg + '">' + escHtml(pri) + '</span>';
+      actHtml += '</div>';
+      if (act.why) actHtml += '<div class="small fst-italic text-muted mb-1">' + escHtml(act.why) + '</div>';
+      var howArr = act.how || [];
+      if (howArr.length > 0) {
+        actHtml += '<ol class="small mb-1" style="padding-left:1.2rem;">';
+        for (var hi = 0; hi < howArr.length; hi++) {
+          actHtml += '<li>' + escHtml(howArr[hi]) + '</li>';
+        }
+        actHtml += '</ol>';
+      }
+      var scope = act.scope || {};
+      var scopeSkus = scope.skus || [];
+      var scopeStores = scope.stores || [];
+      if (scopeSkus.length > 0 || scopeStores.length > 0) {
+        actHtml += '<div class="mb-1">';
+        for (var si = 0; si < scopeSkus.length; si++) {
+          actHtml += '<span class="ai-scope-chip">SKU: ' + escHtml(scopeSkus[si]) + '</span>';
+        }
+        for (var sti = 0; sti < scopeStores.length; sti++) {
+          actHtml += '<span class="ai-scope-chip">Tienda: ' + escHtml(scopeStores[sti]) + '</span>';
+        }
+        actHtml += '</div>';
+      }
+      var cta = act.cta || {};
+      if (cta.route) {
+        var ctaRoute = cta.route;
+        if (cta.params) {
+          var sep = ctaRoute.indexOf('?') >= 0 ? '&' : '?';
+          for (var pk in cta.params) {
+            ctaRoute += sep + encodeURIComponent(pk) + '=' + encodeURIComponent(cta.params[pk]);
+            sep = '&';
+          }
+        }
+        actHtml += '<button class="btn btn-sm btn-outline-primary mt-1" onclick="window.location.href=\'' + escHtml(ctaRoute) + '\'">' + escHtml(cta.label || 'Ir') + '</button>';
+      }
+      actHtml += '</div>';
+    }
+  }
+  document.getElementById('aiAccionesContent').innerHTML = actHtml;
+
+  var paramHtml = '';
+  if (sugParams.length === 0) {
+    paramHtml = '<div class="text-muted small">Sin parámetros sugeridos.</div>';
+  } else {
+    paramHtml = '<table class="ai-param-table"><thead><tr><th>Parámetro</th><th>Valor</th><th>Razón</th></tr></thead><tbody>';
+    for (var pi = 0; pi < sugParams.length; pi++) {
+      var sp = sugParams[pi];
+      paramHtml += '<tr><td>' + escHtml(sp.name || '') + '</td><td><strong>' + escHtml(String(sp.value !== undefined ? sp.value : '')) + '</strong></td><td class="text-muted">' + escHtml(sp.reason || '') + '</td></tr>';
+    }
+    paramHtml += '</tbody></table>';
+  }
+  document.getElementById('aiParamsContent').innerHTML = paramHtml;
+
+  var saludHtml = '<div class="mb-3">';
+  if (health.data_quality) {
+    saludHtml += '<span class="ai-health-badge ai-health-' + escHtml(health.data_quality) + ' me-2"><i class="bi bi-database me-1"></i>Calidad Datos: ' + escHtml(health.data_quality.toUpperCase()) + '</span>';
+  }
+  if (health.confidence) {
+    saludHtml += '<span class="ai-health-badge ai-health-' + escHtml(health.confidence) + '"><i class="bi bi-graph-up me-1"></i>Confianza: ' + escHtml(health.confidence.toUpperCase()) + '</span>';
+  }
+  saludHtml += '</div>';
+  if (healthNotes.length > 0) {
+    saludHtml += '<ul class="small">';
+    for (var ni = 0; ni < healthNotes.length; ni++) {
+      saludHtml += '<li>' + escHtml(healthNotes[ni]) + '</li>';
+    }
+    saludHtml += '</ul>';
+  } else {
+    saludHtml += '<div class="text-muted small">Sin notas adicionales.</div>';
+  }
+  document.getElementById('aiSaludContent').innerHTML = saludHtml;
+
   var badge = document.getElementById('aiStatusBadge');
-  var hasHigh = anomalies.some(function(a) { return a.severity === 'high'; });
-  var hasMed = anomalies.some(function(a) { return a.severity === 'med'; });
-  if (hasHigh) {
+  var highCount = 0, medCount = 0;
+  for (var bci = 0; bci < anomalies.length; bci++) {
+    if (anomalies[bci].severity === 'high') highCount++;
+    else if (anomalies[bci].severity === 'medium') medCount++;
+  }
+  if (highCount > 0) {
     badge.className = 'badge bg-danger';
     badge.textContent = anomalies.length + ' anomalía(s)';
-  } else if (hasMed) {
+  } else if (medCount > 0) {
     badge.className = 'badge bg-warning text-dark';
     badge.textContent = anomalies.length + ' anomalía(s)';
   } else if (anomalies.length > 0) {
@@ -312,32 +519,8 @@ function renderAiResult(d) {
   }
   badge.style.display = '';
 
-  var paramsEl = document.getElementById('aiParamsContent');
-  var params = d.suggested_params || {};
-  var phtml = '';
-  var paramLabels = {
-    'analysis_mode_suggestion': 'Modo de análisis',
-    'horizon_weeks': 'Horizonte (semanas)',
-    'target_woc': 'WOC objetivo',
-    'min_fill_units': 'Unidades mínimas',
-    'topN_new_sku': 'Top N SKUs nuevos',
-    'notes': 'Notas'
-  };
-  for (var key in params) {
-    if (key === 'caps') {
-      var caps = params[key] || {};
-      for (var ck in caps) {
-        phtml += '<div class="ai-param-row"><span class="ai-param-key">' + escHtml(ck) + '</span><span class="ai-param-val">' + escHtml(String(caps[ck])) + '</span></div>';
-      }
-    } else {
-      var label = paramLabels[key] || key;
-      phtml += '<div class="ai-param-row"><span class="ai-param-key">' + escHtml(label) + '</span><span class="ai-param-val">' + escHtml(String(params[key])) + '</span></div>';
-    }
-  }
-  paramsEl.innerHTML = phtml || '<div class="text-muted small">Sin parámetros sugeridos.</div>';
-
   var metaEl = document.getElementById('aiMeta');
-  metaEl.innerHTML = '<i class="bi bi-clock me-1"></i>' + (d.created_at || '') + ' | Modelo: ' + (d.model_version || '') + (d.tokens_used ? ' | Tokens: ' + d.tokens_used : '');
+  metaEl.innerHTML = '<i class="bi bi-clock me-1"></i>' + escHtml(d.created_at || '') + ' | Modelo: ' + escHtml(d.model_version || '') + (d.tokens_used ? ' | Tokens: ' + d.tokens_used : '');
 }
 
 function simpleMarkdown(md) {

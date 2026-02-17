@@ -1,0 +1,110 @@
+Update FastDSO AI Copilot output to be operational, evidence-based, and UI-friendly. Also fix UI rendering to avoid showing raw JSON blobs.
+
+GOALS
+1) AI analysis must stop being generic (“review inventory”) and instead use FastDSO business concepts:
+   - projected break / broken stock / overstock / no-move
+   - WOC logic, stock covers, caps, cold start, eligible stores
+   - distribution fairness by store/category/sku
+2) AI output must be a strict JSON schema designed for UI cards (no raw dict printing).
+3) UI must render the JSON into sections, cards, chips and small tables.
+
+A) ENFORCE A STRICT JSON CONTRACT
+Wherever we build the prompt sent to Ollama (or OpenAI), replace it with this contract:
+
+SYSTEM INSTRUCTION (embed in prompt):
+- You are FastDSO Copilot for retail distribution/planning in Chile.
+- Output ONLY valid JSON. No markdown. No extra text.
+- Must be evidence-based. Every anomaly must cite a metric from the input snapshot.
+- Keep it short: max 1200 characters in executive_summary, max 8 anomalies, max 10 actions.
+
+Return JSON with EXACT keys:
+{
+  "executive_summary": {
+    "title": "string",
+    "bullets": ["string", "..."]  // 3 to 6 bullets, numeric when possible
+  },
+  "health": {
+    "data_quality": "high|medium|low",
+    "confidence": "high|medium|low",
+    "notes": ["string", "..."] // optional
+  },
+  "anomalies": [
+    {
+      "code": "string",             // e.g. CAP_HIT, STOCK_COVERS_BLOCK, ZERO_ALLOC_WITH_BREAK
+      "severity": "high|medium|low",
+      "what": "string",
+      "evidence": ["string", "..."], // MUST include numbers from snapshot
+      "impact": "string"
+    }
+  ],
+  "actions": [
+    {
+      "title": "string",
+      "why": "string",
+      "how": ["string", "..."],      // 2-5 steps, FastDSO-specific
+      "scope": {
+        "skus": ["sku|sku - name", "..."],     // up to 8
+        "stores": ["store", "..."]             // up to 8
+      },
+      "cta": {
+        "label": "string",
+        "route": "string",          // e.g. "/forecast?sku=XXX" or "/stock/slow?sku=XXX"
+        "params": { }               // optional
+      },
+      "priority": "P0|P1|P2"
+    }
+  ],
+  "suggested_parameters": [
+    {
+      "name": "string",             // e.g. "target_woc", "min_fill", "top_n"
+      "value": "string|number",
+      "reason": "string"
+    }
+  ],
+  "quick_stats": {
+    "total_units": "number",
+    "distinct_skus": "number",
+    "distinct_stores": "number",
+    "capped_rows": "number",
+    "max_row_qty": "number"
+  }
+}
+
+B) IMPROVE THE INPUT SNAPSHOT (still slim)
+Update build_ai_snapshot_slim() to include these additional computed fields (still small):
+- pct_zero_suggestions (percentage of predicted rows with qty == 0)
+- top_reasons (top 5 reason codes with counts if available; else infer from debug strings if present)
+- top_break_risk_skus (top 10 SKUs with highest break risk / shortage, if the app can compute it; otherwise use high-demand-low-stock heuristic)
+- top_overstock_skus (top 10 SKUs where stock_total >> horizon_demand)
+- top_no_move_skus (top 10 SKUs with no movement flags)
+If any list can’t be computed, omit it but set health.data_quality to medium/low and explain in health.notes.
+
+C) REWRITE THE OLLAMA PROMPT TEMPLATE (short + strict)
+Use this pattern:
+1) “Return ONLY valid JSON matching the schema.”
+2) “Be specific and quantify.”
+3) “Prefer FastDSO actions: Forecast SKU, Stock Lento, Alertas, Redistribución.”
+4) Provide the slim snapshot JSON after the instructions.
+
+D) FIX THE UI RENDERING
+In the template/page that shows AI results:
+- Do NOT print dicts directly.
+- Render:
+  - Executive summary as Title + bullet list
+  - Quick stats as small KPI chips
+  - Anomalies as accordion cards (severity badge)
+  - Actions as cards with CTA button linking to route
+  - Suggested parameters as a compact table
+If parsing fails, show a single error card with the raw text in a collapsed <details> block.
+
+E) DEFAULT LANGUAGE = Spanish
+All strings must be Spanish (titles, bullets, actions, etc.).
+
+F) DO NOT CHANGE BUSINESS DATA
+AI is advisory only; it must never modify DB tables, only store its analysis.
+
+VALIDATION
+- Run AI analysis on a small run (3 SKUs) and a large run.
+- Confirm the UI shows no raw JSON strings.
+- Confirm anomalies include numeric evidence.
+- Confirm actions include working routes (or safe fallback to module root if SKU not available).
