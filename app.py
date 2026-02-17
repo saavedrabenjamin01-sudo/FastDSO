@@ -15687,7 +15687,12 @@ def planner_export_picking(plan_id):
 
 # ==================== AI COPILOT V1 ====================
 AI_ENABLED = os.environ.get('AI_ENABLED', 'false').lower() in ('1', 'true', 'yes')
+AI_PROVIDER = os.environ.get('AI_PROVIDER', 'openai').lower()
 AI_MODEL = os.environ.get('AI_MODEL', 'gpt-4o-mini')
+
+from ai_providers import ollama_generate, get_provider_info, OLLAMA_MODEL, OLLAMA_BASE_URL
+
+print(f"[AI] enabled={AI_ENABLED}, provider={AI_PROVIDER}, model={OLLAMA_MODEL if AI_PROVIDER == 'ollama' else AI_MODEL}")
 
 def _get_openai_client():
     from openai import OpenAI
@@ -16048,6 +16053,52 @@ def ai_global_status():
         'has_any_insight': latest is not None,
         'latest_run_id': latest.run_id if latest else None,
         'latest_created_at': latest.created_at.strftime('%Y-%m-%d %H:%M') if latest and latest.created_at else None,
+    })
+
+
+@app.route('/ai/test', methods=['GET'])
+@login_required
+def ai_test():
+    if not AI_ENABLED:
+        return jsonify({'ok': False, 'error': 'AI_DISABLED'}), 403
+    if AI_PROVIDER != 'ollama':
+        return jsonify({'ok': False, 'error': 'AI_PROVIDER_NOT_OLLAMA', 'current_provider': AI_PROVIDER}), 400
+
+    result, error = ollama_generate("Responde en una línea: ¿Qué es supply chain?")
+    if error:
+        return jsonify({'ok': False, 'error': error}), 502
+
+    return jsonify({
+        'ok': True,
+        'provider': 'ollama',
+        'model': OLLAMA_MODEL,
+        'result': result,
+    })
+
+
+@app.route('/ai/preview', methods=['POST'])
+@login_required
+def ai_preview():
+    if not AI_ENABLED:
+        return jsonify({'ok': False, 'error': 'AI_DISABLED'}), 403
+    if AI_PROVIDER != 'ollama':
+        return jsonify({'ok': False, 'error': 'AI_PROVIDER_NOT_OLLAMA', 'current_provider': AI_PROVIDER}), 400
+
+    data = request.get_json(silent=True) or {}
+    prompt = data.get('prompt', '').strip()
+    if not prompt:
+        return jsonify({'ok': False, 'error': 'Missing prompt'}), 400
+
+    system = data.get('system', None)
+    result, error = ollama_generate(prompt, system=system)
+    if error:
+        return jsonify({'ok': False, 'error': error}), 502
+
+    return jsonify({
+        'ok': True,
+        'provider': 'ollama',
+        'model': OLLAMA_MODEL,
+        'result': result,
     })
 
 

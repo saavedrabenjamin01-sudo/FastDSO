@@ -1,0 +1,73 @@
+You are working on a Flask app called FastDSO. Implement local AI using Ollama (llama3.1:8b) by adding:
+1) a robust Ollama helper function
+2) AI configuration via .env
+3) a minimal router endpoint to validate the integration
+4) do NOT break the existing app or existing OpenAI integration; OpenAI must remain optional/off by default.
+
+REQUIREMENTS
+- Files involved:
+  - app.py (main Flask app)
+  - create a new file: ai_providers.py (preferred) OR implement inside app.py if the project structure is too monolithic
+  - .env (do not commit secrets; just read)
+- Use python package `requests` and `python-dotenv` (dotenv may already exist).
+- Configuration in .env:
+  - AI_ENABLED=false
+  - AI_PROVIDER=ollama
+  - OLLAMA_BASE_URL=http://127.0.0.1:11434
+  - OLLAMA_MODEL=llama3.1:8b
+- Add safe defaults if env vars are missing.
+- Add timeouts and good error handling. Return structured JSON errors.
+- Keep code readable, isolated, and easy to disable.
+
+IMPLEMENTATION DETAILS
+A) Add AI config loader
+- In app.py, ensure load_dotenv() is called once early.
+- Read env vars:
+  - AI_ENABLED (bool)
+  - AI_PROVIDER (string)
+  - OLLAMA_BASE_URL (string)
+  - OLLAMA_MODEL (string)
+- Print a small startup log:
+  - [AI] enabled=..., provider=..., model=...
+
+B) Ollama helper
+- Create function `ollama_generate(prompt: str, system: str | None = None) -> tuple[str|None, str|None]`
+  - Return (result, error). If success: (text, None). If failure: (None, error_message).
+- Call Ollama endpoint: POST {OLLAMA_BASE_URL}/api/generate
+  - JSON: {"model": OLLAMA_MODEL, "prompt": final_prompt, "stream": false}
+- Use timeout=60 seconds.
+- On non-200, return error containing status + response text.
+- If JSON missing "response", return an error.
+
+C) Router endpoint
+- Add a route:
+  - GET /ai/test
+  - If AI_ENABLED is false -> return 403 JSON: {"ok": false, "error":"AI_DISABLED"}
+  - If AI_PROVIDER != "ollama" -> return 400 JSON: {"ok": false, "error":"AI_PROVIDER_NOT_OLLAMA"}
+  - Else call `ollama_generate` with a short prompt, and return:
+    {"ok": true, "provider":"ollama", "model":..., "result":...}
+- Add POST /ai/preview (optional but recommended):
+  - Accept JSON { "prompt": "...", "system": "...optional..." }
+  - Same gating rules.
+  - Return generated text.
+
+D) UI is not required in this step.
+- Do not add buttons or templates yet.
+- This step is only to make local AI working and testable.
+
+E) Do not break anything
+- Do not remove existing routes or imports.
+- Do not rename the Flask app.
+- If openai is imported anywhere, leave it as-is; do not force install. This is local-only.
+
+F) Validation steps (print instructions in comments)
+- After implementing, ensure:
+  - With AI_ENABLED=false, /ai/test returns 403 JSON
+  - With AI_ENABLED=true and Ollama running, /ai/test returns ok true + result
+
+DELIVERABLES
+- Provide the exact code changes (diff-like explanation) and ensure the app still runs.
+- Ensure imports are correct (requests, os, dotenv).
+- If ai_providers.py is created, update app.py to import from it.
+
+GO AHEAD and implement now.
