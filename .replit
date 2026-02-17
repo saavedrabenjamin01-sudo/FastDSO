@@ -45,4 +45,5 @@ run = ["python", "app.py"]
 AI_ENABLED = "true"
 AI_PROVIDER = "ollama"
 OLLAMA_BASE_URL = "http://127.0.0.1:11434"
-OLLAMA_MODEL = "llama3.1:8b"
+OLLAMA_MODEL = "qwen2.5:3b"
+OLLAMA_TIMEOUT = "300"

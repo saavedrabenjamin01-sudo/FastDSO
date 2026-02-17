@@ -5,8 +5,8 @@ import json
 
 AI_PROVIDER = os.environ.get('AI_PROVIDER', 'ollama').lower()
 OLLAMA_BASE_URL = os.environ.get('OLLAMA_BASE_URL', 'http://127.0.0.1:11434').rstrip('/')
-OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'llama3.1:8b')
-OLLAMA_TIMEOUT = int(os.environ.get('OLLAMA_TIMEOUT', '60'))
+OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'qwen2.5:3b')
+OLLAMA_TIMEOUT = int(os.environ.get('OLLAMA_TIMEOUT', '300'))
 
 
 def ollama_generate(prompt, system=None):
@@ -22,7 +22,7 @@ def ollama_generate(prompt, system=None):
         resp = requests.post(
             f"{OLLAMA_BASE_URL}/api/generate",
             json=payload,
-            timeout=OLLAMA_TIMEOUT,
+            timeout=(10, OLLAMA_TIMEOUT),
         )
 
         if resp.status_code != 200:
@@ -36,9 +36,9 @@ def ollama_generate(prompt, system=None):
         return result_text, None
 
     except requests.exceptions.Timeout:
-        return None, f"Ollama timeout after {OLLAMA_TIMEOUT}s"
+        return None, f"Ollama timeout after {OLLAMA_TIMEOUT}s (model={OLLAMA_MODEL}). Consider a smaller model or increase OLLAMA_TIMEOUT."
     except requests.exceptions.ConnectionError:
-        return None, f"Cannot connect to Ollama at {OLLAMA_BASE_URL}"
+        return None, f"Cannot connect to Ollama at {OLLAMA_BASE_URL}. Ensure Ollama is running."
     except json.JSONDecodeError as e:
         return None, f"Ollama returned invalid JSON: {str(e)}"
     except Exception as e:

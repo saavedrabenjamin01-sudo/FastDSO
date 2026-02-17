@@ -15703,30 +15703,28 @@ def _get_openai_client():
     return OpenAI(api_key=api_key, base_url=base_url)
 
 
-def build_run_ai_snapshot(run_id):
+def build_ai_snapshot_slim(run_id):
     run = Run.query.filter_by(run_id=run_id).first()
     if not run:
         return None
 
     snap = {
-        'run_id': run.run_id,
-        'folio': run.folio or '',
-        'responsable': run.responsable or '',
+        'run_id': run.run_id[:12],
+        'folio': (run.folio or '')[:30],
         'created_at': run.created_at.strftime('%Y-%m-%d %H:%M') if run.created_at else '',
         'run_type': run.run_type or '',
         'mode': run.mode or '',
-        'categoria': run.categoria or '',
-        'status': run.status or '',
+        'categoria': (run.categoria or '')[:30],
     }
 
     if run.run_type == 'distribution':
-        preds = (
+        rows = (
             db.session.query(
                 Prediction.quantity,
                 Product.sku,
                 Product.name.label('product_name'),
+                Product.category.label('category'),
                 Store.name.label('store_name'),
-                Prediction.model_name,
                 Prediction.debug_json,
             )
             .join(Product, Prediction.product_id == Product.id)
@@ -15735,117 +15733,123 @@ def build_run_ai_snapshot(run_id):
             .all()
         )
 
-        total_units = sum(p.quantity for p in preds)
-        total_rows = len(preds)
+        if not rows:
+            snap['kpis'] = {'total_rows': 0, 'total_units': 0, 'distinct_skus': 0, 'distinct_stores': 0}
+            snap['message'] = 'Sin predicciones en esta corrida.'
+            return snap
+
+        total_units = sum(r.quantity for r in rows)
         skus_set = set()
         stores_set = set()
-        qtys = []
+        sku_agg = defaultdict(lambda: {'qty': 0, 'name': '', 'cat': ''})
+        store_agg = defaultdict(int)
         reason_counts = defaultdict(int)
+        cold_start_skus = []
+        anomaly_rows = []
 
-        for p in preds:
-            skus_set.add(p.sku)
-            stores_set.add(p.store_name)
-            qtys.append(p.quantity)
-            if p.debug_json:
+        for r in rows:
+            skus_set.add(r.sku)
+            stores_set.add(r.store_name)
+            sku_agg[r.sku]['qty'] += r.quantity
+            sku_agg[r.sku]['name'] = (r.product_name or '')[:40]
+            sku_agg[r.sku]['cat'] = (r.category or '')[:20]
+            store_agg[r.store_name] += r.quantity
+
+            rc = ''
+            if r.debug_json:
                 try:
-                    dbg = json.loads(p.debug_json)
+                    dbg = json.loads(r.debug_json)
                     rc = dbg.get('reason_code') or dbg.get('reason') or ''
                     if rc:
                         reason_counts[rc] += 1
                 except:
                     pass
 
-        snap['totals'] = {
+            if 'COLD_START' in rc.upper() and len(cold_start_skus) < 10:
+                cold_start_skus.append({'sku': r.sku, 'cat': (r.category or '')[:20]})
+
+            if r.quantity >= 10:
+                anomaly_rows.append({'sku': r.sku, 'store': r.store_name, 'qty': r.quantity})
+
+        snap['kpis'] = {
+            'total_rows': len(rows),
             'total_units': total_units,
-            'total_rows': total_rows,
-            'total_skus': len(skus_set),
-            'total_stores': len(stores_set),
+            'distinct_skus': len(skus_set),
+            'distinct_stores': len(stores_set),
         }
 
-        sorted_preds = sorted(preds, key=lambda p: p.quantity, reverse=True)
-        snap['top10_rows_by_qty'] = [
-            {'sku': p.sku, 'product_name': p.product_name, 'store': p.store_name, 'qty': p.quantity}
-            for p in sorted_preds[:10]
-        ]
-
-        sku_totals = defaultdict(lambda: {'qty': 0, 'name': ''})
-        for p in preds:
-            sku_totals[p.sku]['qty'] += p.quantity
-            sku_totals[p.sku]['name'] = p.product_name or ''
-        top_skus = sorted(sku_totals.items(), key=lambda x: x[1]['qty'], reverse=True)[:10]
-        snap['top10_skus_by_qty'] = [
-            {'sku': s, 'product_name': d['name'], 'qty_total': d['qty']}
+        top_skus = sorted(sku_agg.items(), key=lambda x: x[1]['qty'], reverse=True)[:15]
+        snap['top_skus'] = [
+            {'sku': s, 'name': d['name'], 'cat': d['cat'], 'qty': d['qty']}
             for s, d in top_skus
         ]
 
-        store_totals = defaultdict(int)
-        for p in preds:
-            store_totals[p.store_name] += p.quantity
-        top_stores = sorted(store_totals.items(), key=lambda x: x[1], reverse=True)[:10]
-        snap['top10_stores_by_qty'] = [
-            {'store': s, 'qty_total': q} for s, q in top_stores
-        ]
+        top_stores = sorted(store_agg.items(), key=lambda x: x[1], reverse=True)[:10]
+        snap['top_stores'] = [{'store': s, 'qty': q} for s, q in top_stores]
 
-        zero_rows = sum(1 for q in qtys if q == 0)
-        snap['quality'] = {
-            'pct_zero_rows': round(zero_rows / max(total_rows, 1) * 100, 1),
-            'max_row_qty': max(qtys) if qtys else 0,
-            'count_by_reason': dict(reason_counts) if reason_counts else {},
-        }
+        if reason_counts:
+            snap['reason_counts'] = dict(reason_counts)
 
-        if qtys:
-            sorted_qtys = sorted(qtys)
-            p95_idx = int(len(sorted_qtys) * 0.95)
-            p95 = sorted_qtys[min(p95_idx, len(sorted_qtys) - 1)]
-            weird = [
-                {'sku': p.sku, 'store': p.store_name, 'qty': p.quantity, 'note': 'qty > P95'}
-                for p in sorted_preds if p.quantity > p95
-            ][:10]
-            snap['weird_examples'] = weird
+        anomaly_rows.sort(key=lambda x: x['qty'], reverse=True)
+        if anomaly_rows:
+            snap['anomalies_sample'] = anomaly_rows[:10]
+
+        if cold_start_skus:
+            seen = set()
+            unique_cs = []
+            for cs in cold_start_skus:
+                if cs['sku'] not in seen:
+                    seen.add(cs['sku'])
+                    unique_cs.append(cs)
+            snap['cold_start_skus'] = unique_cs[:10]
 
     elif run.run_type == 'forecast_v2':
-        forecasts = (
-            ForecastResult.query
-            .filter_by(run_id=run_id)
+        rows = (
+            db.session.query(
+                ForecastResult.sku,
+                ForecastResult.name,
+                ForecastResult.suggested,
+                ForecastResult.reason_code,
+            )
+            .filter(ForecastResult.run_id == run_id)
             .order_by(ForecastResult.suggested.desc())
+            .limit(100)
             .all()
         )
-        snap['totals'] = {
-            'total_rows': len(forecasts),
-            'total_skus': len(set(f.sku for f in forecasts)),
-            'total_units': sum(f.suggested for f in forecasts),
+        snap['kpis'] = {
+            'total_rows': len(rows),
+            'total_units': sum(r.suggested for r in rows),
+            'distinct_skus': len(set(r.sku for r in rows)),
         }
-        snap['top10_skus_by_qty'] = [
-            {'sku': f.sku, 'product_name': f.name or '', 'suggested': f.suggested, 'reason_code': f.reason_code or ''}
-            for f in forecasts[:10]
+        snap['top_skus'] = [
+            {'sku': r.sku, 'name': (r.name or '')[:40], 'qty': r.suggested, 'reason': (r.reason_code or '')[:20]}
+            for r in rows[:15]
         ]
+
+    payload_chars = len(json.dumps(snap, ensure_ascii=False, default=str))
+    print(f"[AI] slim snapshot chars={payload_chars}, run_id={run_id[:12]}, rows={snap.get('kpis', {}).get('total_rows', '?')}")
 
     return snap
 
 
-_AI_SYSTEM_PROMPT = (
+_AI_SYSTEM_PROMPT_OPENAI = (
     "Eres un analista experto en supply chain y distribución. "
-    "Recibes un resumen de una corrida de distribución o forecast. "
+    "Recibes un resumen compacto de una corrida. "
     "Responde SIEMPRE en español. Tu respuesta debe ser un JSON válido con estas claves exactas:\n"
     "{\n"
-    '  "insights_md": "Narrativa ejecutiva en Markdown con secciones:\\n'
-    '## Resumen ejecutivo\\n(bullets)\\n'
-    '## Qué está impulsando la distribución\\n(bullets)\\n'
-    '## Riesgos / anomalías\\n(bullets, e.g. sobre-asignación, cold start alto, stock CD bajo)\\n'
-    '## Acciones sugeridas\\n(pasos operacionales concretos, no código)",\n'
+    '  "insights_md": "Narrativa ejecutiva en Markdown con secciones: '
+    '## Resumen ejecutivo, ## Qué impulsa la distribución, ## Riesgos, ## Acciones sugeridas",\n'
     '  "anomalies": [{"severity":"low|med|high","code":"...","title":"...","evidence":"...","suggested_action":"..."}],\n'
-    '  "suggested_params": {\n'
-    '    "analysis_mode_suggestion": "sma1_no_min|sma2_min2|sma3_min3|sma3_ignore_stock",\n'
-    '    "horizon_weeks": 4,\n'
-    '    "target_woc": 4.0,\n'
-    '    "min_fill_units": 1,\n'
-    '    "topN_new_sku": 5,\n'
-    '    "caps": {"max_units_per_row": 100, "max_total_units": 5000},\n'
-    '    "notes": "..."\n'
-    "  }\n"
+    '  "suggested_params": {"analysis_mode_suggestion":"...","horizon_weeks":4,"target_woc":4.0,"min_fill_units":1,"notes":"..."}\n'
     "}\n"
-    "No inventes datos que no estén en el snapshot. Si falta información, di 'No disponible'.\n"
-    "No incluyas texto fuera del JSON. No uses bloques de código markdown."
+    "No inventes datos. Si falta info, di 'No disponible'. Solo JSON, sin markdown wrapping."
+)
+
+_AI_SYSTEM_PROMPT_OLLAMA = (
+    "Eres un analista de supply chain. Responde SOLO con JSON válido, sin markdown. "
+    "Claves requeridas: summary (string, bullets en español), issues (array max 8), "
+    "actions (array max 8), assumptions (array max 5). "
+    "No inventes datos que no estén en el snapshot."
 )
 
 
@@ -15860,7 +15864,7 @@ def _ai_call_openai(snapshot):
         response = client.chat.completions.create(
             model=AI_MODEL,
             messages=[
-                {"role": "system", "content": _AI_SYSTEM_PROMPT},
+                {"role": "system", "content": _AI_SYSTEM_PROMPT_OPENAI},
                 {"role": "user", "content": user_msg},
             ],
             temperature=0.2,
@@ -15883,18 +15887,7 @@ def _ai_call_openai(snapshot):
         return None, f'Error al llamar a OpenAI: {str(e)}'
 
 
-def _ai_call_ollama(snapshot):
-    user_msg = json.dumps(snapshot, ensure_ascii=False, default=str)
-    prompt = (
-        "A continuación tienes el snapshot de una corrida. "
-        "Analiza los datos y responde SOLO con JSON válido en el formato indicado.\n\n"
-        + user_msg
-    )
-
-    raw_text, error = ollama_generate(prompt, system=_AI_SYSTEM_PROMPT)
-    if error:
-        return None, f'Error Ollama: {error}'
-
+def _extract_json_from_text(raw_text):
     clean = raw_text.strip()
     if clean.startswith('```'):
         lines = clean.split('\n')
@@ -15902,26 +15895,85 @@ def _ai_call_ollama(snapshot):
         clean = '\n'.join(lines).strip()
 
     try:
-        parsed = json.loads(clean)
+        return json.loads(clean), None
     except json.JSONDecodeError:
-        start = clean.find('{')
-        end = clean.rfind('}')
-        if start >= 0 and end > start:
-            try:
-                parsed = json.loads(clean[start:end+1])
-            except json.JSONDecodeError as e2:
-                return None, f'Ollama no retornó JSON válido: {str(e2)}'
-        else:
-            return None, f'Ollama no retornó JSON válido'
+        pass
 
-    if 'insights_md' not in parsed:
-        parsed['insights_md'] = parsed.get('resumen', parsed.get('summary', ''))
-    if 'anomalies' not in parsed:
-        parsed['anomalies'] = parsed.get('riesgos', [])
-    if 'suggested_params' not in parsed:
-        parsed['suggested_params'] = {}
+    start = clean.find('{')
+    end = clean.rfind('}')
+    if start >= 0 and end > start:
+        try:
+            return json.loads(clean[start:end+1]), None
+        except json.JSONDecodeError as e:
+            return None, f'JSON inválido: {str(e)}'
 
-    return {'data': parsed, 'tokens': None}, None
+    return None, 'No se encontró JSON en la respuesta'
+
+
+def _ai_call_ollama(snapshot):
+    user_msg = json.dumps(snapshot, ensure_ascii=False, default=str)
+    prompt = "Analiza este snapshot de distribución y responde SOLO con JSON válido:\n" + user_msg
+
+    raw_text, error = ollama_generate(prompt, system=_AI_SYSTEM_PROMPT_OLLAMA)
+    if error:
+        return None, f'Error Ollama: {error}'
+
+    parsed, parse_error = _extract_json_from_text(raw_text)
+    if parse_error:
+        return None, f'Ollama: {parse_error}'
+
+    summary = parsed.get('summary', parsed.get('resumen', ''))
+    issues = parsed.get('issues', parsed.get('riesgos', []))
+    actions = parsed.get('actions', parsed.get('acciones', []))
+    assumptions = parsed.get('assumptions', parsed.get('supuestos', []))
+
+    if isinstance(issues, list):
+        issues = issues[:8]
+    if isinstance(actions, list):
+        actions = actions[:8]
+    if isinstance(assumptions, list):
+        assumptions = assumptions[:5]
+
+    md_parts = ['## Resumen ejecutivo\n' + (summary if isinstance(summary, str) else str(summary))]
+    if issues:
+        md_parts.append('## Riesgos / anomalías')
+        for iss in issues:
+            if isinstance(iss, str):
+                md_parts.append(f'- {iss}')
+            elif isinstance(iss, dict):
+                md_parts.append(f'- **{iss.get("title", iss.get("issue", ""))}**: {iss.get("detail", iss.get("evidence", ""))}')
+    if actions:
+        md_parts.append('## Acciones sugeridas')
+        for act in actions:
+            md_parts.append(f'- {act if isinstance(act, str) else str(act)}')
+
+    anomalies_structured = []
+    if isinstance(issues, list):
+        for iss in issues:
+            if isinstance(iss, dict):
+                anomalies_structured.append({
+                    'severity': iss.get('severity', 'low'),
+                    'code': iss.get('code', ''),
+                    'title': iss.get('title', iss.get('issue', '')),
+                    'evidence': iss.get('evidence', iss.get('detail', '')),
+                    'suggested_action': iss.get('suggested_action', iss.get('action', '')),
+                })
+            elif isinstance(iss, str):
+                anomalies_structured.append({
+                    'severity': 'low',
+                    'code': '',
+                    'title': iss,
+                    'evidence': '',
+                    'suggested_action': '',
+                })
+
+    normalized = {
+        'insights_md': '\n'.join(md_parts),
+        'anomalies': anomalies_structured,
+        'suggested_params': parsed.get('suggested_params', {}),
+    }
+
+    return {'data': normalized, 'tokens': None}, None
 
 
 def ai_call(snapshot):
@@ -15941,7 +15993,7 @@ def ai_generate_insight(run_id):
     if not run:
         return jsonify({'error': 'Corrida no encontrada.'}), 404
 
-    snapshot = build_run_ai_snapshot(run_id)
+    snapshot = build_ai_snapshot_slim(run_id)
     if not snapshot:
         return jsonify({'error': 'No se pudo construir el snapshot de datos.'}), 400
 

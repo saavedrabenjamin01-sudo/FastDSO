@@ -1,0 +1,77 @@
+Fix Ollama AI timeouts in FastDSO by shrinking the payload and increasing the HTTP timeout.
+
+CONTEXT
+- OpenAI is disabled. We only use Ollama locally.
+- Current AI analysis from the Runs module fails with “timeout after 60s” even for small runs.
+- Root cause: we send a huge “snapshot” (tables/rows) to Ollama. Must send a compact summary instead.
+
+GOAL
+- AI analysis must work for small and large runs without timeout.
+- Must keep existing FastDSO behavior unchanged (only AI payload + timeout + prompt formatting).
+- Implementation must be robust and safe.
+
+REQUIRED CHANGES (DO ALL)
+
+1) Increase Ollama timeout to 300 seconds
+- Find the function that calls Ollama via requests.post (e.g., ollama_call(), ai_call(), or similar) to:
+  http://127.0.0.1:11434/api/generate  OR /api/chat
+- Change timeout to 300 seconds (or timeout=(10,300) connect/read).
+- Add basic error handling with readable error messages.
+
+2) Create a slim AI snapshot builder (NO giant tables)
+- Add a new helper function in app.py:
+  build_ai_snapshot_slim(run_id: str) -> dict
+- It must return ONLY summarized data (small payload). Specifically include:
+  a) run metadata:
+     - run_id, folio, created_at, model_name (if available), selected_run_id
+  b) KPI summary:
+     - total_rows_in_predictions
+     - total_units_suggested
+     - distinct_skus
+     - distinct_stores
+  c) TOP lists (small):
+     - top_skus: top 15 SKUs by total suggested qty (sku, product_name, category if present, total_qty)
+     - top_stores: top 10 stores by total suggested qty (store_name, total_qty)
+  d) anomalies (max 10):
+     - Examples: big single-row qty >= 10, or “broken_stock but got 0”, or “capped rows” if available.
+     - If you don’t have those flags, at least include max 10 largest rows (sku, store, qty).
+  e) cold-start overview:
+     - up to 10 SKUs that were cold_start_category OR SKUs missing macro-sales (sku, category, cd_stock if present)
+- STRICT RULE: do NOT include:
+  - full predictions table
+  - all stores stock breakdowns
+  - raw macro sales rows
+  - anything that produces thousands of tokens
+
+3) Update the AI endpoint to use slim snapshot
+- Find the AI route used by “AI Copilot” in Runs (e.g., ai_generate_insight).
+- Replace the current snapshot payload with build_ai_snapshot_slim(selected_run_id).
+- Log to console:
+  - “[AI] slim snapshot chars=XXXX” using len(json.dumps(snapshot))
+  - run_id and counts
+
+4) Make the prompt short and structured (return JSON only)
+- The prompt sent to Ollama must be concise and force structured output.
+- Use a strict instruction like:
+  - “Return ONLY valid JSON. No markdown.”
+  - Output keys: summary (string), issues (array), actions (array), assumptions (array)
+  - Limit arrays to max 8 items each.
+
+5) Make model configurable and default to faster model
+- Read OLLAMA_MODEL from env (or existing config).
+- If missing, default to “qwen2.5:3b” (faster than llama3.1:8b).
+- Do not change the existing AI enable/disable logic, only the provider/model selection.
+
+6) Safety guards
+- If a run has no predictions / no data, return a valid JSON with a friendly message.
+- Ensure the endpoint never returns HTML errors; it must return JSON error payloads on exceptions.
+
+DELIVERABLE
+- Apply changes primarily in app.py (or the existing ai helper file if the project uses one).
+- Keep all existing pages and logic intact.
+- After changes, AI analysis should succeed without timeouts for both small (3 SKUs) and large runs.
+
+Before finishing:
+- Verify that build_ai_snapshot_slim returns very small payloads.
+- Verify requests.post timeout is 300 seconds.
+- Verify response from AI endpoint is always JSON.
