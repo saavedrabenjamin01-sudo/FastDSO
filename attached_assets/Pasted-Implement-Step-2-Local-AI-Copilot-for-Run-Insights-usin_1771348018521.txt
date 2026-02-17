@@ -1,0 +1,71 @@
+Implement Step 2: Local AI Copilot for Run Insights using the existing Ollama integration.
+
+SCOPE
+- Add an “AI Copilot (Local)” action on Run Detail view (the page where a distribution run is shown).
+- The AI should NOT change business logic. Only provide explanations/diagnostics.
+- Store the AI output per run so it can be viewed later without re-calling the model.
+
+REQUIREMENTS
+1) Database
+- If a table/model for run AI insights already exists (e.g., ai_run_insight / AIAnalysis / AIRunInsight), reuse it.
+- If not, create a simple SQLAlchemy model:
+  - id (pk)
+  - run_id (string, indexed)
+  - created_at (datetime, default now)
+  - provider (string) default "ollama"
+  - model (string)
+  - prompt_hash (string) (optional)
+  - content (text)  (the AI output)
+  - error (text, nullable)
+- Add migrationless approach compatible with db.create_all() (this project uses sqlite create_all).
+
+2) Snapshot builder (server-side)
+- Create a function build_run_snapshot(run_id) that returns a compact JSON/dict with:
+  - run metadata: folio, created_at, responsable, model_name, analysis_mode, horizon weeks if available
+  - kpis: total_units, distinct_skus, stores_covered, cd_stock_total (if available)
+  - top lists (keep small!):
+    - top 10 skus by suggested qty (sku, product_name, category, qty)
+    - top 10 stores by suggested qty (store_name, qty)
+  - constraints: MAX_UNITS, MIN_FILL, TARGET_WOC, any caps used (if present in code)
+  - debug summary if available (counts like sales-based vs cold-start)
+- Keep payload under ~8KB (very important). Truncate long strings.
+
+3) AI prompt (Ollama)
+- Add a function make_run_ai_prompt(snapshot) that produces:
+  - a Spanish answer (since this app is Spanish)
+  - format as bullet points
+  - sections:
+    A) “Resumen ejecutivo”
+    B) “Qué está impulsando la distribución”
+    C) “Riesgos / anomalías” (e.g., suspiciously high qty, low coverage, no CD stock, many skipped)
+    D) “Acciones sugeridas” (operational next steps, not code)
+- Ensure the AI is instructed to NOT invent data: if missing, say “No disponible”.
+
+4) Routes
+- Add POST route: /ai/run/<run_id>/generate
+  - gated by AI_ENABLED and AI_PROVIDER=ollama (reuse existing checks)
+  - builds snapshot
+  - calls ollama_generate(prompt)
+  - writes DB record
+  - returns JSON {ok:true, content:"..."} or {ok:false, error:"..."}
+- Add GET route: /ai/run/<run_id>/latest
+  - returns latest stored content for that run (or ok:false if none)
+
+5) UI
+- In run_detail.html (or the template that shows a run), add:
+  - Button “AI Copilot” (only visible when AI is enabled)
+  - A collapsible panel/card titled “AI Copilot”:
+    - if existing insight: show it
+    - else show “No AI insight yet”
+  - Button triggers fetch POST /ai/run/<run_id>/generate via JS, then renders returned content.
+- Use existing FastDSO styling (cards, rounded, subtle).
+- Show loading state + error toast/alert.
+
+6) Safety / Performance
+- Timeouts already in ollama helper; keep UI responsive.
+- Do not send entire tables; only summarized top 10.
+- No background tasks required.
+
+DELIVERABLE
+- Implement changes in app.py (or ai module), models, templates, and minimal JS.
+- Ensure the app still boots locally and in Replit.

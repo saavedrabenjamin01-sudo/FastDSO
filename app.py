@@ -15823,30 +15823,36 @@ def build_run_ai_snapshot(run_id):
     return snap
 
 
-def ai_call(snapshot):
+_AI_SYSTEM_PROMPT = (
+    "Eres un analista experto en supply chain y distribución. "
+    "Recibes un resumen de una corrida de distribución o forecast. "
+    "Responde SIEMPRE en español. Tu respuesta debe ser un JSON válido con estas claves exactas:\n"
+    "{\n"
+    '  "insights_md": "Narrativa ejecutiva en Markdown con secciones:\\n'
+    '## Resumen ejecutivo\\n(bullets)\\n'
+    '## Qué está impulsando la distribución\\n(bullets)\\n'
+    '## Riesgos / anomalías\\n(bullets, e.g. sobre-asignación, cold start alto, stock CD bajo)\\n'
+    '## Acciones sugeridas\\n(pasos operacionales concretos, no código)",\n'
+    '  "anomalies": [{"severity":"low|med|high","code":"...","title":"...","evidence":"...","suggested_action":"..."}],\n'
+    '  "suggested_params": {\n'
+    '    "analysis_mode_suggestion": "sma1_no_min|sma2_min2|sma3_min3|sma3_ignore_stock",\n'
+    '    "horizon_weeks": 4,\n'
+    '    "target_woc": 4.0,\n'
+    '    "min_fill_units": 1,\n'
+    '    "topN_new_sku": 5,\n'
+    '    "caps": {"max_units_per_row": 100, "max_total_units": 5000},\n'
+    '    "notes": "..."\n'
+    "  }\n"
+    "}\n"
+    "No inventes datos que no estén en el snapshot. Si falta información, di 'No disponible'.\n"
+    "No incluyas texto fuera del JSON. No uses bloques de código markdown."
+)
+
+
+def _ai_call_openai(snapshot):
     client = _get_openai_client()
     if not client:
         return None, 'OpenAI client not configured'
-
-    system_prompt = (
-        "Eres un analista experto en supply chain y distribución. "
-        "Recibes un resumen de una corrida de distribución o forecast. "
-        "Responde SIEMPRE en español. Tu respuesta debe ser un JSON válido con estas claves exactas:\n"
-        "{\n"
-        '  "insights_md": "... narrativa ejecutiva en Markdown ...",\n'
-        '  "anomalies": [{"severity":"low|med|high","code":"...","title":"...","evidence":"...","suggested_action":"..."}],\n'
-        '  "suggested_params": {\n'
-        '    "analysis_mode_suggestion": "sma1_no_min|sma2_min2|sma3_min3|sma3_ignore_stock",\n'
-        '    "horizon_weeks": 4,\n'
-        '    "target_woc": 4.0,\n'
-        '    "min_fill_units": 1,\n'
-        '    "topN_new_sku": 5,\n'
-        '    "caps": {"max_units_per_row": 100, "max_total_units": 5000},\n'
-        '    "notes": "..."\n'
-        "  }\n"
-        "}\n"
-        "No incluyas texto fuera del JSON. No uses bloques de código markdown."
-    )
 
     user_msg = json.dumps(snapshot, ensure_ascii=False, default=str)
 
@@ -15854,7 +15860,7 @@ def ai_call(snapshot):
         response = client.chat.completions.create(
             model=AI_MODEL,
             messages=[
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": _AI_SYSTEM_PROMPT},
                 {"role": "user", "content": user_msg},
             ],
             temperature=0.2,
@@ -15875,6 +15881,53 @@ def ai_call(snapshot):
         return None, f'Respuesta AI no es JSON válido: {str(e)}'
     except Exception as e:
         return None, f'Error al llamar a OpenAI: {str(e)}'
+
+
+def _ai_call_ollama(snapshot):
+    user_msg = json.dumps(snapshot, ensure_ascii=False, default=str)
+    prompt = (
+        "A continuación tienes el snapshot de una corrida. "
+        "Analiza los datos y responde SOLO con JSON válido en el formato indicado.\n\n"
+        + user_msg
+    )
+
+    raw_text, error = ollama_generate(prompt, system=_AI_SYSTEM_PROMPT)
+    if error:
+        return None, f'Error Ollama: {error}'
+
+    clean = raw_text.strip()
+    if clean.startswith('```'):
+        lines = clean.split('\n')
+        lines = [l for l in lines if not l.strip().startswith('```')]
+        clean = '\n'.join(lines).strip()
+
+    try:
+        parsed = json.loads(clean)
+    except json.JSONDecodeError:
+        start = clean.find('{')
+        end = clean.rfind('}')
+        if start >= 0 and end > start:
+            try:
+                parsed = json.loads(clean[start:end+1])
+            except json.JSONDecodeError as e2:
+                return None, f'Ollama no retornó JSON válido: {str(e2)}'
+        else:
+            return None, f'Ollama no retornó JSON válido'
+
+    if 'insights_md' not in parsed:
+        parsed['insights_md'] = parsed.get('resumen', parsed.get('summary', ''))
+    if 'anomalies' not in parsed:
+        parsed['anomalies'] = parsed.get('riesgos', [])
+    if 'suggested_params' not in parsed:
+        parsed['suggested_params'] = {}
+
+    return {'data': parsed, 'tokens': None}, None
+
+
+def ai_call(snapshot):
+    if AI_PROVIDER == 'ollama':
+        return _ai_call_ollama(snapshot)
+    return _ai_call_openai(snapshot)
 
 
 @app.route('/ai/run/<run_id>/generate', methods=['POST'])
@@ -15900,7 +15953,10 @@ def ai_generate_insight(run_id):
         db.session.add(existing)
 
     existing.created_at = datetime.utcnow()
-    existing.model_version = f'gpt-v1-cross ({AI_MODEL})'
+    if AI_PROVIDER == 'ollama':
+        existing.model_version = f'ollama ({OLLAMA_MODEL})'
+    else:
+        existing.model_version = f'gpt-v1-cross ({AI_MODEL})'
 
     if error:
         existing.status = 'failed'
@@ -16027,6 +16083,13 @@ def get_latest_ai_params(run_id=None):
 @require_permission('runs:view')
 def ai_analyze_run(run_id):
     return ai_generate_insight(run_id)
+
+
+@app.route('/ai/run/<run_id>/latest', methods=['GET'])
+@login_required
+@require_permission('runs:view')
+def ai_latest_insight(run_id):
+    return ai_view_insight(run_id)
 
 
 @app.route('/ai/latest_params/<run_id>', methods=['GET'])
