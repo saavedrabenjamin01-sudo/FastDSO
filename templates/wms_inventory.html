@@ -1,0 +1,95 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<div class="query-wrap">
+  <div class="query-header">
+    <h1 class="query-title">FastWMS - Inventory by Location</h1>
+    <p class="query-subtitle">Inventario del Centro de Distribución desglosado por ubicación</p>
+  </div>
+
+  {% if inventory %}
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-md-4">
+      <div class="kpi-card">
+        <div class="kpi-value">{{ kpis.total_locations }}</div>
+        <div class="kpi-label">Ubicaciones</div>
+      </div>
+    </div>
+    <div class="col-12 col-md-4">
+      <div class="kpi-card">
+        <div class="kpi-value">{{ kpis.total_skus }}</div>
+        <div class="kpi-label">SKUs</div>
+      </div>
+    </div>
+    <div class="col-12 col-md-4">
+      <div class="kpi-card">
+        <div class="kpi-value">{{ "{:,}".format(kpis.total_units) }}</div>
+        <div class="kpi-label">Unidades totales</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="query-card">
+    <div class="table-responsive">
+      <table class="query-table">
+        <thead>
+          <tr>
+            <th>Warehouse</th>
+            <th>Location</th>
+            <th>Type</th>
+            <th>SKU</th>
+            <th>Producto</th>
+            <th class="text-end">Units</th>
+            <th class="text-end">Allocated</th>
+            <th class="text-end">Available</th>
+            <th class="text-end">Pallets</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in inventory %}
+          <tr>
+            <td><span class="badge bg-secondary">{{ item.warehouse }}</span></td>
+            <td><code>{{ item.location_code }}</code></td>
+            <td>
+              {% if item.location_type == 'PICK' %}
+                <span class="badge bg-primary" style="font-size:0.7rem;">PICK</span>
+              {% elif item.location_type == 'BULK' %}
+                <span class="badge bg-secondary" style="font-size:0.7rem;">BULK</span>
+              {% elif item.location_type %}
+                <span class="badge bg-light text-dark" style="font-size:0.7rem;">{{ item.location_type }}</span>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            <td><code>{{ item.sku }}</code></td>
+            <td>{{ item.product_name }}</td>
+            <td class="text-end">{{ "{:,}".format(item.on_hand_units) }}</td>
+            <td class="text-end">{{ "{:,}".format(item.allocated_units) }}</td>
+            <td class="text-end{% if item.available_units < 0 %} text-danger fw-bold{% endif %}">
+              {{ "{:,}".format(item.available_units) }}
+            </td>
+            <td class="text-end">
+              {% if item.on_hand_pallets is not none %}
+                {{ item.on_hand_pallets }}
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {% else %}
+  <div class="query-card">
+    <div class="text-center py-5">
+      <i class="bi bi-inbox" style="font-size:3rem; color:var(--neutral-400);"></i>
+      <p class="mt-3 text-muted">No WMS inventory loaded yet. Use <a href="{{ url_for('upload_stock_cd') }}">Stock CD upload</a> with <code>location_code</code> to seed inventory.</p>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

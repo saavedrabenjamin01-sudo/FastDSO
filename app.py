@@ -52,12 +52,12 @@ ROLE_PERMISSIONS = {
         'stock:query', 'distribution:generate', 'distribution:export',
         'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'runs:submit', 'runs:approve', 'admin:users', 'admin:reset', 'audit:view',
         'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view',
-        'planner:view', 'planner:operate'
+        'planner:view', 'planner:operate', 'wms:view'
     ],
     'Management': [
         'dashboard:view', 'stock:query', 'distribution:export',
         'forecast_v2:view', 'runs:view', 'runs:approve', 'audit:view', 'rebalancing:view', 'slow_stock:view', 'store_health:view', 'alerts:view',
-        'planner:view'
+        'planner:view', 'wms:view'
     ],
     'CategoryManager': [
         'dashboard:view', 'sales:upload', 'sales_macro:upload', 'distribution:generate', 'distribution:export',
@@ -68,7 +68,7 @@ ROLE_PERMISSIONS = {
     'WarehouseOps': [
         'dashboard:view', 'stock_store:upload', 'stock_cd:upload', 'stock:query',
         'distribution:export', 'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view',
-        'planner:view', 'planner:operate'
+        'planner:view', 'planner:operate', 'wms:view'
     ],
     'Viewer': [
         'dashboard:view', 'stock:query', 'alerts:view'
@@ -8758,6 +8758,58 @@ def process_stock_cd_upload(job_id, payload):
         raise
     finally:
         session.close()
+
+
+@app.route('/wms/inventory')
+@login_required
+@require_permission('wms:view')
+def wms_inventory():
+    rows = (
+        db.session.query(
+            WmsWarehouse.code.label('warehouse'),
+            WmsLocation.location_code,
+            WmsLocation.location_type,
+            Product.sku,
+            Product.name.label('product_name'),
+            WmsInventory.on_hand_units,
+            WmsInventory.allocated_units,
+            WmsInventory.on_hand_pallets,
+        )
+        .join(WmsLocation, WmsInventory.location_id == WmsLocation.id)
+        .join(WmsWarehouse, WmsInventory.warehouse_id == WmsWarehouse.id)
+        .join(Product, WmsInventory.product_id == Product.id)
+        .order_by(WmsWarehouse.code, WmsLocation.location_code, Product.sku)
+        .all()
+    )
+
+    inventory = []
+    total_units = 0
+    location_ids = set()
+    product_ids = set()
+    for r in rows:
+        avail = (r.on_hand_units or 0) - (r.allocated_units or 0)
+        inventory.append({
+            'warehouse': r.warehouse,
+            'location_code': r.location_code,
+            'location_type': r.location_type,
+            'sku': r.sku,
+            'product_name': r.product_name,
+            'on_hand_units': r.on_hand_units or 0,
+            'allocated_units': r.allocated_units or 0,
+            'available_units': avail,
+            'on_hand_pallets': r.on_hand_pallets,
+        })
+        total_units += r.on_hand_units or 0
+        location_ids.add(r.location_code)
+        product_ids.add(r.sku)
+
+    kpis = {
+        'total_locations': len(location_ids),
+        'total_skus': len(product_ids),
+        'total_units': total_units,
+    }
+
+    return render_template('wms_inventory.html', inventory=inventory, kpis=kpis)
 
 
 @app.route('/stock_cd', methods=['GET', 'POST'])

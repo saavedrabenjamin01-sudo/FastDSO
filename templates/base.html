@@ -185,7 +185,25 @@
     </div>
     {% endif %}
 
-    <!-- ===== 5) Administración ===== -->
+    <!-- ===== 5) FastWMS ===== -->
+    {% if current_user.is_authenticated and current_user.has_permission('wms:view') %}
+    <div class="nav-group">
+      <button class="nav-group-toggle" aria-expanded="true">
+        <span class="nav-icon"><i class="bi bi-building"></i></span>
+        <span class="nav-text">FastWMS</span>
+        <span class="nav-caret">▶</span>
+      </button>
+
+      <div class="sidebar-nav" style="display:flex;">
+        <a class="nav-link" href="{{ url_for('wms_inventory') }}">
+          <span class="nav-icon"><i class="bi bi-geo-alt"></i></span>
+          <span class="nav-text">Inventory by Location</span>
+        </a>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- ===== 6) Administración ===== -->
     {% if current_user.is_authenticated and (current_user.has_permission('admin:users') or current_user.has_permission('audit:view')) %}
     <div class="nav-group">
       <button class="nav-group-toggle" aria-expanded="true">
