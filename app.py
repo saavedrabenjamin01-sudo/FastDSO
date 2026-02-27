@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import func, or_
 from functools import wraps
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify, abort
 import traceback as tb_module
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import (
@@ -1262,7 +1262,7 @@ def create_and_run_job(job_type, task_func, payload=None, user_id=None):
 
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
+    return db.session.get(User, int(user_id))
 
 from datetime import date  # seguramente ya lo tienes más arriba
 
@@ -8585,21 +8585,20 @@ def process_stock_cd_upload(job_id, payload):
             if not wh_codes_in_file:
                 wh_codes_in_file.add('MAIN')
 
-            for wh_code in wh_codes_in_file:
-                wh_obj = _resolve_warehouse(wh_code)
-                loc_ids_sub = session.query(WmsLocation.id).filter_by(warehouse_id=wh_obj.id)
-                session.query(WmsMovement).filter(
-                    WmsMovement.from_location_id.in_(loc_ids_sub) |
-                    WmsMovement.to_location_id.in_(loc_ids_sub)
-                ).delete(synchronize_session=False)
-                session.query(WmsInventory).filter_by(warehouse_id=wh_obj.id).delete()
+            wms_reset = payload.get('wms_reset', False) and modo == 'replace_all'
+            if wms_reset:
+                for wh_code in wh_codes_in_file:
+                    wh_obj = _resolve_warehouse(wh_code)
+                    session.query(WmsInventory).filter_by(warehouse_id=wh_obj.id).delete()
+                print(f"[WMS] replace_all: cleared WmsInventory for warehouse(s) {wh_codes_in_file} (movement history preserved)")
 
             if len(wh_codes_in_file) == 1:
                 active_wh = _resolve_warehouse(list(wh_codes_in_file)[0])
 
             session.query(StockCD).delete()
             session.commit()
-            print(f"[WMS] replace_all: cleared WmsInventory + WmsMovement for warehouse(s) {wh_codes_in_file}")
+            if not wms_reset:
+                print(f"[WMS] replace_all: StockCD cleared, WmsInventory upserted (movement history preserved)")
 
         elif modo == 'replace_today':
             session.query(StockCD).filter_by(as_of_date=snapshot_date).delete()
@@ -9229,6 +9228,7 @@ def upload_stock_cd():
         
         modo = request.form.get('mode', 'replace_today')
         fecha_doc_str = request.form.get('fecha_doc', '').strip()
+        wms_reset = request.form.get('wms_reset') == '1'
         user_id = current_user.id if current_user.is_authenticated else None
         
         payload = {
@@ -9236,7 +9236,8 @@ def upload_stock_cd():
             'modo': modo,
             'fecha_doc': fecha_doc_str if fecha_doc_str else None,
             'user_id': user_id,
-            'original_filename': file.filename
+            'original_filename': file.filename,
+            'wms_reset': wms_reset,
         }
         
         job_id = create_and_run_job(
@@ -10440,7 +10441,9 @@ def admin_create_user():
 @require_permission('admin:users')
 def admin_update_user(user_id):
     """Update user role and active status."""
-    user = User.query.get_or_404(user_id)
+    user = db.session.get(User, user_id)
+    if not user:
+        abort(404)
     
     if user.username == 'admin' and current_user.id != user.id:
         flash('No puedes modificar al usuario admin.', 'danger')
@@ -10465,7 +10468,9 @@ def admin_update_user(user_id):
 @require_permission('admin:users')
 def admin_reset_password(user_id):
     """Reset user password."""
-    user = User.query.get_or_404(user_id)
+    user = db.session.get(User, user_id)
+    if not user:
+        abort(404)
     new_password = request.form.get('new_password') or ''
     
     if not new_password:

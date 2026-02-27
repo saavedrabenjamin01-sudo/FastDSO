@@ -41,6 +41,18 @@
             </div>
           </div>
 
+          <div id="wmsResetWrap" class="mt-3" style="display:none;">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="wms_reset" value="1" id="wmsResetCheck">
+              <label class="form-check-label" for="wmsResetCheck">
+                Reset inventario WMS <small class="text-muted">(mantiene historial de movimientos)</small>
+              </label>
+            </div>
+            <small class="text-muted d-block mt-1">
+              Si se deja desmarcado, las posiciones WMS existentes se actualizan sin borrar ítems no incluidos en el archivo.
+            </small>
+          </div>
+
           <div class="upload-actions">
             <button type="submit" class="btn btn-primary query-btn">
               <i class="bi bi-box-seam me-2"></i>Cargar stock CD
@@ -149,4 +161,24 @@
   </div>
 </div>
 
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function(){
+  var sel = document.querySelector('select[name="mode"]');
+  var wrap = document.getElementById('wmsResetWrap');
+  var chk = document.getElementById('wmsResetCheck');
+  function toggle(){
+    if(sel.value === 'replace_all'){
+      wrap.style.display = '';
+    } else {
+      wrap.style.display = 'none';
+      chk.checked = false;
+    }
+  }
+  sel.addEventListener('change', toggle);
+  toggle();
+})();
+</script>
 {% endblock %}
