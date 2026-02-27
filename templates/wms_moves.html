@@ -1,0 +1,128 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<div class="query-wrap">
+  <div class="query-header">
+    <h1 class="query-title">FastWMS - Moves</h1>
+    <p class="query-subtitle">Transferencias de inventario entre ubicaciones</p>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-12 col-lg-5">
+      <div class="query-card">
+        <h6 class="fw-semibold mb-3"><i class="bi bi-arrow-left-right me-2"></i>Create Move</h6>
+        <form method="post" action="{{ url_for('wms_moves_create') }}" enctype="multipart/form-data">
+
+          <div class="mb-3">
+            <label class="query-label">From Location</label>
+            <select class="form-select" name="from_location_id" id="fromLoc">
+              <option value="">— Seleccionar origen —</option>
+              {% for loc in locations %}
+              <option value="{{ loc.id }}">{{ loc.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="query-label">To Location</label>
+            <select class="form-select" name="to_location_id" id="toLoc">
+              <option value="">— Seleccionar destino —</option>
+              {% for loc in locations %}
+              <option value="{{ loc.id }}">{{ loc.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="query-label">SKU</label>
+            <input type="text" class="form-control" name="sku" placeholder="Ej: 000123">
+          </div>
+
+          <div class="row g-2 mb-3">
+            <div class="col-6">
+              <label class="query-label">Units</label>
+              <input type="number" class="form-control" name="units" min="1" placeholder="0">
+            </div>
+            <div class="col-6">
+              <label class="query-label">Pallets <small class="text-muted">(opcional)</small></label>
+              <input type="number" class="form-control" name="pallets" min="0" step="0.1" placeholder="0">
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="query-label">Reason <small class="text-muted">(opcional)</small></label>
+            <input type="text" class="form-control" name="reason" placeholder="Motivo del movimiento">
+          </div>
+
+          <div class="mb-3">
+            <label class="query-label">Note <small class="text-muted">(header note)</small></label>
+            <input type="text" class="form-control" name="note" placeholder="Nota general del movimiento">
+          </div>
+
+          <hr class="my-3">
+
+          <div class="mb-3">
+            <label class="query-label">O cargar archivo masivo</label>
+            <input type="file" class="form-control" name="file"
+                   accept=".csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+            <small class="text-muted">Columnas: <code>sku</code>, <code>from_location</code>, <code>to_location</code>, <code>units</code>, <code>pallets</code>(opt), <code>reason</code>(opt)</small>
+          </div>
+
+          <button type="submit" class="btn btn-primary w-100">
+            <i class="bi bi-check2-circle me-2"></i>Post Move
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-7">
+      <div class="query-card">
+        <h6 class="fw-semibold mb-3"><i class="bi bi-clock-history me-2"></i>Recent Moves</h6>
+
+        {% if recent_runs %}
+        <div class="table-responsive">
+          <table class="query-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Move ID</th>
+                <th>User</th>
+                <th class="text-end">Lines</th>
+                <th class="text-end">Units</th>
+                <th>Note</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for run in recent_runs %}
+              <tr>
+                <td class="small">{{ run.created_at }}</td>
+                <td><code>#{{ run.id }}</code></td>
+                <td>{{ run.user }}</td>
+                <td class="text-end">{{ run.total_lines }}</td>
+                <td class="text-end">{{ "{:,}".format(run.total_units) }}</td>
+                <td class="small text-muted">{{ run.note[:40] }}{% if run.note|length > 40 %}…{% endif %}</td>
+                <td><span class="badge bg-success" style="font-size:0.7rem;">{{ run.status }}</span></td>
+                <td>
+                  <a href="{{ url_for('wms_move_detail', move_id=run.id) }}" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-eye"></i>
+                  </a>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="text-center py-4">
+          <i class="bi bi-inbox" style="font-size:2.5rem; color:var(--neutral-400);"></i>
+          <p class="text-muted mt-2 mb-0">No hay movimientos registrados aún.</p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

@@ -829,6 +829,7 @@ class WmsInventory(db.Model):
     on_hand_units = db.Column(db.Integer, nullable=False, default=0)
     allocated_units = db.Column(db.Integer, nullable=False, default=0)
     on_hand_pallets = db.Column(db.Float, nullable=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     warehouse = db.relationship('WmsWarehouse')
     location = db.relationship('WmsLocation', backref='inventory_items')
@@ -857,6 +858,56 @@ class WmsMovement(db.Model):
     from_location = db.relationship('WmsLocation', foreign_keys=[from_location_id])
     to_location = db.relationship('WmsLocation', foreign_keys=[to_location_id])
     created_by = db.relationship('User')
+
+
+class WmsMoveRun(db.Model):
+    __tablename__ = 'wms_move_run'
+    id = db.Column(db.Integer, primary_key=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    note = db.Column(db.Text, nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='POSTED')
+    total_lines = db.Column(db.Integer, nullable=False, default=0)
+    total_units = db.Column(db.Integer, nullable=False, default=0)
+
+    created_by = db.relationship('User')
+    lines = db.relationship('WmsMoveLine', backref='move_run', lazy='dynamic')
+
+
+class WmsMoveLine(db.Model):
+    __tablename__ = 'wms_move_line'
+    id = db.Column(db.Integer, primary_key=True)
+    move_run_id = db.Column(db.Integer, db.ForeignKey('wms_move_run.id'), nullable=False)
+    from_location_id = db.Column(db.Integer, db.ForeignKey('wms_location.id'), nullable=False)
+    to_location_id = db.Column(db.Integer, db.ForeignKey('wms_location.id'), nullable=False)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    units = db.Column(db.Integer, nullable=False)
+    pallets = db.Column(db.Float, nullable=True, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    reason = db.Column(db.Text, nullable=True)
+
+    from_location = db.relationship('WmsLocation', foreign_keys=[from_location_id])
+    to_location = db.relationship('WmsLocation', foreign_keys=[to_location_id])
+    product = db.relationship('Product')
+
+
+class WmsInventoryEvent(db.Model):
+    __tablename__ = 'wms_inventory_event'
+    id = db.Column(db.Integer, primary_key=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    event_type = db.Column(db.String(30), nullable=False)
+    ref_type = db.Column(db.String(50), nullable=True)
+    ref_id = db.Column(db.String(100), nullable=True)
+    warehouse_id = db.Column(db.Integer, db.ForeignKey('wms_warehouse.id'), nullable=False)
+    location_id = db.Column(db.Integer, db.ForeignKey('wms_location.id'), nullable=False)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    delta_units = db.Column(db.Integer, nullable=False)
+    delta_pallets = db.Column(db.Float, nullable=True, default=0)
+    note = db.Column(db.Text, nullable=True)
+
+    warehouse = db.relationship('WmsWarehouse')
+    location = db.relationship('WmsLocation')
+    product = db.relationship('Product')
 
 
 # ------------------ Operational Stock Helpers ------------------
@@ -1041,6 +1092,15 @@ def get_cd_total_stock_units(session=None):
 
 def _ensure_wms_defaults(session=None):
     s = session or db.session
+    from sqlalchemy import inspect, text
+    inspector = inspect(db.engine)
+    if 'wms_inventory' in inspector.get_table_names():
+        inv_cols = [c['name'] for c in inspector.get_columns('wms_inventory')]
+        if 'updated_at' not in inv_cols:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE wms_inventory ADD COLUMN updated_at DATETIME"))
+                conn.commit()
+            print("[WMS] Added column wms_inventory.updated_at")
     wh = s.query(WmsWarehouse).filter_by(code='MAIN').first()
     if not wh:
         wh = WmsWarehouse(code='MAIN', name='Main Warehouse')
@@ -8810,6 +8870,330 @@ def wms_inventory():
     }
 
     return render_template('wms_inventory.html', inventory=inventory, kpis=kpis)
+
+
+def _get_or_create_wms_inventory(warehouse_id, location_id, product_id):
+    inv = WmsInventory.query.filter_by(
+        warehouse_id=warehouse_id, location_id=location_id, product_id=product_id
+    ).first()
+    if not inv:
+        inv = WmsInventory(
+            warehouse_id=warehouse_id, location_id=location_id, product_id=product_id,
+            on_hand_units=0, allocated_units=0, on_hand_pallets=0
+        )
+        db.session.add(inv)
+        db.session.flush()
+    return inv
+
+
+@app.route('/wms/moves')
+@login_required
+@require_permission('wms:view')
+def wms_moves():
+    locations = (
+        db.session.query(
+            WmsLocation.id, WmsLocation.location_code, WmsLocation.location_type,
+            WmsWarehouse.code.label('warehouse_code')
+        )
+        .join(WmsWarehouse, WmsLocation.warehouse_id == WmsWarehouse.id)
+        .filter(WmsLocation.is_active == True)
+        .order_by(WmsWarehouse.code, WmsLocation.location_code)
+        .all()
+    )
+    location_options = [
+        {'id': loc.id, 'label': f"{loc.warehouse_code} / {loc.location_code} ({loc.location_type or '—'})"}
+        for loc in locations
+    ]
+
+    recent_runs = (
+        WmsMoveRun.query
+        .order_by(WmsMoveRun.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    runs_data = []
+    for run in recent_runs:
+        user = run.created_by
+        runs_data.append({
+            'id': run.id,
+            'created_at': run.created_at.strftime('%Y-%m-%d %H:%M') if run.created_at else '',
+            'user': user.username if user else '—',
+            'total_lines': run.total_lines,
+            'total_units': run.total_units,
+            'note': run.note or '',
+            'status': run.status,
+        })
+
+    return render_template('wms_moves.html', locations=location_options, recent_runs=runs_data)
+
+
+@app.route('/wms/moves/create', methods=['POST'])
+@login_required
+@require_permission('wms:view')
+def wms_moves_create():
+    try:
+        file = request.files.get('file')
+        lines_to_process = []
+
+        if file and file.filename:
+            fname = file.filename.lower()
+            if not (fname.endswith('.csv') or fname.endswith('.xlsx') or fname.endswith('.xls')):
+                flash('Formato no soportado. Usa .csv o .xlsx', 'danger')
+                return redirect(url_for('wms_moves'))
+
+            upload_dir = os.path.join(BASE_DIR, 'instance', 'uploads')
+            os.makedirs(upload_dir, exist_ok=True)
+            saved = os.path.join(upload_dir, f"wms_move_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{file.filename}")
+            file.save(saved)
+
+            try:
+                if saved.endswith('.csv'):
+                    df = pd.read_csv(saved, dtype=str)
+                else:
+                    df = pd.read_excel(saved, dtype=str)
+            finally:
+                try:
+                    os.remove(saved)
+                except:
+                    pass
+
+            df.columns = [str(c).strip().lower() for c in df.columns]
+            required = {'sku', 'from_location', 'to_location', 'units'}
+            if not required.issubset(set(df.columns)):
+                flash(f'Archivo debe tener columnas: {", ".join(sorted(required))}', 'danger')
+                return redirect(url_for('wms_moves'))
+
+            for _, row in df.iterrows():
+                sku = normalize_sku(str(row['sku']))
+                from_loc = str(row['from_location']).strip()
+                to_loc = str(row['to_location']).strip()
+                try:
+                    units = int(float(row['units']))
+                except (ValueError, TypeError):
+                    flash(f'Unidades inválidas para SKU {sku}', 'danger')
+                    return redirect(url_for('wms_moves'))
+                pallets = 0
+                if 'pallets' in df.columns:
+                    try:
+                        p = row.get('pallets')
+                        if pd.notna(p):
+                            pallets = float(p)
+                    except (ValueError, TypeError):
+                        pass
+                reason = ''
+                if 'reason' in df.columns:
+                    r = row.get('reason', '')
+                    if pd.notna(r):
+                        reason = str(r).strip()
+                lines_to_process.append({
+                    'sku': sku, 'from_location': from_loc, 'to_location': to_loc,
+                    'units': units, 'pallets': pallets, 'reason': reason
+                })
+        else:
+            sku = normalize_sku(request.form.get('sku', '').strip())
+            from_loc_id = request.form.get('from_location_id', '').strip()
+            to_loc_id = request.form.get('to_location_id', '').strip()
+            try:
+                units = int(request.form.get('units', 0))
+            except (ValueError, TypeError):
+                flash('Unidades inválidas.', 'danger')
+                return redirect(url_for('wms_moves'))
+            try:
+                pallets = float(request.form.get('pallets', 0) or 0)
+            except (ValueError, TypeError):
+                pallets = 0
+            reason = request.form.get('reason', '').strip()
+
+            if not sku or not from_loc_id or not to_loc_id or units <= 0:
+                flash('Completa todos los campos requeridos (SKU, origen, destino, unidades > 0).', 'warning')
+                return redirect(url_for('wms_moves'))
+
+            from_loc_obj = db.session.get(WmsLocation, int(from_loc_id))
+            to_loc_obj = db.session.get(WmsLocation, int(to_loc_id))
+            if not from_loc_obj or not to_loc_obj:
+                flash('Ubicación origen o destino no encontrada.', 'danger')
+                return redirect(url_for('wms_moves'))
+
+            lines_to_process.append({
+                'sku': sku, 'from_location': from_loc_obj.location_code,
+                'to_location': to_loc_obj.location_code,
+                'units': units, 'pallets': pallets, 'reason': reason,
+                '_from_loc_obj': from_loc_obj, '_to_loc_obj': to_loc_obj,
+            })
+
+        if not lines_to_process:
+            flash('No hay líneas para procesar.', 'warning')
+            return redirect(url_for('wms_moves'))
+
+        for line in lines_to_process:
+            if line['units'] <= 0:
+                flash(f"SKU {line['sku']}: unidades debe ser > 0.", 'danger')
+                return redirect(url_for('wms_moves'))
+            if line['pallets'] < 0:
+                flash(f"SKU {line['sku']}: pallets no puede ser negativo.", 'danger')
+                return redirect(url_for('wms_moves'))
+            if line['from_location'] == line['to_location']:
+                flash(f"SKU {line['sku']}: origen y destino no pueden ser iguales.", 'danger')
+                return redirect(url_for('wms_moves'))
+
+        sku_map = {}
+        all_skus = list(set(l['sku'] for l in lines_to_process))
+        for p in Product.query.filter(Product.sku.in_(all_skus)).all():
+            sku_map[p.sku] = p
+            sku_map[normalize_sku(p.sku)] = p
+        for line in lines_to_process:
+            if line['sku'] not in sku_map:
+                flash(f"SKU {line['sku']} no existe en el catálogo.", 'danger')
+                return redirect(url_for('wms_moves'))
+
+        loc_cache = {}
+        for loc in WmsLocation.query.filter(WmsLocation.is_active == True).all():
+            loc_cache[loc.location_code.upper()] = loc
+
+        for line in lines_to_process:
+            if '_from_loc_obj' not in line:
+                fl = loc_cache.get(line['from_location'].strip().upper())
+                tl = loc_cache.get(line['to_location'].strip().upper())
+                if not fl:
+                    flash(f"Ubicación origen '{line['from_location']}' no encontrada o inactiva.", 'danger')
+                    return redirect(url_for('wms_moves'))
+                if not tl:
+                    flash(f"Ubicación destino '{line['to_location']}' no encontrada o inactiva.", 'danger')
+                    return redirect(url_for('wms_moves'))
+                if fl.warehouse_id != tl.warehouse_id:
+                    flash(f"SKU {line['sku']}: origen y destino deben pertenecer a la misma bodega.", 'danger')
+                    return redirect(url_for('wms_moves'))
+                line['_from_loc_obj'] = fl
+                line['_to_loc_obj'] = tl
+            else:
+                fl = line['_from_loc_obj']
+                tl = line['_to_loc_obj']
+                if fl.warehouse_id != tl.warehouse_id:
+                    flash(f"SKU {line['sku']}: origen y destino deben pertenecer a la misma bodega.", 'danger')
+                    return redirect(url_for('wms_moves'))
+
+        note = request.form.get('note', '').strip()
+        move_run = WmsMoveRun(
+            created_by_user_id=current_user.id if current_user.is_authenticated else None,
+            note=note or None,
+            status='POSTED',
+            total_lines=len(lines_to_process),
+            total_units=sum(l['units'] for l in lines_to_process),
+        )
+        db.session.add(move_run)
+        db.session.flush()
+
+        now = datetime.utcnow()
+        for line in lines_to_process:
+            fl = line['_from_loc_obj']
+            tl = line['_to_loc_obj']
+            product = sku_map[line['sku']]
+            units = line['units']
+            pallets = line['pallets']
+
+            from_inv = _get_or_create_wms_inventory(fl.warehouse_id, fl.id, product.id)
+            avail = (from_inv.on_hand_units or 0) - (from_inv.allocated_units or 0)
+            if avail < units:
+                db.session.rollback()
+                flash(f"SKU {line['sku']} en {fl.location_code}: stock disponible insuficiente ({avail} disponible, {units} solicitado).", 'danger')
+                return redirect(url_for('wms_moves'))
+
+            if pallets > 0 and (from_inv.on_hand_pallets or 0) < pallets:
+                db.session.rollback()
+                flash(f"SKU {line['sku']} en {fl.location_code}: pallets insuficientes ({from_inv.on_hand_pallets or 0} disponible, {pallets} solicitado).", 'danger')
+                return redirect(url_for('wms_moves'))
+
+            to_inv = _get_or_create_wms_inventory(tl.warehouse_id, tl.id, product.id)
+
+            from_inv.on_hand_units -= units
+            to_inv.on_hand_units += units
+            if pallets > 0:
+                from_inv.on_hand_pallets = (from_inv.on_hand_pallets or 0) - pallets
+                to_inv.on_hand_pallets = (to_inv.on_hand_pallets or 0) + pallets
+            from_inv.updated_at = now
+            to_inv.updated_at = now
+
+            ml = WmsMoveLine(
+                move_run_id=move_run.id,
+                from_location_id=fl.id,
+                to_location_id=tl.id,
+                product_id=product.id,
+                units=units,
+                pallets=pallets if pallets > 0 else None,
+                reason=line.get('reason') or None,
+                created_at=now,
+            )
+            db.session.add(ml)
+
+            ref_id = str(move_run.id)
+            db.session.add(WmsInventoryEvent(
+                event_type='MOVE', ref_type='WmsMoveRun', ref_id=ref_id,
+                warehouse_id=fl.warehouse_id, location_id=fl.id, product_id=product.id,
+                delta_units=-units, delta_pallets=(-pallets if pallets > 0 else 0),
+                note=f"Move out to {tl.location_code}", created_at=now,
+            ))
+            db.session.add(WmsInventoryEvent(
+                event_type='MOVE', ref_type='WmsMoveRun', ref_id=ref_id,
+                warehouse_id=tl.warehouse_id, location_id=tl.id, product_id=product.id,
+                delta_units=units, delta_pallets=(pallets if pallets > 0 else 0),
+                note=f"Move in from {fl.location_code}", created_at=now,
+            ))
+
+        db.session.commit()
+        flash(f"Move posted: #{move_run.id} — {move_run.total_units} unidades en {move_run.total_lines} línea(s).", 'success')
+        return redirect(url_for('wms_moves'))
+
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error al procesar movimiento: {str(e)[:200]}', 'danger')
+        return redirect(url_for('wms_moves'))
+
+
+@app.route('/wms/moves/<int:move_id>')
+@login_required
+@require_permission('wms:view')
+def wms_move_detail(move_id):
+    run = db.session.get(WmsMoveRun, move_id)
+    if not run:
+        flash('Movimiento no encontrado.', 'warning')
+        return redirect(url_for('wms_moves'))
+
+    lines = (
+        db.session.query(
+            WmsMoveLine,
+            Product.sku,
+            Product.name.label('product_name'),
+        )
+        .join(Product, WmsMoveLine.product_id == Product.id)
+        .filter(WmsMoveLine.move_run_id == move_id)
+        .all()
+    )
+
+    lines_data = []
+    for ml, sku, pname in lines:
+        fl = db.session.get(WmsLocation, ml.from_location_id)
+        tl = db.session.get(WmsLocation, ml.to_location_id)
+        lines_data.append({
+            'sku': sku,
+            'product_name': pname,
+            'from_location': fl.location_code if fl else '?',
+            'to_location': tl.location_code if tl else '?',
+            'units': ml.units,
+            'pallets': ml.pallets,
+            'reason': ml.reason or '',
+        })
+
+    run_data = {
+        'id': run.id,
+        'created_at': run.created_at.strftime('%Y-%m-%d %H:%M') if run.created_at else '',
+        'user': run.created_by.username if run.created_by else '—',
+        'note': run.note or '',
+        'status': run.status,
+        'total_lines': run.total_lines,
+        'total_units': run.total_units,
+    }
+
+    return render_template('wms_move_detail.html', run=run_data, lines=lines_data)
 
 
 @app.route('/stock_cd', methods=['GET', 'POST'])

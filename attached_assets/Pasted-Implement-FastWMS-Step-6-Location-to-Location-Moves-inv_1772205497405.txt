@@ -1,0 +1,158 @@
+Implement FastWMS Step 6: Location-to-Location Moves (inventory transfers) with full audit trail, without breaking existing FastDSO features.
+
+SCOPE
+Add a new FastWMS page to create and review movements between locations:
+- Create Move (form)
+- Moves Log (table)
+
+Do not modify existing non-WMS stock logic. Only affect WMS tables.
+
+ASSUMPTIONS / EXISTING TABLES
+We already have these SQLAlchemy models/tables (created in step 5 or earlier):
+- WmsWarehouse(id, code, name)
+- WmsLocation(id, warehouse_id, location_code, location_type, is_active)
+- WmsInventory(id, warehouse_id, location_id, product_id, on_hand_units, allocated_units, on_hand_pallets, updated_at)
+- Product(id, sku, name, category, ...)
+
+If a movement/audit table does not exist yet, create it:
+A) WmsMoveRun (header)
+- id (pk)
+- created_at
+- created_by_user_id (fk user.id)
+- note (text nullable)
+- status (text: 'POSTED' only for now)
+- total_lines (int)
+- total_units (int)
+
+B) WmsMoveLine (detail)
+- id (pk)
+- move_run_id (fk)
+- from_location_id (fk wms_location)
+- to_location_id (fk wms_location)
+- product_id (fk product)
+- units (int)
+- pallets (int nullable default 0)
+- created_at
+- reason (text nullable)
+
+Also create an audit log:
+C) WmsInventoryEvent
+- id (pk)
+- created_at
+- event_type (text: 'MOVE')
+- ref_type (text: 'WmsMoveRun')
+- ref_id (string)
+- warehouse_id
+- location_id
+- product_id
+- delta_units (int)
+- delta_pallets (int)
+- note (text)
+
+ROUTES
+1) GET /wms/moves
+Shows:
+- Create Move form
+- Recent Moves table (latest 50 move runs)
+
+2) POST /wms/moves/create
+Creates a move run + one or multiple lines.
+We will support TWO input methods:
+- Manual single line entry (sku + from + to + units [+ pallets])
+- Upload Excel/CSV with columns: sku, from_location, to_location, units, pallets(optional), reason(optional)
+If file provided -> batch create multiple lines.
+If no file -> create single line from form inputs.
+
+VALIDATIONS (critical)
+- from_location != to_location
+- units > 0
+- sku exists in Product
+- from_location and to_location exist and are active
+- from_location and to_location must belong to SAME warehouse (for now). If not, block with error message.
+- Check available at from_location:
+    available_units = on_hand_units - allocated_units
+    if available_units < units => block and show:
+    "Insufficient available units in source location."
+
+INVENTORY UPDATE RULES (atomic)
+Use a single DB transaction. If any line fails, rollback entire move.
+For each line:
+- Find or create inventory row for FROM location (must exist; if not exists => treat on_hand=0 and fail insufficient)
+- Find or create inventory row for TO location (create if missing with zeros)
+- Update:
+    FROM.on_hand_units -= units
+    TO.on_hand_units += units
+- pallets:
+    If pallets is provided and >0:
+      FROM.on_hand_pallets -= pallets (must not go below 0; otherwise fail)
+      TO.on_hand_pallets += pallets
+- Update updated_at timestamps.
+- Insert TWO WmsInventoryEvent rows:
+    delta_units negative for source, positive for destination, same ref_id.
+
+STATUS / OUTPUT
+- After successful POST, flash a success message:
+  "Move posted: <move_id> - <total_units> units"
+- Redirect to /wms/moves and show the move in the table.
+
+UI (basic but not ugly)
+Template: templates/wms_moves.html extends base.html
+Top header:
+- "FastWMS - Moves"
+Two cards:
+A) "Create Move" card
+   Fields:
+   - From Location (select, shows warehouse + code + type)
+   - To Location (select)
+   - SKU (text with datalist/autocomplete optional)
+   - Units (number)
+   - Pallets (number optional)
+   - Reason (text)
+   - OR File upload (csv/xlsx)
+   Button: "Post Move"
+
+B) "Recent Moves" card
+Table columns:
+- Date
+- Move ID (short)
+- User
+- Lines
+- Units
+- Note
+- Status
+- View (button)
+
+3) Optional but recommended: GET /wms/moves/<move_id>
+Shows header + lines table.
+
+SIDEBAR
+Under FastWMS add:
+- "Moves" linking to /wms/moves
+
+HELPERS
+- Add a safe function get_or_create_wms_inventory(warehouse_id, location_id, product_id) -> row
+- Use SQLAlchemy session transaction (db.session.begin()) or try/except with rollback.
+
+FILE PARSING
+Reuse existing CSV/XLSX upload parsing approach already used elsewhere in FastDSO.
+Accept:
+- .csv
+- .xlsx
+Columns required:
+- sku, from_location, to_location, units
+Optional:
+- pallets, reason
+
+Mapping:
+- from_location and to_location are location_code strings.
+
+ERROR HANDLING
+- Any exception => rollback, flash error with short message, no stack trace to UI.
+
+DELIVERABLES
+- New models (if missing)
+- Migration handling: if using sqlite, ensure db.create_all() creates tables on boot.
+- New routes working
+- New templates added
+- Sidebar updated
+- Moves update WmsInventory correctly and create WmsInventoryEvent logs
