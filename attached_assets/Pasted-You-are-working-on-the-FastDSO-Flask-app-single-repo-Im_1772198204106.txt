@@ -1,0 +1,57 @@
+You are working on the FastDSO Flask app (single repo). Implement FastWMS as an integrated module (Option A) and upgrade the “Stock CD upload” so it can also seed/update WMS inventory by location.
+
+GOALS
+1) Add minimal WMS tables and models:
+   - WmsWarehouse(id, code unique, name)
+   - WmsLocation(id, warehouse_id FK, location_code, location_type, max_pallets, is_active)
+     Unique constraint: (warehouse_id, location_code)
+   - WmsInventory(id, warehouse_id FK, location_id FK, product_id FK, on_hand_units, allocated_units default 0, on_hand_pallets nullable)
+     Unique constraint: (warehouse_id, location_id, product_id)
+   - WmsMovement(id, movement_type, product_id FK, from_location_id nullable, to_location_id nullable,
+                 units int, pallets nullable, note text nullable, created_at, created_by_user_id nullable)
+2) Add a default warehouse record on boot if missing:
+   code='MAIN', name='Main Warehouse'
+3) Add a default location for legacy loads:
+   location_code='BULK-DEFAULT', location_type='BULK', max_pallets NULL, is_active TRUE
+4) Upgrade Stock CD upload to accept new optional columns:
+   REQUIRED (still): sku, product_name, quantity OR units (accept either)
+   OPTIONAL: category, warehouse, location_code, location_type, pallets, max_pallets, note
+   Rules:
+   - If location_code is provided, write inventory into WMS (WmsInventory) for that location.
+   - If location_code missing, use BULK-DEFAULT.
+   - If warehouse missing, use MAIN.
+   - If max_pallets provided, update WmsLocation.max_pallets.
+   - When applying “append/sumar al stock actual”, add units to existing WmsInventory row.
+   - When applying “replace_today” or “replace_all”, DO NOT zero-out unrelated SKUs.
+     Instead:
+       * replace_all: clear all WmsInventory + WmsMovement for that warehouse, then load file.
+       * replace_today: if your app has snapshot_date logic, only affects legacy StockCD snapshot,
+         but WMS should follow replace_all semantics ONLY when user explicitly selects replace_all.
+         Otherwise keep WMS inventory additive to avoid deleting location stocks by mistake.
+5) Keep FastDSO functional:
+   - Existing Stock CD flows must continue to work.
+   - If WMS data exists, Stock CD “total” KPIs should use SUM of WmsInventory.on_hand_units
+     (minus allocated if you already use it, otherwise ignore allocated for now).
+   - Do not break templates/routes that rely on old StockCD table; keep it as a “compatibility summary”
+     updated after WMS load (aggregate by SKU across all locations into StockCD for today).
+6) Update the Stock CD upload template text:
+   - Show required/optional columns.
+   - Provide an example snippet.
+7) Add safe validation:
+   - Reject negative units/pallets.
+   - If max_pallets exists and pallets > max_pallets, show warning (flash) but allow save (do not hard fail).
+8) Add indexes for performance on WmsInventory(product_id), WmsInventory(location_id), WmsLocation(location_code).
+9) Add a small helper function:
+   get_cd_total_stock_units() -> int
+   If WMS tables exist and have rows, returns SUM(WmsInventory.on_hand_units). Else fallback to existing StockCD sum.
+
+DELIVERABLES
+- Code changes in app.py or (preferred) new files: wms/models.py, wms/services.py, wms/__init__.py (Blueprint-ready).
+- Update templates/upload_stock_cd.html with the new column guidance.
+- Ensure db.create_all() still works and app boots without migration tooling.
+- Run basic smoke test: start app, load a sample file with location_code, confirm WmsLocation and WmsInventory rows exist, and dashboard KPI “Stock CD hoy” uses WMS sum when present.
+
+IMPORTANT
+- Keep the UI and routes unchanged unless necessary.
+- Do not remove existing StockCD logic; only augment it.
+- Be careful with “append” mode: only add to SKUs in file, do not overwrite others to 0.

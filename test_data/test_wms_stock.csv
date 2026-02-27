@@ -1,0 +1,4 @@
+sku,product_name,quantity,category,location_code,location_type,pallets,max_pallets,note
+000123,Producto Test A,150,Electrónica,RACK-A01,RACK,3,10,Lote inicial
+000456,Producto Test B,75,Electrónica,RACK-A02,RACK,2,8,
+000789,Producto Test C,200,Hogar,,,,,

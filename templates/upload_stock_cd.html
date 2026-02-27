@@ -59,21 +59,27 @@
             <ul class="upload-req-list">
               <li><code>sku</code> — Código del producto (texto, ceros a la izquierda preservados)</li>
               <li><code>product_name</code> — Nombre del producto</li>
-              <li><code>quantity</code> — Cantidad disponible en CD</li>
+              <li><code>quantity</code> o <code>units</code> — Cantidad disponible en CD</li>
             </ul>
-            <p class="mb-2"><strong>Columna opcional:</strong></p>
+            <p class="mb-2"><strong>Columnas opcionales:</strong></p>
             <ul class="upload-req-list">
               <li><code>category</code> — Categoría del producto (se asigna si el producto no tiene categoría)</li>
+              <li><code>warehouse</code> — Código de bodega WMS (por defecto: <code>MAIN</code>)</li>
+              <li><code>location_code</code> — Ubicación dentro de la bodega (por defecto: <code>BULK-DEFAULT</code>)</li>
+              <li><code>location_type</code> — Tipo de ubicación (ej: <code>BULK</code>, <code>RACK</code>, <code>PICK</code>)</li>
+              <li><code>pallets</code> — Cantidad de pallets (se valida contra <code>max_pallets</code>)</li>
+              <li><code>max_pallets</code> — Capacidad máxima de pallets de la ubicación</li>
+              <li><code>note</code> — Nota o comentario por fila</li>
             </ul>
             <p class="mb-1"><strong>Formatos aceptados:</strong> <code>.csv</code>, <code>.xlsx</code></p>
-            <p class="text-muted mb-0">El SKU debe ser texto para preservar ceros a la izquierda.</p>
+            <p class="text-muted mb-0">El SKU debe ser texto para preservar ceros a la izquierda. No se permiten cantidades ni pallets negativos.</p>
           </div>
         </div>
       </div>
 
       <div class="upload-impact-note">
         <i class="bi bi-exclamation-circle me-2"></i>
-        Esta carga impacta los resultados de forecast y distribución.
+        Esta carga impacta los resultados de forecast y distribución. Si incluyes columnas WMS, el inventario se registrará por ubicación.
       </div>
     </div>
 
@@ -93,15 +99,15 @@
         <ul class="upload-modes-list">
           <li>
             <strong>Sumar (append)</strong>
-            <span>Agrega cantidades a SKUs existentes; mantiene el resto sin cambios.</span>
+            <span>Agrega cantidades a SKUs existentes; mantiene el resto sin cambios. En WMS, suma al inventario de la ubicación.</span>
           </li>
           <li>
             <strong>Reemplazar hoy</strong>
-            <span>Reemplaza únicamente el snapshot de la fecha seleccionada.</span>
+            <span>Reemplaza únicamente el snapshot de la fecha seleccionada. WMS se mantiene aditivo.</span>
           </li>
           <li>
             <strong>Borrar todo</strong>
-            <span>Elimina todo el historial de stock CD y carga desde cero.</span>
+            <span>Elimina todo el historial de stock CD y el inventario WMS de la bodega, luego carga desde cero.</span>
           </li>
         </ul>
       </div>
@@ -115,6 +121,8 @@
                 <th>sku</th>
                 <th>product_name</th>
                 <th>quantity</th>
+                <th>location_code</th>
+                <th>pallets</th>
               </tr>
             </thead>
             <tbody>
@@ -122,15 +130,20 @@
                 <td>000123</td>
                 <td>Producto A</td>
                 <td>150</td>
+                <td>RACK-A01</td>
+                <td>3</td>
               </tr>
               <tr>
                 <td>000456</td>
                 <td>Producto B</td>
                 <td>75</td>
+                <td></td>
+                <td></td>
               </tr>
             </tbody>
           </table>
         </div>
+        <small class="text-muted d-block mt-1">Si <code>location_code</code> está vacío, se usa <code>BULK-DEFAULT</code>.</small>
       </div>
     </div>
   </div>

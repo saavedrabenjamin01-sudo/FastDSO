@@ -797,6 +797,68 @@ class AiRunInsight(db.Model):
     error_msg = db.Column(db.Text, nullable=True)
 
 
+class WmsWarehouse(db.Model):
+    __tablename__ = 'wms_warehouse'
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(50), unique=True, nullable=False)
+    name = db.Column(db.String(200), nullable=False)
+
+
+class WmsLocation(db.Model):
+    __tablename__ = 'wms_location'
+    id = db.Column(db.Integer, primary_key=True)
+    warehouse_id = db.Column(db.Integer, db.ForeignKey('wms_warehouse.id'), nullable=False)
+    location_code = db.Column(db.String(100), nullable=False, index=True)
+    location_type = db.Column(db.String(50), nullable=True)
+    max_pallets = db.Column(db.Integer, nullable=True)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+
+    warehouse = db.relationship('WmsWarehouse', backref='locations')
+
+    __table_args__ = (
+        db.UniqueConstraint('warehouse_id', 'location_code', name='uq_wms_location_wh_code'),
+    )
+
+
+class WmsInventory(db.Model):
+    __tablename__ = 'wms_inventory'
+    id = db.Column(db.Integer, primary_key=True)
+    warehouse_id = db.Column(db.Integer, db.ForeignKey('wms_warehouse.id'), nullable=False)
+    location_id = db.Column(db.Integer, db.ForeignKey('wms_location.id'), nullable=False)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False, index=True)
+    on_hand_units = db.Column(db.Integer, nullable=False, default=0)
+    allocated_units = db.Column(db.Integer, nullable=False, default=0)
+    on_hand_pallets = db.Column(db.Float, nullable=True)
+
+    warehouse = db.relationship('WmsWarehouse')
+    location = db.relationship('WmsLocation', backref='inventory_items')
+    product = db.relationship('Product')
+
+    __table_args__ = (
+        db.UniqueConstraint('warehouse_id', 'location_id', 'product_id', name='uq_wms_inv_wh_loc_prod'),
+        db.Index('ix_wms_inventory_location', 'location_id'),
+    )
+
+
+class WmsMovement(db.Model):
+    __tablename__ = 'wms_movement'
+    id = db.Column(db.Integer, primary_key=True)
+    movement_type = db.Column(db.String(50), nullable=False)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    from_location_id = db.Column(db.Integer, db.ForeignKey('wms_location.id'), nullable=True)
+    to_location_id = db.Column(db.Integer, db.ForeignKey('wms_location.id'), nullable=True)
+    units = db.Column(db.Integer, nullable=False)
+    pallets = db.Column(db.Float, nullable=True)
+    note = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+
+    product = db.relationship('Product')
+    from_location = db.relationship('WmsLocation', foreign_keys=[from_location_id])
+    to_location = db.relationship('WmsLocation', foreign_keys=[to_location_id])
+    created_by = db.relationship('User')
+
+
 # ------------------ Operational Stock Helpers ------------------
 def _get_baseline_date(scope, session=None):
     s = session or db.session
@@ -962,6 +1024,57 @@ def get_cd_stock_map(as_of_date=None, session=None):
     for pid, qty in rows:
         result[pid] = qty or 0
     return result
+
+
+def get_cd_total_stock_units(session=None):
+    s = session or db.session
+    try:
+        wms_count = s.query(func.count(WmsInventory.id)).scalar() or 0
+        if wms_count > 0:
+            total = s.query(func.coalesce(func.sum(WmsInventory.on_hand_units), 0)).scalar()
+            return int(total)
+    except Exception:
+        pass
+    cd_map = get_cd_stock_map(session=s)
+    return sum(cd_map.values()) if cd_map else 0
+
+
+def _ensure_wms_defaults(session=None):
+    s = session or db.session
+    wh = s.query(WmsWarehouse).filter_by(code='MAIN').first()
+    if not wh:
+        wh = WmsWarehouse(code='MAIN', name='Main Warehouse')
+        s.add(wh)
+        s.flush()
+        print("[WMS] Created default warehouse MAIN")
+    loc = s.query(WmsLocation).filter_by(warehouse_id=wh.id, location_code='BULK-DEFAULT').first()
+    if not loc:
+        loc = WmsLocation(warehouse_id=wh.id, location_code='BULK-DEFAULT', location_type='BULK', is_active=True)
+        s.add(loc)
+        s.flush()
+        print("[WMS] Created default location BULK-DEFAULT")
+    return wh, loc
+
+
+def _sync_wms_to_stockcd(warehouse_id, snapshot_date, session=None):
+    s = session or db.session
+    agg = (
+        s.query(WmsInventory.product_id, func.sum(WmsInventory.on_hand_units).label('total'))
+        .filter(WmsInventory.warehouse_id == warehouse_id)
+        .group_by(WmsInventory.product_id)
+        .all()
+    )
+    s.query(StockCD).filter_by(as_of_date=snapshot_date).delete()
+    for pid, total in agg:
+        if total and total > 0:
+            s.add(StockCD(as_of_date=snapshot_date, product_id=pid, quantity=int(total)))
+    bl = s.query(InventoryBaseline).filter_by(scope='cd').first()
+    if bl:
+        bl.baseline_date = snapshot_date
+        bl.created_at = datetime.utcnow()
+    else:
+        s.add(InventoryBaseline(scope='cd', baseline_date=snapshot_date))
+    s.flush()
 
 
 def get_store_operational_stock_bulk(store_ids=None, product_ids=None, as_of_date=None, session=None):
@@ -8202,81 +8315,105 @@ def reset_stock_cd():
 def process_stock_cd_upload(job_id, payload):
     """
     Background task to process Stock CD upload with bulk operations. Uses isolated session.
-    
+    Also seeds/updates WMS inventory by location when WMS columns are present.
+
     Modes:
     - append: Add quantities to existing SKUs, create new ones. Does NOT touch SKUs not in file.
-    - replace_today: Delete all stock for snapshot_date, then insert new rows.
-    - replace_all: Delete ALL stock history, then insert new rows.
-    
-    Append mode scenario:
-    - Start: SKU A=10, SKU B=20 (snapshot_date X)
-    - Upload: SKU A +5
-    - Result: SKU A=15, SKU B=20 (unchanged), same snapshot_date
+    - replace_today: Delete StockCD for snapshot_date, then insert. WMS stays additive.
+    - replace_all: Clear all StockCD + WmsInventory + WmsMovement for warehouse, then load.
     """
     from datetime import date
     import os
-    
+    import math
+
     filepath = payload.get('filepath')
     modo = payload.get('modo', 'replace_today')
     fecha_doc_str = payload.get('fecha_doc')
     user_id = payload.get('user_id')
     original_filename = payload.get('original_filename', 'unknown')
-    
+
     session = get_isolated_session()
     try:
         update_job_status(job_id, progress=5, message='Determinando fecha de snapshot...')
-        
+
         if fecha_doc_str:
             snapshot_date = date.fromisoformat(fecha_doc_str)
         else:
             max_date_row = session.query(func.max(StockCD.as_of_date)).scalar()
             snapshot_date = max_date_row if max_date_row else date.today()
-        
+
         update_job_status(job_id, progress=10, message='Leyendo archivo...')
-        
+
         if filepath.endswith('.csv'):
             df = pd.read_csv(filepath, dtype=str)
         else:
             df = pd.read_excel(filepath, dtype=str)
-        
+
         total_rows = len(df)
-        update_job_status(job_id, progress=20, message=f'Procesando {total_rows} filas...')
-        
+        update_job_status(job_id, progress=15, message=f'Procesando {total_rows} filas...')
+
         df.columns = [str(c).strip().lower() for c in df.columns]
+
+        if 'units' in df.columns and 'quantity' not in df.columns:
+            df.rename(columns={'units': 'quantity'}, inplace=True)
+
         if 'sku' not in df.columns or 'quantity' not in df.columns:
-            update_job_status(job_id, status='error', progress=100, message='Archivo debe tener columnas sku y quantity')
+            update_job_status(job_id, status='error', progress=100,
+                              message='Archivo debe tener columnas sku y quantity (o units)')
             return
-        
+
         df['sku'] = df['sku'].apply(normalize_sku)
         df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0).astype(int)
-        
+
+        neg_rows = (df['quantity'] < 0).sum()
+        if neg_rows > 0:
+            update_job_status(job_id, status='error', progress=100,
+                              message=f'Se encontraron {neg_rows} filas con cantidad negativa. Corrige el archivo.')
+            return
+
+        has_pallets = 'pallets' in df.columns
+        if has_pallets:
+            df['pallets'] = pd.to_numeric(df['pallets'], errors='coerce')
+            neg_pallets = (df['pallets'].dropna() < 0).sum()
+            if neg_pallets > 0:
+                update_job_status(job_id, status='error', progress=100,
+                                  message=f'Se encontraron {neg_pallets} filas con pallets negativos.')
+                return
+
+        has_max_pallets = 'max_pallets' in df.columns
+        if has_max_pallets:
+            df['max_pallets'] = pd.to_numeric(df['max_pallets'], errors='coerce')
+
+        has_location = 'location_code' in df.columns
+        has_warehouse = 'warehouse' in df.columns
+        has_location_type = 'location_type' in df.columns
+        has_note = 'note' in df.columns
+
         name_col = None
         for col in ['product_name', 'producto', 'name', 'nombre']:
             if col in df.columns:
                 name_col = col
                 break
-        
-        # Optional category column
+
         has_category = 'category' in df.columns
         if has_category:
             df['category'] = df['category'].astype(str).str.strip()
             df['category'] = df['category'].replace(['', 'nan', 'None', 'NaN'], None)
-        
-        update_job_status(job_id, progress=30, message='Verificando productos...')
-        
+
+        update_job_status(job_id, progress=25, message='Verificando productos...')
+
         unique_skus = list(df['sku'].unique())
         sku_to_product_id = {}
-        
+
         batch_size = 500
         for i in range(0, len(unique_skus), batch_size):
             sku_batch = unique_skus[i:i + batch_size]
             for p in session.query(Product).filter(Product.sku.in_(sku_batch)).all():
                 sku_to_product_id[p.sku] = p.id
                 sku_to_product_id[normalize_sku(p.sku)] = p.id
-        
-        update_job_status(job_id, progress=40, message='Procesando SKUs...')
-        
-        # Build category map from upload data
+
+        update_job_status(job_id, progress=35, message='Procesando SKUs...')
+
         sku_category_map = {}
         if has_category:
             for sku in unique_skus:
@@ -8285,7 +8422,7 @@ def process_stock_cd_upload(job_id, payload):
                     cat_val = match.iloc[0].get('category')
                     if cat_val and cat_val not in [None, 'None', 'nan', '']:
                         sku_category_map[sku] = cat_val
-        
+
         new_products = []
         for sku in unique_skus:
             if sku not in sku_to_product_id:
@@ -8298,9 +8435,9 @@ def process_stock_cd_upload(job_id, payload):
                 if sku in sku_category_map:
                     prod_data['category'] = sku_category_map[sku]
                 new_products.append(prod_data)
-        
+
         if new_products:
-            update_job_status(job_id, progress=50, message=f'Creando {len(new_products)} productos nuevos...')
+            update_job_status(job_id, progress=45, message=f'Creando {len(new_products)} productos nuevos...')
             session.execute(Product.__table__.insert(), new_products)
             session.commit()
             new_skus = [np['sku'] for np in new_products]
@@ -8308,8 +8445,7 @@ def process_stock_cd_upload(job_id, payload):
                 sku_batch = new_skus[i:i + batch_size]
                 for p in session.query(Product).filter(Product.sku.in_(sku_batch)).all():
                     sku_to_product_id[p.sku] = p.id
-        
-        # Update category for existing products with NULL category
+
         if has_category and sku_category_map:
             category_updates = 0
             category_mismatches = 0
@@ -8328,26 +8464,100 @@ def process_stock_cd_upload(job_id, payload):
             if category_updates > 0:
                 session.commit()
                 print(f"Stock CD: Updated category for {category_updates} products, {category_mismatches} mismatches logged")
-        
-        update_job_status(job_id, progress=60, message='Preparando stock...')
-        
+
+        update_job_status(job_id, progress=55, message='Preparando WMS y stock...')
+
+        wh_default, loc_default = _ensure_wms_defaults(session=session)
+        session.commit()
+
+        wh_cache = {'MAIN': wh_default}
+        loc_cache = {(wh_default.id, 'BULK-DEFAULT'): loc_default}
+
+        def _safe_str(val):
+            if val is None or (isinstance(val, float) and math.isnan(val)):
+                return ''
+            return str(val).strip()
+
+        def _resolve_warehouse(code_str):
+            code = _safe_str(code_str).upper() or 'MAIN'
+            if code in wh_cache:
+                return wh_cache[code]
+            wh = session.query(WmsWarehouse).filter_by(code=code).first()
+            if not wh:
+                wh = WmsWarehouse(code=code, name=code)
+                session.add(wh)
+                session.flush()
+            wh_cache[code] = wh
+            return wh
+
+        def _resolve_location(wh, loc_code_str, loc_type_str=None):
+            lc = _safe_str(loc_code_str).upper() or 'BULK-DEFAULT'
+            key = (wh.id, lc)
+            if key in loc_cache:
+                return loc_cache[key]
+            loc = session.query(WmsLocation).filter_by(warehouse_id=wh.id, location_code=lc).first()
+            if not loc:
+                lt = _safe_str(loc_type_str).upper() or ('BULK' if lc == 'BULK-DEFAULT' else None)
+                loc = WmsLocation(warehouse_id=wh.id, location_code=lc, location_type=lt, is_active=True)
+                session.add(loc)
+                session.flush()
+            loc_cache[key] = loc
+            return loc
+
         created = 0
         updated = 0
         events_created = 0
+        wms_created = 0
+        wms_updated = 0
+        wms_warnings = []
         batch_id = str(uuid.uuid4())
         observation = payload.get('observation', '')
-        
+
+        active_wh = wh_default
+
+        if modo == 'replace_all':
+            wh_codes_in_file = set()
+            if has_warehouse:
+                for v in df['warehouse'].dropna().unique():
+                    c = str(v).strip().upper()
+                    if c and c not in ('NAN', 'NONE', ''):
+                        wh_codes_in_file.add(c)
+            if not wh_codes_in_file:
+                wh_codes_in_file.add('MAIN')
+
+            for wh_code in wh_codes_in_file:
+                wh_obj = _resolve_warehouse(wh_code)
+                loc_ids_sub = session.query(WmsLocation.id).filter_by(warehouse_id=wh_obj.id)
+                session.query(WmsMovement).filter(
+                    WmsMovement.from_location_id.in_(loc_ids_sub) |
+                    WmsMovement.to_location_id.in_(loc_ids_sub)
+                ).delete(synchronize_session=False)
+                session.query(WmsInventory).filter_by(warehouse_id=wh_obj.id).delete()
+
+            if len(wh_codes_in_file) == 1:
+                active_wh = _resolve_warehouse(list(wh_codes_in_file)[0])
+
+            session.query(StockCD).delete()
+            session.commit()
+            print(f"[WMS] replace_all: cleared WmsInventory + WmsMovement for warehouse(s) {wh_codes_in_file}")
+
+        elif modo == 'replace_today':
+            session.query(StockCD).filter_by(as_of_date=snapshot_date).delete()
+            session.commit()
+
+        update_job_status(job_id, progress=65, message='Procesando inventario...')
+
         if modo == 'append':
-            update_job_status(job_id, progress=70, message='Creando eventos de recepción CD...')
-            
+            update_job_status(job_id, progress=70, message='Creando eventos y actualizando WMS...')
+
             event_inserts = []
-            for _, row in df.iterrows():
+            for idx, row in df.iterrows():
                 sku = row['sku']
                 qty = int(row['quantity'])
                 pid = sku_to_product_id.get(sku)
                 if not pid or qty == 0:
                     continue
-                
+
                 event_inserts.append({
                     'event_type': 'CD_RECEIPT',
                     'event_date': snapshot_date,
@@ -8361,83 +8571,187 @@ def process_stock_cd_upload(job_id, payload):
                     'created_at': datetime.utcnow(),
                 })
                 events_created += 1
-            
+
+                wh = _resolve_warehouse(row.get('warehouse') if has_warehouse else None)
+                loc_code = row.get('location_code') if has_location else None
+                loc_type = row.get('location_type') if has_location_type else None
+                loc = _resolve_location(wh, loc_code, loc_type)
+
+                if has_max_pallets and pd.notna(row.get('max_pallets')):
+                    mp = int(float(row['max_pallets']))
+                    if mp > 0:
+                        loc.max_pallets = mp
+
+                pallets_val = float(row['pallets']) if has_pallets and pd.notna(row.get('pallets')) else None
+
+                if pallets_val is not None and loc.max_pallets and pallets_val > loc.max_pallets:
+                    wms_warnings.append(f"SKU {sku} loc {loc.location_code}: pallets ({pallets_val}) > max_pallets ({loc.max_pallets})")
+
+                inv = session.query(WmsInventory).filter_by(
+                    warehouse_id=wh.id, location_id=loc.id, product_id=pid
+                ).first()
+                if inv:
+                    inv.on_hand_units += qty
+                    if pallets_val is not None:
+                        inv.on_hand_pallets = (inv.on_hand_pallets or 0) + pallets_val
+                    wms_updated += 1
+                else:
+                    inv = WmsInventory(
+                        warehouse_id=wh.id, location_id=loc.id, product_id=pid,
+                        on_hand_units=qty, on_hand_pallets=pallets_val
+                    )
+                    session.add(inv)
+                    wms_created += 1
+
+                note_val = _safe_str(row.get('note')) if has_note else ''
+                session.add(WmsMovement(
+                    movement_type='CD_RECEIPT',
+                    product_id=pid,
+                    to_location_id=loc.id,
+                    units=qty,
+                    pallets=pallets_val,
+                    note=note_val or f'Upload {original_filename}',
+                    created_at=datetime.utcnow(),
+                    created_by_user_id=user_id
+                ))
+
             if event_inserts:
                 insert_batch = 1000
                 for i in range(0, len(event_inserts), insert_batch):
                     chunk = event_inserts[i:i + insert_batch]
                     session.execute(InventoryEvent.__table__.insert(), chunk)
-                    progress = 70 + int(20 * (i + len(chunk)) / len(event_inserts))
+                    progress = 70 + int(15 * (i + len(chunk)) / len(event_inserts))
                     update_job_status(job_id, progress=progress, message=f'Eventos: {i + len(chunk)}/{len(event_inserts)}...')
-            
+
             session.commit()
-            print(f"[INVENTORY] CD append: {events_created} CD_RECEIPT events created (batch={batch_id})")
-            
+
+            if wms_created or wms_updated:
+                _sync_wms_to_stockcd(wh_default.id, snapshot_date, session=session)
+                session.commit()
+
+            print(f"[INVENTORY] CD append: {events_created} events, WMS +{wms_created} new, +{wms_updated} updated")
+
         else:
-            if modo == 'replace_all':
-                session.query(StockCD).delete()
-                session.commit()
-            elif modo == 'replace_today':
-                session.query(StockCD).filter_by(as_of_date=snapshot_date).delete()
-                session.commit()
-            
-            update_job_status(job_id, progress=70, message='Insertando stock...')
-            
+            update_job_status(job_id, progress=70, message='Insertando stock y WMS...')
+
             stock_inserts = []
-            for _, row in df.iterrows():
+            for idx, row in df.iterrows():
                 sku = row['sku']
                 qty = int(row['quantity'])
                 pid = sku_to_product_id.get(sku)
                 if not pid:
                     continue
-                
+
                 stock_inserts.append({
                     'as_of_date': snapshot_date,
                     'product_id': pid,
                     'quantity': qty
                 })
                 created += 1
-            
-            if stock_inserts:
-                insert_batch = 1000
-                for i in range(0, len(stock_inserts), insert_batch):
-                    batch = stock_inserts[i:i + insert_batch]
-                    session.execute(StockCD.__table__.insert(), batch)
-                    progress = 70 + int(20 * (i + len(batch)) / len(stock_inserts))
-                    update_job_status(job_id, progress=progress, message=f'Insertando {i + len(batch)}/{len(stock_inserts)}...')
-            
+
+                wh = _resolve_warehouse(row.get('warehouse') if has_warehouse else None)
+                loc_code = row.get('location_code') if has_location else None
+                loc_type = row.get('location_type') if has_location_type else None
+                loc = _resolve_location(wh, loc_code, loc_type)
+
+                if has_max_pallets and pd.notna(row.get('max_pallets')):
+                    mp = int(float(row['max_pallets']))
+                    if mp > 0:
+                        loc.max_pallets = mp
+
+                pallets_val = float(row['pallets']) if has_pallets and pd.notna(row.get('pallets')) else None
+
+                if pallets_val is not None and loc.max_pallets and pallets_val > loc.max_pallets:
+                    wms_warnings.append(f"SKU {sku} loc {loc.location_code}: pallets ({pallets_val}) > max_pallets ({loc.max_pallets})")
+
+                inv = session.query(WmsInventory).filter_by(
+                    warehouse_id=wh.id, location_id=loc.id, product_id=pid
+                ).first()
+                if inv:
+                    if modo == 'replace_all':
+                        inv.on_hand_units = qty
+                        inv.on_hand_pallets = pallets_val
+                    else:
+                        inv.on_hand_units += qty
+                        if pallets_val is not None:
+                            inv.on_hand_pallets = (inv.on_hand_pallets or 0) + pallets_val
+                    wms_updated += 1
+                else:
+                    inv = WmsInventory(
+                        warehouse_id=wh.id, location_id=loc.id, product_id=pid,
+                        on_hand_units=qty, on_hand_pallets=pallets_val
+                    )
+                    session.add(inv)
+                    wms_created += 1
+
+                note_val = _safe_str(row.get('note')) if has_note else ''
+                session.add(WmsMovement(
+                    movement_type='INITIAL_LOAD',
+                    product_id=pid,
+                    to_location_id=loc.id,
+                    units=qty,
+                    pallets=pallets_val,
+                    note=note_val or f'Upload {original_filename}',
+                    created_at=datetime.utcnow(),
+                    created_by_user_id=user_id
+                ))
+
             session.commit()
-            
-            bl = session.query(InventoryBaseline).filter_by(scope='cd').first()
-            if bl:
-                bl.baseline_date = snapshot_date
-                bl.created_at = datetime.utcnow()
+
+            if wms_created or wms_updated:
+                update_job_status(job_id, progress=88, message='Sincronizando WMS a StockCD...')
+                _sync_wms_to_stockcd(active_wh.id, snapshot_date, session=session)
             else:
-                session.add(InventoryBaseline(scope='cd', baseline_date=snapshot_date))
+                if stock_inserts:
+                    insert_batch = 1000
+                    for i in range(0, len(stock_inserts), insert_batch):
+                        batch = stock_inserts[i:i + insert_batch]
+                        session.execute(StockCD.__table__.insert(), batch)
+                        progress = 70 + int(15 * (i + len(batch)) / len(stock_inserts))
+                        update_job_status(job_id, progress=progress, message=f'Insertando {i + len(batch)}/{len(stock_inserts)}...')
+                bl = session.query(InventoryBaseline).filter_by(scope='cd').first()
+                if bl:
+                    bl.baseline_date = snapshot_date
+                    bl.created_at = datetime.utcnow()
+                else:
+                    session.add(InventoryBaseline(scope='cd', baseline_date=snapshot_date))
+
             session.commit()
-            print(f"[INVENTORY] CD {modo}: baseline updated to {snapshot_date}")
-        
+            print(f"[INVENTORY] CD {modo}: baseline updated to {snapshot_date}, WMS +{wms_created} new, +{wms_updated} updated")
+
+        if wms_warnings:
+            for w in wms_warnings[:10]:
+                print(f"[WMS WARNING] {w}")
+
         update_job_status(job_id, progress=95, message='Finalizando...')
-        
+
         try:
             os.remove(filepath)
         except:
             pass
-        
+
         mode_label = {'append': 'sumado (eventos)', 'replace_today': 'reemplazado hoy', 'replace_all': 'reemplazado todo'}.get(modo, modo)
         msg_parts = [f'Stock CD {mode_label} ({snapshot_date})']
         if modo == 'append':
             msg_parts.append(f'Eventos: {events_created}')
         else:
             msg_parts.append(f'Nuevos: {created}')
+        if wms_created or wms_updated:
+            msg_parts.append(f'WMS: {wms_created} creados, {wms_updated} actualizados')
+        if wms_warnings:
+            msg_parts.append(f'{len(wms_warnings)} advertencia(s) de pallets')
         update_job_status(
             job_id,
             status='done',
             progress=100,
             message='. '.join(msg_parts),
-            result={'created': created, 'updated': updated, 'events_created': events_created, 'total_rows': total_rows, 'snapshot_date': str(snapshot_date), 'batch_id': batch_id}
+            result={
+                'created': created, 'updated': updated, 'events_created': events_created,
+                'total_rows': total_rows, 'snapshot_date': str(snapshot_date), 'batch_id': batch_id,
+                'wms_created': wms_created, 'wms_updated': wms_updated, 'wms_warnings': len(wms_warnings)
+            }
         )
-        
+
     except Exception as e:
         session.rollback()
         update_job_status(job_id, status='error', progress=100, message=f'Error: {str(e)[:400]}')
@@ -16437,6 +16751,19 @@ def ensure_inventory_schema():
                     conn.commit()
                 print(f"[INVENTORY] Added column product.{col_name}")
     
+    if 'stock_cd' in table_names:
+        stock_cd_cols = [col['name'] for col in inspector.get_columns('stock_cd')]
+        if 'quality_status' not in stock_cd_cols:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE stock_cd ADD COLUMN quality_status VARCHAR(20) DEFAULT 'OK'"))
+                conn.commit()
+            print("[INVENTORY] Added column stock_cd.quality_status")
+        if 'problem_reason' not in stock_cd_cols:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE stock_cd ADD COLUMN problem_reason TEXT"))
+                conn.commit()
+            print("[INVENTORY] Added column stock_cd.problem_reason")
+
     cd_baseline = InventoryBaseline.query.filter_by(scope='cd').first()
     if not cd_baseline:
         latest_cd = db.session.query(func.max(StockCD.as_of_date)).scalar()
@@ -16461,6 +16788,11 @@ def init_database():
     db.create_all()
     ensure_inventory_schema()
     ensure_ai_schema()
+
+    with db.engine.connect() as conn:
+        _ensure_wms_defaults()
+        db.session.commit()
+        print("[WMS] Default warehouse and location ensured")
     
     inspector = inspect(db.engine)
     
