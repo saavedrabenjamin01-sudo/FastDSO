@@ -1,0 +1,121 @@
+FASTWMS UI/UX POLISH — align with FastDSO design system (cards, KPIs, pills, table style, actions).
+
+GOAL
+Upgrade FastWMS Inventory by Location screen to be functional and aligned with FastDSO visuals:
+- Clear purpose, guidance, and primary actions
+- Filters + search
+- KPI cards with meaning
+- Table readability (spacing, headers, sticky, sorting)
+- Row actions and expandable details
+- Export button
+- Empty states and helpful tooltips
+
+SCOPE
+Templates involved:
+- templates/wms_inventory.html (or current WMS inventory template)
+- base.html if shared table styles/components exist
+- app.py routes only if needed for new filters/export endpoints
+
+1) PAGE HEADER (match FastDSO)
+At top of the page content area:
+- Title: "FastWMS — Inventario por ubicación"
+- Subtitle: "Inventario del CD desglosado por ubicación. Busca SKUs, valida disponibilidad y gestiona movimientos."
+- Right side primary buttons:
+  a) "Crear movimiento" (link to WMS Moves module)
+  b) Secondary: "Exportar Excel" (exports the current filtered view)
+
+2) FILTER BAR (below header, inside a card)
+Add a compact filter row like other modules:
+- Search input (SKU o nombre)
+- Dropdown: Warehouse (default MAIN)
+- Dropdown: Ubicación (Location) (All + list of locations)
+- Toggle pills: "Con stock", "Sin stock", "Con pallets", "Con asignaciones"
+- Numeric mini filters: Min unidades, Min pallets (optional)
+- Button "Aplicar" and "Limpiar"
+
+Implementation:
+- Filters should work via querystring params (GET) to avoid heavy postbacks.
+- Preserve filters in pagination links.
+
+3) KPI CARDS (replace current raw numbers with KPI calugas)
+Show 4 KPIs in one row:
+- "Ubicaciones" (count distinct locations in current filters)
+- "SKUs" (distinct products in current filters)
+- "Unidades totales" (sum units)
+- "Disponibles" (sum available_units = units - allocated_units) + small text "post-movimientos"
+Use FastDSO card style:
+- icon in a soft pill
+- big number, label, and microtext
+
+4) TABLE REDESIGN (readability + functionality)
+Current table is hard to read. Update:
+- Use a standard FastDSO table component style:
+  - sticky header
+  - zebra rows
+  - right align numeric columns
+  - monospace for SKU
+  - truncate product name with tooltip on hover
+- Columns order:
+  Warehouse | Ubicación | SKU | Producto | Unidades | Asignadas | Disponibles | Pallets | Acciones
+- Remove the "Type" column if it's always blank; if needed, show it as a small badge in the Ubicación cell.
+
+Sorting:
+- allow sorting by Disponibles desc default.
+- If server-side sorting is hard, at least sort in Python before render.
+
+Pagination:
+- 25 rows per page by default
+- show "Mostrando X–Y de Z"
+- keep filter params
+
+5) ROW ACTIONS + EXPAND DETAILS
+Actions column buttons (icon buttons):
+- 👁 "Ver detalle" expands inline panel under the row (no new page)
+- 🔁 "Mover" opens WMS Moves with prefilled SKU and FROM location (querystring)
+- 📌 "Reservar" (optional v1): opens modal to allocate units (creates a WmsInventoryEvent allocation)
+If reserve is not implemented yet, show disabled with tooltip "Próximamente".
+
+Expanded detail panel should include:
+- "SKU — Nombre"
+- Breakdown:
+  Units, Allocated, Available, Pallets
+- Quick links:
+  - "Ver en Consulta de Stock" (pre-filtered SKU)
+  - "Ver en Stock CD" (filtered)
+  - "Ver movimientos del SKU" (filtered WMS moves list)
+- If Available=0 show a warning badge "Sin disponibilidad"
+
+6) EMPTY STATES + HELP
+If no rows:
+- show empty state illustration/icon + message:
+  "Sin resultados con los filtros actuales"
+  Suggest: "Prueba limpiar filtros o buscar por SKU"
+If WMS has no inventory yet:
+- show callout:
+  "Aún no hay inventario en WMS. Carga Stock CD con columnas de ubicación/pallets o registra un ingreso."
+
+Add a small info callout under filters:
+- Explain difference:
+  "Unidades = stock físico en ubicación"
+  "Asignadas = comprometidas para picking/folio"
+  "Disponibles = Unidades - Asignadas"
+
+7) EXPORT EXCEL
+Add endpoint /wms/inventory/export that returns an .xlsx of the current filtered dataset.
+- Use openpyxl (already used elsewhere) or pandas if available.
+- Export columns same as table.
+- File name: FastWMS_Inventory_<YYYY-MM-DD>_<warehouse>.xlsx
+- Respect filters and sorting.
+
+8) CONSISTENT STYLES
+Do not change global palette.
+Reuse existing FastDSO utility classes:
+- rounded corners
+- soft shadows
+- same button styles
+Ensure the WMS page looks like Dashboard tables (same header font sizes, same spacing).
+
+DELIVERABLE
+Implement changes with minimal backend edits:
+- mostly template + some small route param parsing + export route.
+- keep existing data model intact.

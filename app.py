@@ -8819,11 +8819,8 @@ def process_stock_cd_upload(job_id, payload):
         session.close()
 
 
-@app.route('/wms/inventory')
-@login_required
-@require_permission('wms:view')
-def wms_inventory():
-    rows = (
+def _wms_inventory_query(args):
+    q = (
         db.session.query(
             WmsWarehouse.code.label('warehouse'),
             WmsLocation.location_code,
@@ -8833,42 +8830,175 @@ def wms_inventory():
             WmsInventory.on_hand_units,
             WmsInventory.allocated_units,
             WmsInventory.on_hand_pallets,
+            WmsInventory.id.label('inv_id'),
         )
         .join(WmsLocation, WmsInventory.location_id == WmsLocation.id)
         .join(WmsWarehouse, WmsInventory.warehouse_id == WmsWarehouse.id)
         .join(Product, WmsInventory.product_id == Product.id)
-        .order_by(WmsWarehouse.code, WmsLocation.location_code, Product.sku)
-        .all()
     )
+
+    f_search = (args.get('q') or '').strip()
+    f_warehouse = (args.get('wh') or '').strip()
+    f_location = (args.get('loc') or '').strip()
+    f_stock = (args.get('stock') or '').strip()
+    f_min_units = args.get('min_units', type=int)
+    f_min_pallets = args.get('min_pallets', type=float)
+
+    if f_search:
+        pat = f"%{f_search}%"
+        q = q.filter(or_(Product.sku.ilike(pat), Product.name.ilike(pat)))
+    if f_warehouse:
+        q = q.filter(WmsWarehouse.code == f_warehouse.upper())
+    if f_location:
+        q = q.filter(WmsLocation.location_code == f_location)
+
+    rows = q.order_by(WmsWarehouse.code, WmsLocation.location_code, Product.sku).all()
 
     inventory = []
     total_units = 0
-    location_ids = set()
-    product_ids = set()
+    total_available = 0
+    location_set = set()
+    product_set = set()
+
     for r in rows:
-        avail = (r.on_hand_units or 0) - (r.allocated_units or 0)
+        units = r.on_hand_units or 0
+        alloc = r.allocated_units or 0
+        avail = units - alloc
+        pallets = r.on_hand_pallets
+
+        if f_stock == 'con_stock' and units <= 0:
+            continue
+        if f_stock == 'sin_stock' and units > 0:
+            continue
+        if f_stock == 'con_pallets' and (pallets is None or pallets <= 0):
+            continue
+        if f_stock == 'con_alloc' and alloc <= 0:
+            continue
+        if f_min_units is not None and units < f_min_units:
+            continue
+        if f_min_pallets is not None and (pallets is None or pallets < f_min_pallets):
+            continue
+
         inventory.append({
             'warehouse': r.warehouse,
             'location_code': r.location_code,
             'location_type': r.location_type,
             'sku': r.sku,
             'product_name': r.product_name,
-            'on_hand_units': r.on_hand_units or 0,
-            'allocated_units': r.allocated_units or 0,
+            'on_hand_units': units,
+            'allocated_units': alloc,
             'available_units': avail,
-            'on_hand_pallets': r.on_hand_pallets,
+            'on_hand_pallets': pallets,
+            'inv_id': r.inv_id,
         })
-        total_units += r.on_hand_units or 0
-        location_ids.add(r.location_code)
-        product_ids.add(r.sku)
+        total_units += units
+        total_available += avail
+        location_set.add(r.location_code)
+        product_set.add(r.sku)
+
+    sort = (args.get('sort') or 'avail_desc').strip()
+    if sort == 'avail_desc':
+        inventory.sort(key=lambda x: x['available_units'], reverse=True)
+    elif sort == 'avail_asc':
+        inventory.sort(key=lambda x: x['available_units'])
+    elif sort == 'units_desc':
+        inventory.sort(key=lambda x: x['on_hand_units'], reverse=True)
+    elif sort == 'sku_asc':
+        inventory.sort(key=lambda x: x['sku'])
 
     kpis = {
-        'total_locations': len(location_ids),
-        'total_skus': len(product_ids),
+        'total_locations': len(location_set),
+        'total_skus': len(product_set),
         'total_units': total_units,
+        'total_available': total_available,
     }
+    return inventory, kpis
 
-    return render_template('wms_inventory.html', inventory=inventory, kpis=kpis)
+
+@app.route('/wms/inventory')
+@login_required
+@require_permission('wms:view')
+def wms_inventory():
+    inventory, kpis = _wms_inventory_query(request.args)
+
+    warehouses = [r[0] for r in db.session.query(WmsWarehouse.code).order_by(WmsWarehouse.code).all()]
+    locations = [r[0] for r in db.session.query(WmsLocation.location_code).order_by(WmsLocation.location_code).distinct().all()]
+
+    per_page = 25
+    page = max(1, request.args.get('page', 1, type=int))
+    total = len(inventory)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    page = min(page, total_pages)
+    start = (page - 1) * per_page
+    end = start + per_page
+    page_items = inventory[start:end]
+
+    has_any_data = db.session.query(WmsInventory.id).first() is not None
+
+    return render_template(
+        'wms_inventory.html',
+        inventory=page_items,
+        kpis=kpis,
+        page=page,
+        total_pages=total_pages,
+        total=total,
+        start=start + 1,
+        end=min(end, total),
+        warehouses=warehouses,
+        locations=locations,
+        filters=request.args,
+        has_any_data=has_any_data,
+    )
+
+
+@app.route('/wms/inventory/export')
+@login_required
+@require_permission('wms:view')
+def wms_inventory_export():
+    inventory, kpis = _wms_inventory_query(request.args)
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Inventario WMS'
+
+    headers = ['Warehouse', 'Ubicación', 'Tipo', 'SKU', 'Producto', 'Unidades', 'Asignadas', 'Disponibles', 'Pallets']
+    header_font = Font(bold=True, color='FFFFFF')
+    header_fill = PatternFill(start_color='1e40af', end_color='1e40af', fill_type='solid')
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center')
+
+    for idx, item in enumerate(inventory, 2):
+        ws.cell(row=idx, column=1, value=item['warehouse'])
+        ws.cell(row=idx, column=2, value=item['location_code'])
+        ws.cell(row=idx, column=3, value=item.get('location_type') or '')
+        ws.cell(row=idx, column=4, value=item['sku'])
+        ws.cell(row=idx, column=5, value=item['product_name'])
+        ws.cell(row=idx, column=6, value=item['on_hand_units'])
+        ws.cell(row=idx, column=7, value=item['allocated_units'])
+        ws.cell(row=idx, column=8, value=item['available_units'])
+        ws.cell(row=idx, column=9, value=item.get('on_hand_pallets') or 0)
+
+    for col in [1, 2, 3]:
+        ws.column_dimensions[chr(64 + col)].width = 14
+    ws.column_dimensions['D'].width = 12
+    ws.column_dimensions['E'].width = 30
+    for col in [6, 7, 8, 9]:
+        ws.column_dimensions[chr(64 + col)].width = 13
+
+    wh_code = (request.args.get('wh') or 'ALL').upper()
+    fname = f"FastWMS_Inventory_{date.today().isoformat()}_{wh_code}.xlsx"
+
+    import io
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name=fname,
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
 def _get_or_create_wms_inventory(warehouse_id, location_id, product_id):

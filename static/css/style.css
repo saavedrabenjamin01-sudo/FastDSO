@@ -7587,3 +7587,119 @@ body{
 .result-card-danger .result-title { color: #dc2626; }
 .result-card-warning .result-title { color: #d97706; }
 .result-card-info .result-title { color: #2563eb; }
+
+/* ========== FastWMS Inventory ========== */
+.wms-info-callout {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 0.82rem;
+  color: #0369a1;
+}
+.wms-kpi-micro {
+  font-size: 0.7rem;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+.wms-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.85rem;
+}
+.wms-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.wms-table thead th {
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 10px 12px;
+  border-bottom: 2px solid #e2e8f0;
+  white-space: nowrap;
+}
+.wms-table tbody tr {
+  transition: background 0.15s;
+}
+.wms-table tbody tr:nth-child(4n+1) {
+  background: #fafbfc;
+}
+.wms-table tbody tr:hover {
+  background: #f1f5f9;
+}
+.wms-table tbody td {
+  padding: 8px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: middle;
+}
+.wms-sku {
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 0.82rem;
+  letter-spacing: 0.3px;
+  color: #1e40af;
+}
+.wms-loc-code {
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 0.8rem;
+  color: #334155;
+}
+.wms-type-badge {
+  font-size: 0.6rem !important;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+.wms-product-name {
+  display: inline-block;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.wms-detail-row td {
+  background: #f8fafc !important;
+  padding: 0 !important;
+}
+.wms-detail-panel {
+  padding: 16px 20px;
+  border-left: 3px solid #6366f1;
+  margin: 4px 12px 8px 12px;
+  border-radius: 0 8px 8px 0;
+  background: #fff;
+}
+.wms-detail-header {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #1e293b;
+  margin-bottom: 12px;
+}
+.wms-detail-metric {
+  background: #f1f5f9;
+  border-radius: 8px;
+  padding: 10px 14px;
+  text-align: center;
+}
+.wms-detail-metric-label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.wms-detail-metric-value {
+  display: block;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #1e293b;
+}
+@media (max-width: 768px) {
+  .wms-product-name { max-width: 120px; }
+  .wms-table { font-size: 0.8rem; }
+}

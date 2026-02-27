@@ -63,7 +63,8 @@ Do not make changes to the folder `Excel tipo/`.
 - **Dashboard por Categoría**: An executive dashboard for category-level analytics.
 - **Stock Query Module**: Rich list+detail view for inventory consultation with paginated product table, search, filters, status badges, and action links.
 - **AI Copilot (GPT V1 Cross FastDSO)**: Read-only AI analysis layer for distribution runs and forecasts. Features executive narratives, anomaly detection, and suggested parameter tweaks. Utilizes a dual-provider architecture (OpenAI and Ollama) with a strict JSON contract for output.
-- **FastWMS (Warehouse Management Module)**: Integrated WMS module for location-level inventory tracking within the CD. Includes models for warehouses, locations, inventory, and movements. Supports location-to-location transfers with audit trails.
+- **FastWMS (Warehouse Management Module)**: Integrated WMS module for location-level inventory tracking within the CD. Models: `WmsWarehouse`, `WmsLocation`, `WmsInventory` (with `updated_at`), `WmsMovement`, `WmsMoveRun`, `WmsMoveLine`, `WmsInventoryEvent`. Default records: warehouse MAIN, location BULK-DEFAULT. Stock CD upload accepts WMS columns; `replace_all` preserves movement history (optional `wms_reset` checkbox). Sidebar: "Inventory by Location" and "Moves". Permission: `wms:view`.
+- **FastWMS Inventory Page**: Full-featured inventory view with filter bar (search, warehouse, location, stock status, min units/pallets), 4 KPI cards, sortable table (avail desc/asc, units desc, sku asc) with sticky header and zebra rows, 25-row pagination, row actions (expand detail, prefill Move, disabled Reserve), inline detail panel with metrics and quick links, proper empty states, info callout. Export: `GET /wms/inventory/export` returns filtered .xlsx. CSS: `wms-table`, `wms-detail-panel`, `wms-info-callout` in style.css.
 
 ## External Dependencies
 - **Database**: SQLite (for `app.db`)
