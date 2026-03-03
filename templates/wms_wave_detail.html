@@ -9,8 +9,15 @@
       <p class="text-muted mb-0">Folio: {{ plan.folio }} &nbsp;|&nbsp; Bodega: {{ wave.warehouse_code }}</p>
     </div>
     <div class="ms-auto d-flex gap-2 align-items-center">
-      <span class="urgency-pill urgency-{{ wave.priority|lower }}">{{ wave.priority }}</span>
-      <span class="badge {% if wave.status == 'RELEASED' %}bg-info{% elif wave.status == 'IN_PROGRESS' %}bg-primary{% elif wave.status == 'DONE' %}bg-success{% elif wave.status == 'NEEDS_REVIEW' %}bg-danger{% else %}bg-secondary{% endif %}" style="font-size:0.8rem; padding:6px 12px;">
+      {% if wave.urgency_level == 'URGENT' %}
+      <span class="badge" style="background:#ef4444;">URGENT</span>
+      {% elif wave.urgency_level == 'MEDIUM' %}
+      <span class="badge" style="background:#f59e0b;color:#000;">MEDIUM</span>
+      {% else %}
+      <span class="badge" style="background:#3b82f6;">LOW</span>
+      {% endif %}
+      {% set sc = {'READY_TO_ASSIGN':'#6b7280','ASSIGNED':'#8b5cf6','IN_PROGRESS':'#14b8a6','PICKED':'#22c55e','CLOSED':'#374151','NEEDS_REVIEW':'#f59e0b','CANCELLED':'#9ca3af','DONE':'#22c55e','RELEASED':'#3b82f6'} %}
+      <span class="badge" style="background:{{ sc.get(wave.status, '#6b7280') }};{% if wave.status in ('NEEDS_REVIEW',) %}color:#000;{% endif %} font-size:0.8rem; padding:6px 12px;">
         {{ wave.status }}
       </span>
     </div>
@@ -66,23 +73,24 @@
 
 {% if can_operate %}
 <div class="d-flex gap-2 mb-4">
-  {% if wave.status == 'RELEASED' %}
+  {% if wave.status == 'ASSIGNED' and (wave.assigned_to == current_user.id or current_user.has_permission('admin:users')) %}
   <form method="post" action="{{ url_for('wms_wave_start_picking', wave_id=wave.id) }}">
     <button type="submit" class="btn btn-primary">
-      <i class="bi bi-play-circle"></i> Marcar en Picking
+      <i class="bi bi-play-circle"></i> Iniciar Picking
     </button>
   </form>
   {% endif %}
-  {% if wave.status == 'IN_PROGRESS' and fully_reserved %}
-  <form method="post" action="{{ url_for('wms_wave_finish_picking', wave_id=wave.id) }}" onsubmit="return confirm('¿Confirmar finalización de picking? Se descontará el stock del inventario WMS.')">
-    <button type="submit" class="btn btn-success">
-      <i class="bi bi-check-circle"></i> Finalizar Picking
+  {% if wave.status == 'IN_PROGRESS' %}
+  <a href="{{ url_for('wms_wave_pick', wave_id=wave.id) }}" class="btn btn-primary">
+    <i class="bi bi-cart-check"></i> Ir a Picking
+  </a>
+  {% endif %}
+  {% if wave.status == 'PICKED' %}
+  <form method="post" action="{{ url_for('wms_wave_close', wave_id=wave.id) }}" onsubmit="return confirm('¿Cerrar esta wave?')">
+    <button type="submit" class="btn btn-dark">
+      <i class="bi bi-check2-square"></i> Cerrar Wave
     </button>
   </form>
-  {% elif wave.status == 'IN_PROGRESS' and not fully_reserved %}
-  <button class="btn btn-secondary" disabled title="No se puede finalizar: hay SKUs con reserva parcial o sin stock">
-    <i class="bi bi-check-circle"></i> Finalizar Picking (requiere reserva completa)
-  </button>
   {% endif %}
 </div>
 {% endif %}
@@ -100,15 +108,16 @@
             <th>Producto</th>
             <th class="text-end">Solicitado</th>
             <th class="text-end">Reservado</th>
+            <th class="text-end">Recogido</th>
             <th class="text-end">Faltante</th>
             <th class="text-center">Estado</th>
-            <th>Nota</th>
-            <th class="text-center">Ubicaciones</th>
+            <th>Ubicación</th>
+            <th class="text-center">Detalle</th>
           </tr>
         </thead>
         <tbody>
           {% for t in tasks %}
-          <tr{% if t.shortage > 0 %} class="table-danger"{% elif t.status == 'DONE' %} class="table-success"{% endif %}>
+          <tr{% if t.shortage > 0 %} class="table-danger"{% elif t.status in ('DONE','PICKED') %} class="table-success"{% endif %}>
             <td><code>{{ t.sku }}</code></td>
             <td><span style="max-width:200px; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ t.product_name }}">{{ t.product_name }}</span></td>
             <td class="text-end fw-semibold">{{ "{:,}".format(t.qty_requested) }}</td>
@@ -121,6 +130,7 @@
               <span class="text-danger fw-semibold">0</span>
               {% endif %}
             </td>
+            <td class="text-end">{{ "{:,}".format(t.qty_picked) }}</td>
             <td class="text-end">
               {% if t.shortage > 0 %}
               <span class="text-danger fw-bold">-{{ "{:,}".format(t.shortage) }}</span>
@@ -129,13 +139,12 @@
               {% endif %}
             </td>
             <td class="text-center">
-              <span class="badge {% if t.status == 'OPEN' %}bg-secondary{% elif t.status == 'PICKING' %}bg-primary{% elif t.status == 'DONE' %}bg-success{% else %}bg-dark{% endif %}">
-                {{ t.status }}
-              </span>
+              {% set tsc = {'PENDING':'bg-secondary','OPEN':'bg-secondary','PICKING':'bg-primary','PICKED':'bg-success','SHORT':'bg-warning text-dark','DONE':'bg-success'} %}
+              <span class="badge {{ tsc.get(t.status, 'bg-dark') }}">{{ t.status }}</span>
             </td>
             <td>
-              {% if t.note %}
-              <span class="text-muted small" title="{{ t.note }}">{{ t.note[:40] }}{% if t.note|length > 40 %}…{% endif %}</span>
+              {% if t.get('location_hint') %}
+              <span class="badge bg-light text-dark border"><i class="bi bi-geo-alt"></i> {{ t.location_hint }}</span>
               {% endif %}
             </td>
             <td class="text-center">
@@ -150,7 +159,7 @@
           </tr>
           {% if t.reservations %}
           <tr class="collapse" id="res-{{ t.id }}">
-            <td colspan="8" class="bg-light px-4 py-2">
+            <td colspan="9" class="bg-light px-4 py-2">
               <table class="table table-sm table-borderless mb-0" style="font-size:0.8rem; max-width:400px;">
                 <thead>
                   <tr class="text-muted">
@@ -183,14 +192,21 @@
   </div>
   <div class="card-body small text-muted">
     <div class="row g-3">
-      <div class="col-md-4">
+      <div class="col-md-3">
         <i class="bi bi-calendar-plus"></i> Creada: {{ wave.created_at.strftime('%d/%m/%Y %H:%M') }}
       </div>
-      <div class="col-md-4">
+      <div class="col-md-3">
         <i class="bi bi-person"></i> Creada por: {{ wave.created_by.username if wave.created_by else '—' }}
       </div>
-      <div class="col-md-4">
+      <div class="col-md-3">
+        <i class="bi bi-person-badge"></i> Operador: {{ wave.assigned_operator.username if wave.assigned_operator else '—' }}
+        {% if wave.assigned_at %}<br><small>Asignado: {{ wave.assigned_at.strftime('%d/%m %H:%M') }}</small>{% endif %}
+      </div>
+      <div class="col-md-3">
         <i class="bi bi-building"></i> Bodega: {{ wave.warehouse_code }}
+        {% if wave.pick_started_at %}<br><small>Inicio pick: {{ wave.pick_started_at.strftime('%d/%m %H:%M') }}</small>{% endif %}
+        {% if wave.pick_finished_at %}<br><small>Fin pick: {{ wave.pick_finished_at.strftime('%d/%m %H:%M') }}</small>{% endif %}
+        {% if wave.closed_at %}<br><small>Cerrada: {{ wave.closed_at.strftime('%d/%m %H:%M') }}</small>{% endif %}
       </div>
     </div>
   </div>

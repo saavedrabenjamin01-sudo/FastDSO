@@ -89,7 +89,8 @@
           {% if waves_map.get(plan.id) %}
           {% set pw = waves_map[plan.id] %}
           <div class="kanban-card-wms mb-1">
-            <span class="badge {% if pw.status == 'RELEASED' %}bg-info{% elif pw.status == 'IN_PROGRESS' %}bg-primary{% elif pw.status == 'DONE' %}bg-success{% elif pw.status == 'NEEDS_REVIEW' %}bg-danger{% else %}bg-secondary{% endif %}" style="font-size:0.65rem;">
+            {% set wsc = {'READY_TO_ASSIGN':'bg-secondary','ASSIGNED':'bg-info','IN_PROGRESS':'bg-primary','PICKED':'bg-success','CLOSED':'bg-dark','NEEDS_REVIEW':'bg-danger','RELEASED':'bg-info','DONE':'bg-success'} %}
+            <span class="badge {{ wsc.get(pw.status, 'bg-secondary') }}" style="font-size:0.65rem;">
               WMS: {{ pw.status }}
             </span>
             <a href="{{ url_for('wms_wave_detail', wave_id=pw.id) }}" class="btn btn-xs btn-outline-dark" style="font-size:0.6rem; padding:1px 5px;" title="Ver Pick Wave">

@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}WMS Waves — FastDSO{% endblock %}
+{% block content %}
+<div class="content-header">
+  <h1><i class="bi bi-box-seam"></i> Centro de Pick Waves</h1>
+  <p class="text-muted">Gestión y asignación de waves de picking</p>
+</div>
+
+<div class="card mb-4">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label class="form-label small mb-0">Estado</label>
+        <select name="status" class="form-select form-select-sm" style="width:170px;">
+          <option value="">Todos</option>
+          {% for s in ['READY_TO_ASSIGN','ASSIGNED','IN_PROGRESS','PICKED','CLOSED','NEEDS_REVIEW','CANCELLED'] %}
+          <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0">Urgencia</label>
+        <select name="urgency" class="form-select form-select-sm" style="width:130px;">
+          <option value="">Todas</option>
+          {% for u in ['URGENT','MEDIUM','LOW'] %}
+          <option value="{{ u }}" {% if urgency_filter == u %}selected{% endif %}>{{ u }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto">
+        <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-funnel"></i> Filtrar</button>
+        <a href="{{ url_for('wms_waves_list') }}" class="btn btn-sm btn-outline-secondary">Limpiar</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0" style="font-size:0.85rem;">
+        <thead class="table-light">
+          <tr>
+            <th>#</th>
+            <th>Folio</th>
+            <th class="text-center">Urgencia</th>
+            <th class="text-center">Estado</th>
+            <th class="text-end">Líneas</th>
+            <th class="text-end">Unidades</th>
+            <th>Operador</th>
+            <th>Creada</th>
+            <th class="text-center">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for w in waves %}
+          <tr>
+            <td>{{ w.id }}</td>
+            <td>
+              <a href="{{ url_for('wms_wave_detail', wave_id=w.id) }}" class="fw-semibold">
+                {{ w.plan.folio if w.plan else '—' }}
+              </a>
+            </td>
+            <td class="text-center">
+              {% if w.urgency_level == 'URGENT' %}
+              <span class="badge" style="background:#ef4444;">URGENT</span>
+              {% elif w.urgency_level == 'MEDIUM' %}
+              <span class="badge" style="background:#f59e0b;color:#000;">MEDIUM</span>
+              {% else %}
+              <span class="badge" style="background:#3b82f6;">LOW</span>
+              {% endif %}
+            </td>
+            <td class="text-center">
+              {% set sc = {'READY_TO_ASSIGN':'#6b7280','ASSIGNED':'#8b5cf6','IN_PROGRESS':'#14b8a6','PICKED':'#22c55e','CLOSED':'#374151','NEEDS_REVIEW':'#f59e0b','CANCELLED':'#9ca3af'} %}
+              <span class="badge" style="background:{{ sc.get(w.status, '#6b7280') }};{% if w.status in ('NEEDS_REVIEW',) %}color:#000;{% endif %}">{{ w.status }}</span>
+            </td>
+            <td class="text-end">{{ w.total_lines }}</td>
+            <td class="text-end">{{ "{:,}".format(w.total_units) }}</td>
+            <td>
+              {% if w.assigned_operator %}
+              <span class="badge bg-light text-dark border"><i class="bi bi-person"></i> {{ w.assigned_operator.username }}</span>
+              {% else %}
+              <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            <td class="text-muted small">{{ w.created_at.strftime('%d/%m %H:%M') if w.created_at else '—' }}</td>
+            <td class="text-center">
+              {% if w.status in ('READY_TO_ASSIGN', 'ASSIGNED') %}
+              <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#assignModal{{ w.id }}">
+                <i class="bi bi-person-plus"></i> {% if w.status == 'ASSIGNED' %}Re{% endif %}Asignar
+              </button>
+              {% endif %}
+              {% if w.status == 'PICKED' %}
+              <form method="post" action="{{ url_for('wms_wave_close', wave_id=w.id) }}" class="d-inline">
+                <button class="btn btn-sm btn-outline-dark"><i class="bi bi-check2-square"></i> Cerrar</button>
+              </form>
+              {% endif %}
+              <a href="{{ url_for('wms_wave_detail', wave_id=w.id) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-eye"></i></a>
+            </td>
+          </tr>
+          {% endfor %}
+          {% if not waves %}
+          <tr><td colspan="9" class="text-center text-muted py-4">No hay waves con los filtros seleccionados.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% for w in waves %}
+{% if w.status in ('READY_TO_ASSIGN', 'ASSIGNED') %}
+<div class="modal fade" id="assignModal{{ w.id }}" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <form method="post" action="{{ url_for('wms_wave_assign', wave_id=w.id) }}">
+        <div class="modal-header">
+          <h6 class="modal-title">Asignar Wave #{{ w.id }}</h6>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-muted mb-2">Folio: <strong>{{ w.plan.folio if w.plan else '—' }}</strong></p>
+          <label class="form-label">Operador</label>
+          <select name="operator_id" class="form-select" required>
+            <option value="">Seleccione...</option>
+            {% for op in operators %}
+            <option value="{{ op.id }}" {% if w.assigned_to == op.id %}selected{% endif %}>{{ op.username }} ({{ op.role }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-check"></i> Confirmar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endfor %}
+{% endblock %}

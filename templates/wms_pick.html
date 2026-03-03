@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}Picking Wave #{{ wave.id }} — FastDSO{% endblock %}
+{% block content %}
+<div class="content-header">
+  <h1><i class="bi bi-cart-check"></i> Picking — {{ wave.plan.folio if wave.plan else 'Wave #' ~ wave.id }}</h1>
+  <p class="text-muted">Registre cantidades recogidas por línea</p>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body py-3">
+    <div class="row align-items-center g-3">
+      <div class="col-md-4">
+        <div class="d-flex align-items-center gap-2">
+          <span class="fw-semibold">Progreso:</span>
+          <div class="progress flex-grow-1" style="height:20px;">
+            <div class="progress-bar {% if progress_pct == 100 %}bg-success{% elif progress_pct > 0 %}bg-primary{% else %}bg-secondary{% endif %}"
+                 style="width:{{ progress_pct }}%;">{{ progress_pct }}%</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-auto">
+        <span class="badge bg-light text-dark border"><i class="bi bi-list-check"></i> {{ done_count }}/{{ total_count }} líneas</span>
+      </div>
+      <div class="col-auto">
+        <span class="badge bg-light text-dark border"><i class="bi bi-boxes"></i> {{ "{:,}".format(wave.picked_units or 0) }}/{{ "{:,}".format(wave.total_units or 0) }} uds</span>
+      </div>
+      {% if (wave.short_units or 0) > 0 %}
+      <div class="col-auto">
+        <span class="badge bg-danger"><i class="bi bi-exclamation-triangle"></i> {{ "{:,}".format(wave.short_units or 0) }} uds faltantes</span>
+      </div>
+      {% endif %}
+      <div class="col-auto ms-auto">
+        {% if all_done %}
+        <form method="post" action="{{ url_for('wms_wave_finish_picking', wave_id=wave.id) }}" class="d-inline">
+          <button class="btn btn-success"><i class="bi bi-check2-all"></i> Finalizar Picking</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0" style="font-size:0.85rem;">
+        <thead class="table-light">
+          <tr>
+            <th>SKU</th>
+            <th>Producto</th>
+            <th>Ubicación</th>
+            <th class="text-end">Solicitado</th>
+            <th class="text-center" style="width:180px;">Recogido</th>
+            <th class="text-end">Faltante</th>
+            <th class="text-center">Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in tasks %}
+          <tr class="{% if t.status == 'PICKED' %}table-success{% elif t.status == 'SHORT' %}table-warning{% endif %}">
+            <td><code>{{ t.sku }}</code></td>
+            <td>
+              <span style="max-width:200px; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                    title="{{ t.product_name or t.sku }}">{{ t.product_name or t.sku }}</span>
+              {% if t.category %}<br><small class="text-muted">{{ t.category }}</small>{% endif %}
+            </td>
+            <td>
+              {% if t.location_hint %}
+              <span class="badge bg-light text-dark border"><i class="bi bi-geo-alt"></i> {{ t.location_hint }}</span>
+              {% else %}
+              <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            <td class="text-end fw-semibold">{{ "{:,}".format(t.qty_requested) }}</td>
+            <td>
+              <form method="post" action="{{ url_for('wms_wave_pick_task', wave_id=wave.id, task_id=t.id) }}" class="d-flex gap-1 align-items-center justify-content-center">
+                <input type="number" name="picked_qty" value="{{ t.qty_picked or 0 }}" min="0" max="{{ t.qty_requested }}"
+                       class="form-control form-control-sm text-center" style="width:70px;">
+                <button type="submit" class="btn btn-sm btn-outline-primary" title="Guardar"><i class="bi bi-check"></i></button>
+                <button type="submit" name="picked_qty" value="{{ t.qty_requested }}" class="btn btn-sm btn-outline-success" title="Todo"><i class="bi bi-check-all"></i></button>
+                <button type="submit" name="picked_qty" value="0" class="btn btn-sm btn-outline-danger" title="Faltante total"><i class="bi bi-x"></i></button>
+              </form>
+            </td>
+            <td class="text-end">
+              {% if (t.short_qty or 0) > 0 %}
+              <span class="text-danger fw-semibold">{{ "{:,}".format(t.short_qty or 0) }}</span>
+              {% else %}
+              <span class="text-muted">0</span>
+              {% endif %}
+            </td>
+            <td class="text-center">
+              {% if t.status == 'PICKED' %}
+              <span class="badge bg-success">PICKED</span>
+              {% elif t.status == 'SHORT' %}
+              <span class="badge bg-warning text-dark">SHORT</span>
+              {% else %}
+              <span class="badge bg-secondary">PENDING</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="mt-3">
+  <a href="{{ url_for('wms_my_waves') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Volver a Mi Picking</a>
+</div>
+{% endblock %}

@@ -207,6 +207,18 @@
           <span class="nav-icon"><i class="bi bi-arrow-left-right"></i></span>
           <span class="nav-text">Moves</span>
         </a>
+        <a class="nav-link" href="{{ url_for('wms_waves_list') }}">
+          <span class="nav-icon"><i class="bi bi-box-seam"></i></span>
+          <span class="nav-text">WMS Waves</span>
+        </a>
+        <a class="nav-link" href="{{ url_for('wms_my_waves') }}">
+          <span class="nav-icon"><i class="bi bi-person-badge"></i></span>
+          <span class="nav-text">Mi Picking</span>
+        </a>
+        <a class="nav-link" href="{{ url_for('wms_kpis') }}">
+          <span class="nav-icon"><i class="bi bi-speedometer2"></i></span>
+          <span class="nav-text">WMS KPIs</span>
+        </a>
       </div>
     </div>
     {% endif %}

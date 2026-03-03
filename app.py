@@ -1334,10 +1334,16 @@ def wms_create_pick_wave_for_plan(plan_id, priority='MEDIUM', warehouse_code='MA
     for inv in inv_rows:
         inv_by_product.setdefault(inv.product_id, []).append(inv)
 
+    urgency = priority if priority in WMS_URGENCY_RANK else 'MEDIUM'
     wave = WmsPickWave(
         warehouse_code=warehouse_code,
         plan_id=plan_id,
         priority=priority,
+        urgency_level=urgency,
+        priority_rank=WMS_URGENCY_RANK.get(urgency, 2),
+        status='READY_TO_ASSIGN',
+        total_lines=len(demand_map),
+        total_units=sum(demand_map.values()),
         created_by_user_id=user.id if user else None
     )
     db.session.add(wave)
@@ -1390,30 +1396,40 @@ def wms_create_pick_wave_for_plan(plan_id, priority='MEDIUM', warehouse_code='MA
 
         total_reserved += task_reserved
 
-        task_status = 'OPEN'
+        task_status = 'PENDING'
         task_note = None
         if task_reserved == 0:
-            task_status = 'OPEN'
             task_note = 'NO_STOCK_AVAILABLE'
             has_shortage = True
         elif task_reserved < qty_needed:
             task_note = f'PARTIAL: reservado {task_reserved}/{qty_needed}'
             has_shortage = True
 
+        best_loc = None
+        if reservations_for_task:
+            best_res = max(reservations_for_task, key=lambda r: r.qty_reserved)
+            loc_obj = db.session.get(WmsLocation, best_res.location_id)
+            if loc_obj:
+                best_loc = loc_obj.location_code
+
         task = WmsPickTask(
             wave_id=wave.id,
             product_id=pid,
             sku=sku,
+            product_name=product.name if product else sku,
+            category=product.category if product else None,
             qty_requested=qty_needed,
             qty_picked=0,
+            short_qty=0,
             status=task_status,
+            location_hint=best_loc,
             note=task_note
         )
         db.session.add(task)
         for res in reservations_for_task:
             db.session.add(res)
 
-    wave.status = 'NEEDS_REVIEW' if has_shortage else 'RELEASED'
+    wave.status = 'NEEDS_REVIEW' if has_shortage else 'READY_TO_ASSIGN'
     db.session.flush()
 
     print(f"[WMS] wave created: wave_id={wave.id}, plan_id={plan_id}, "
@@ -9700,13 +9716,15 @@ def wms_wave_detail(wave_id):
         tasks_data.append({
             'id': t.id,
             'sku': t.sku,
-            'product_name': t.product.name if t.product else t.sku,
+            'product_name': t.product_name or (t.product.name if t.product else t.sku),
             'qty_requested': t.qty_requested,
             'qty_reserved': task_reserved,
             'qty_picked': t.qty_picked,
+            'short_qty': t.short_qty,
             'shortage': max(0, t.qty_requested - task_reserved),
             'status': t.status,
             'note': t.note,
+            'location_hint': t.location_hint,
             'reservations': prod_reservations
         })
 
@@ -9727,87 +9745,429 @@ def wms_wave_detail(wave_id):
     )
 
 
+def _wms_check_priority_gating(wave):
+    if wave.urgency_level == 'URGENT':
+        return True, None
+    urgent_active = db.session.query(WmsPickWave).filter(
+        WmsPickWave.urgency_level == 'URGENT',
+        WmsPickWave.status.in_(WMS_WAVE_ACTIVE_STATUSES),
+        WmsPickWave.id != wave.id
+    ).first()
+    if urgent_active:
+        return False, f'Hay wave(s) URGENTE(s) pendientes (#{urgent_active.id}). Resuelva primero las urgentes.'
+    return True, None
+
+
+def _wms_update_wave_counters(wave):
+    tasks = wave.tasks.all()
+    wave.picked_lines = sum(1 for t in tasks if t.status in ('PICKED', 'SHORT'))
+    wave.picked_units = sum(t.qty_picked for t in tasks)
+    wave.short_lines = sum(1 for t in tasks if t.status == 'SHORT')
+    wave.short_units = sum(t.short_qty for t in tasks)
+
+
+def _wms_rollup_operator_kpi(user_id, work_date):
+    waves = db.session.query(WmsPickWave).filter(
+        WmsPickWave.assigned_to == user_id,
+        WmsPickWave.status.in_(('PICKED', 'CLOSED', 'DONE')),
+        func.date(WmsPickWave.pick_finished_at) == work_date
+    ).all()
+    if not waves:
+        db.session.query(WmsOperatorKpiDaily).filter_by(user_id=user_id, work_date=work_date).delete()
+        return
+    total_seconds = 0
+    total_units = 0
+    total_lines = 0
+    short_units = 0
+    short_lines = 0
+    for w in waves:
+        if w.pick_started_at and w.pick_finished_at:
+            total_seconds += int((w.pick_finished_at - w.pick_started_at).total_seconds())
+        total_units += w.picked_units + w.short_units
+        total_lines += w.total_lines
+        short_units += w.short_units
+        short_lines += w.short_lines
+    hours = total_seconds / 3600.0 if total_seconds > 0 else 0
+    kpi = db.session.query(WmsOperatorKpiDaily).filter_by(user_id=user_id, work_date=work_date).first()
+    if not kpi:
+        kpi = WmsOperatorKpiDaily(user_id=user_id, work_date=work_date)
+        db.session.add(kpi)
+    kpi.waves_completed = len(waves)
+    kpi.total_pick_seconds = total_seconds
+    kpi.total_units = total_units
+    kpi.total_lines = total_lines
+    kpi.short_units = short_units
+    kpi.short_lines = short_lines
+    kpi.units_per_hour = round(total_units / hours, 1) if hours > 0 else 0
+    kpi.lines_per_hour = round(total_lines / hours, 1) if hours > 0 else 0
+    kpi.accuracy_rate = round(1 - (short_units / max(total_units, 1)), 4)
+
+
+@app.route('/wms/waves')
+@login_required
+@require_permission('wms:view')
+def wms_waves_list():
+    status_filter = request.args.get('status', '')
+    urgency_filter = request.args.get('urgency', '')
+    q = db.session.query(WmsPickWave).order_by(WmsPickWave.priority_rank, WmsPickWave.created_at.desc())
+    if status_filter:
+        q = q.filter(WmsPickWave.status == status_filter)
+    if urgency_filter:
+        q = q.filter(WmsPickWave.urgency_level == urgency_filter)
+    waves = q.limit(100).all()
+    operators = db.session.query(User).filter(User.role.in_(['WarehouseOps', 'Admin'])).filter(User.is_active == True).all()
+    return render_template('wms_waves.html', waves=waves, operators=operators,
+                           status_filter=status_filter, urgency_filter=urgency_filter)
+
+
+@app.route('/wms/waves/<int:wave_id>/assign', methods=['POST'])
+@login_required
+@require_permission('wms:view')
+def wms_wave_assign(wave_id):
+    wave = db.session.get(WmsPickWave, wave_id)
+    if not wave:
+        flash('Wave no encontrada.', 'warning')
+        return redirect(url_for('wms_waves_list'))
+    if wave.status not in ('READY_TO_ASSIGN', 'ASSIGNED', 'RELEASED'):
+        flash(f'No se puede asignar wave en estado {wave.status}.', 'warning')
+        return redirect(url_for('wms_waves_list'))
+    allowed, msg = _wms_check_priority_gating(wave)
+    if not allowed:
+        flash(msg, 'danger')
+        return redirect(url_for('wms_waves_list'))
+    operator_id = request.form.get('operator_id', type=int)
+    if not operator_id:
+        flash('Seleccione un operador.', 'warning')
+        return redirect(url_for('wms_waves_list'))
+    operator = db.session.get(User, operator_id)
+    if not operator:
+        flash('Operador no encontrado.', 'danger')
+        return redirect(url_for('wms_waves_list'))
+    old_operator = wave.assigned_to
+    wave.assigned_to = operator_id
+    wave.assigned_at = datetime.utcnow()
+    wave.status = 'ASSIGNED'
+    db.session.commit()
+    action_str = 'reasignada' if old_operator else 'asignada'
+    log_audit(action='wms.wave.assign', entity_type='wms_pick_wave', entity_id=wave.id,
+              status='success', message=f'Wave #{wave.id} {action_str} a {operator.username}')
+    flash(f'Wave #{wave.id} {action_str} a {operator.username}', 'success')
+    return redirect(url_for('wms_waves_list'))
+
+
+@app.route('/wms/my-waves')
+@login_required
+@require_permission('wms:view')
+def wms_my_waves():
+    waves = db.session.query(WmsPickWave).filter(
+        WmsPickWave.assigned_to == current_user.id,
+        WmsPickWave.status.in_(('ASSIGNED', 'IN_PROGRESS'))
+    ).order_by(WmsPickWave.priority_rank, WmsPickWave.created_at).all()
+    return render_template('wms_my_waves.html', waves=waves)
+
+
 @app.route('/wms/waves/<int:wave_id>/start_picking', methods=['POST'])
 @login_required
-@require_permission('planner:operate')
+@require_permission('wms:view')
 def wms_wave_start_picking(wave_id):
     wave = db.session.get(WmsPickWave, wave_id)
     if not wave:
         flash('Pick Wave no encontrada.', 'warning')
-        return redirect(url_for('planner'))
-    if wave.status not in ('RELEASED',):
-        flash(f'Solo se puede iniciar picking en waves con estado RELEASED (actual: {wave.status})', 'warning')
-        return redirect(url_for('wms_wave_detail', wave_id=wave_id))
+        return redirect(url_for('wms_my_waves'))
+    if wave.assigned_to != current_user.id and not current_user.has_permission('admin:users'):
+        flash('Esta wave no está asignada a usted.', 'danger')
+        return redirect(url_for('wms_my_waves'))
+    if wave.status not in ('ASSIGNED',):
+        flash(f'Solo se puede iniciar picking en waves ASIGNADAS (actual: {wave.status})', 'warning')
+        return redirect(url_for('wms_wave_pick', wave_id=wave_id))
+    allowed, msg = _wms_check_priority_gating(wave)
+    if not allowed:
+        flash(msg, 'danger')
+        return redirect(url_for('wms_my_waves'))
     wave.status = 'IN_PROGRESS'
-    for task in wave.tasks.filter(WmsPickTask.status == 'OPEN').all():
-        task.status = 'PICKING'
+    wave.pick_started_at = datetime.utcnow()
     db.session.commit()
     log_audit(action='wms.wave.start_picking', entity_type='wms_pick_wave', entity_id=wave.id,
-              status='success', message=f'Pick Wave #{wave.id} marcada EN PROGRESO')
-    flash(f'Pick Wave #{wave.id} marcada en picking', 'success')
-    return redirect(url_for('wms_wave_detail', wave_id=wave_id))
+              status='success', message=f'Pick Wave #{wave.id} iniciada por {current_user.username}')
+    flash(f'Pick Wave #{wave.id} — picking iniciado', 'success')
+    return redirect(url_for('wms_wave_pick', wave_id=wave_id))
+
+
+@app.route('/wms/waves/<int:wave_id>/pick', methods=['GET'])
+@login_required
+@require_permission('wms:view')
+def wms_wave_pick(wave_id):
+    wave = db.session.get(WmsPickWave, wave_id)
+    if not wave:
+        flash('Pick Wave no encontrada.', 'warning')
+        return redirect(url_for('wms_my_waves'))
+    if wave.assigned_to != current_user.id and not current_user.has_permission('admin:users'):
+        flash('Esta wave no está asignada a usted.', 'danger')
+        return redirect(url_for('wms_my_waves'))
+    if wave.status not in ('IN_PROGRESS',):
+        flash('La wave no está en progreso.', 'warning')
+        return redirect(url_for('wms_wave_detail', wave_id=wave_id))
+    tasks = wave.tasks.order_by(WmsPickTask.sku).all()
+    done_count = sum(1 for t in tasks if t.status in ('PICKED', 'SHORT'))
+    total_count = len(tasks)
+    progress_pct = round(done_count / total_count * 100) if total_count > 0 else 0
+    all_done = all(t.status != 'PENDING' for t in tasks) and total_count > 0
+    return render_template('wms_pick.html', wave=wave, tasks=tasks,
+                           done_count=done_count, total_count=total_count,
+                           progress_pct=progress_pct, all_done=all_done)
+
+
+@app.route('/wms/waves/<int:wave_id>/pick_task/<int:task_id>', methods=['POST'])
+@login_required
+@require_permission('wms:view')
+def wms_wave_pick_task(wave_id, task_id):
+    wave = db.session.get(WmsPickWave, wave_id)
+    if not wave or wave.status != 'IN_PROGRESS':
+        flash('Wave no disponible para picking.', 'warning')
+        return redirect(url_for('wms_my_waves'))
+    if wave.assigned_to != current_user.id and not current_user.has_permission('admin:users'):
+        flash('No autorizado.', 'danger')
+        return redirect(url_for('wms_my_waves'))
+    task = db.session.get(WmsPickTask, task_id)
+    if not task or task.wave_id != wave_id:
+        flash('Tarea no encontrada.', 'warning')
+        return redirect(url_for('wms_wave_pick', wave_id=wave_id))
+    picked = request.form.get('picked_qty', type=int)
+    if picked is None or picked < 0:
+        picked = 0
+    if picked > task.qty_requested:
+        picked = task.qty_requested
+    task.qty_picked = picked
+    task.short_qty = max(0, task.qty_requested - picked)
+    task.updated_at = datetime.utcnow()
+    if picked == task.qty_requested:
+        task.status = 'PICKED'
+    elif picked == 0:
+        task.status = 'SHORT'
+    else:
+        task.status = 'SHORT'
+    _wms_update_wave_counters(wave)
+    db.session.commit()
+    return redirect(url_for('wms_wave_pick', wave_id=wave_id))
 
 
 @app.route('/wms/waves/<int:wave_id>/finish_picking', methods=['POST'])
 @login_required
-@require_permission('planner:operate')
+@require_permission('wms:view')
 def wms_wave_finish_picking(wave_id):
     wave = db.session.get(WmsPickWave, wave_id)
     if not wave:
         flash('Pick Wave no encontrada.', 'warning')
-        return redirect(url_for('planner'))
+        return redirect(url_for('wms_my_waves'))
     if wave.status not in ('IN_PROGRESS',):
         flash(f'Solo se puede finalizar picking en waves EN PROGRESO (actual: {wave.status})', 'warning')
         return redirect(url_for('wms_wave_detail', wave_id=wave_id))
+    if wave.assigned_to != current_user.id and not current_user.has_permission('admin:users'):
+        flash('No autorizado.', 'danger')
+        return redirect(url_for('wms_my_waves'))
+
+    tasks = wave.tasks.all()
+    pending = [t for t in tasks if t.status == 'PENDING']
+    if pending:
+        flash(f'No se puede finalizar: {len(pending)} tarea(s) sin registrar. Complete todas las líneas primero.', 'danger')
+        return redirect(url_for('wms_wave_pick', wave_id=wave_id))
+
+    wh = db.session.query(WmsWarehouse).filter_by(code=wave.warehouse_code).first()
+
+    picked_by_product = {}
+    for t in tasks:
+        picked_by_product[t.product_id] = picked_by_product.get(t.product_id, 0) + (t.qty_picked or 0)
 
     reservations = wave.reservations.all()
     res_by_product = {}
     for res in reservations:
-        res_by_product.setdefault(res.product_id, 0)
-        res_by_product[res.product_id] += res.qty_reserved
+        res_by_product.setdefault(res.product_id, []).append(res)
 
-    tasks = wave.tasks.all()
-    for t in tasks:
-        task_reserved = res_by_product.get(t.product_id, 0)
-        if task_reserved < t.qty_requested:
-            flash(f'No se puede finalizar: SKU {t.sku} tiene reserva parcial ({task_reserved}/{t.qty_requested}). Resuelva las incidencias primero.', 'danger')
-            return redirect(url_for('wms_wave_detail', wave_id=wave_id))
+    for product_id, product_reservations in res_by_product.items():
+        actual_picked = picked_by_product.get(product_id, 0)
+        remaining_to_deduct = actual_picked
 
-    wh = db.session.query(WmsWarehouse).filter_by(code=wave.warehouse_code).first()
-    for res in reservations:
-        inv = (
-            db.session.query(WmsInventory)
-            .filter_by(warehouse_id=wh.id, location_id=res.location_id, product_id=res.product_id)
-            .first()
-        )
-        if inv:
-            inv.on_hand_units = max(0, (inv.on_hand_units or 0) - res.qty_reserved)
-            inv.allocated_units = max(0, (inv.allocated_units or 0) - res.qty_reserved)
-            inv.updated_at = datetime.utcnow()
+        for res in product_reservations:
+            if remaining_to_deduct <= 0:
+                deduct_from_this = 0
+            else:
+                deduct_from_this = min(res.qty_reserved, remaining_to_deduct)
+                remaining_to_deduct -= deduct_from_this
 
-        db.session.add(WmsInventoryEvent(
-            event_type='PICK_CONFIRM',
-            ref_type='pick_wave',
-            ref_id=str(wave.id),
-            warehouse_id=wh.id,
-            location_id=res.location_id,
-            product_id=res.product_id,
-            delta_units=-res.qty_reserved,
-            delta_pallets=0,
-            note=f"Picking confirmado: -{res.qty_reserved} uds desde wave #{wave.id}"
-        ))
+            release_back = res.qty_reserved - deduct_from_this
 
-    for t in tasks:
-        t.qty_picked = t.qty_requested
-        t.status = 'DONE'
+            inv = (
+                db.session.query(WmsInventory)
+                .filter_by(warehouse_id=wh.id, location_id=res.location_id, product_id=res.product_id)
+                .first()
+            )
+            if inv:
+                inv.on_hand_units = max(0, (inv.on_hand_units or 0) - deduct_from_this)
+                inv.allocated_units = max(0, (inv.allocated_units or 0) - res.qty_reserved)
+                inv.updated_at = datetime.utcnow()
 
-    wave.status = 'DONE'
+            if deduct_from_this > 0:
+                db.session.add(WmsInventoryEvent(
+                    event_type='PICK_CONFIRM',
+                    ref_type='pick_wave',
+                    ref_id=str(wave.id),
+                    warehouse_id=wh.id,
+                    location_id=res.location_id,
+                    product_id=res.product_id,
+                    delta_units=-deduct_from_this,
+                    delta_pallets=0,
+                    note=f"Picking confirmado: -{deduct_from_this} uds desde wave #{wave.id}"
+                ))
+            if release_back > 0:
+                db.session.add(WmsInventoryEvent(
+                    event_type='PICK_SHORT',
+                    ref_type='pick_wave',
+                    ref_id=str(wave.id),
+                    warehouse_id=wh.id,
+                    location_id=res.location_id,
+                    product_id=res.product_id,
+                    delta_units=0,
+                    delta_pallets=0,
+                    note=f"Liberado por short: +{release_back} uds reserva devuelta wave #{wave.id}"
+                ))
+
+    _wms_update_wave_counters(wave)
+    wave.status = 'PICKED'
+    wave.pick_finished_at = datetime.utcnow()
     db.session.commit()
+
+    try:
+        _wms_rollup_operator_kpi(wave.assigned_to, date.today())
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
 
     log_audit(action='wms.wave.finish_picking', entity_type='wms_pick_wave', entity_id=wave.id,
               status='success', message=f'Pick Wave #{wave.id} finalizada — stock descontado')
     flash(f'Pick Wave #{wave.id} finalizada — stock descontado del inventario WMS', 'success')
     return redirect(url_for('wms_wave_detail', wave_id=wave_id))
+
+
+@app.route('/wms/waves/<int:wave_id>/close', methods=['POST'])
+@login_required
+@require_permission('wms:view')
+def wms_wave_close(wave_id):
+    wave = db.session.get(WmsPickWave, wave_id)
+    if not wave:
+        flash('Wave no encontrada.', 'warning')
+        return redirect(url_for('wms_waves_list'))
+    if wave.status not in ('PICKED', 'DONE'):
+        flash(f'Solo se pueden cerrar waves con estado PICKED (actual: {wave.status}).', 'warning')
+        return redirect(url_for('wms_wave_detail', wave_id=wave_id))
+    wave.status = 'CLOSED'
+    wave.closed_at = datetime.utcnow()
+    if wave.plan:
+        if wave.plan.status == 'APPROVED':
+            wave.plan.status = 'READY_TO_DISPATCH'
+    db.session.commit()
+
+    try:
+        if wave.assigned_to and wave.pick_finished_at:
+            _wms_rollup_operator_kpi(wave.assigned_to, wave.pick_finished_at.date())
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    log_audit(action='wms.wave.close', entity_type='wms_pick_wave', entity_id=wave.id,
+              status='success', message=f'Wave #{wave.id} cerrada')
+    flash(f'Wave #{wave.id} cerrada exitosamente.', 'success')
+    return redirect(url_for('wms_waves_list'))
+
+
+@app.route('/wms/kpis')
+@login_required
+@require_permission('wms:view')
+def wms_kpis():
+    from_date_str = request.args.get('from_date', '')
+    to_date_str = request.args.get('to_date', '')
+    operator_id = request.args.get('operator_id', type=int)
+    urgency_filter = request.args.get('urgency', '')
+
+    try:
+        from_date = date.fromisoformat(from_date_str) if from_date_str else date.today() - timedelta(days=30)
+    except ValueError:
+        from_date = date.today() - timedelta(days=30)
+    try:
+        to_date = date.fromisoformat(to_date_str) if to_date_str else date.today()
+    except ValueError:
+        to_date = date.today()
+
+    q = db.session.query(WmsPickWave).filter(
+        WmsPickWave.status.in_(('PICKED', 'CLOSED', 'DONE')),
+        WmsPickWave.pick_finished_at.isnot(None),
+        func.date(WmsPickWave.pick_finished_at) >= from_date,
+        func.date(WmsPickWave.pick_finished_at) <= to_date,
+    )
+    if operator_id:
+        q = q.filter(WmsPickWave.assigned_to == operator_id)
+    if urgency_filter:
+        q = q.filter(WmsPickWave.urgency_level == urgency_filter)
+    waves = q.all()
+
+    total_waves = len(waves)
+    total_seconds = 0
+    total_units = 0
+    total_lines = 0
+    total_short_units = 0
+    for w in waves:
+        if w.pick_started_at and w.pick_finished_at:
+            total_seconds += int((w.pick_finished_at - w.pick_started_at).total_seconds())
+        total_units += w.picked_units + w.short_units
+        total_lines += w.total_lines
+        total_short_units += w.short_units
+    hours = total_seconds / 3600.0 if total_seconds > 0 else 0
+    avg_seconds = total_seconds / total_waves if total_waves > 0 else 0
+    global_uph = round(total_units / hours, 1) if hours > 0 else 0
+    global_lph = round(total_lines / hours, 1) if hours > 0 else 0
+    global_accuracy = round(1 - (total_short_units / max(total_units, 1)), 4)
+
+    op_map = {}
+    for w in waves:
+        if not w.assigned_to:
+            continue
+        op = op_map.setdefault(w.assigned_to, {
+            'user_id': w.assigned_to,
+            'username': w.assigned_operator.username if w.assigned_operator else f'ID-{w.assigned_to}',
+            'waves': 0, 'seconds': 0, 'units': 0, 'lines': 0, 'short_units': 0, 'short_lines': 0
+        })
+        op['waves'] += 1
+        if w.pick_started_at and w.pick_finished_at:
+            op['seconds'] += int((w.pick_finished_at - w.pick_started_at).total_seconds())
+        op['units'] += w.picked_units + w.short_units
+        op['lines'] += w.total_lines
+        op['short_units'] += w.short_units
+        op['short_lines'] += w.short_lines
+    operator_rows = []
+    for op in op_map.values():
+        h = op['seconds'] / 3600.0 if op['seconds'] > 0 else 0
+        operator_rows.append({
+            'user_id': op['user_id'],
+            'username': op['username'],
+            'waves': op['waves'],
+            'pick_hours': round(h, 2),
+            'units': op['units'],
+            'lines': op['lines'],
+            'uph': round(op['units'] / h, 1) if h > 0 else 0,
+            'lph': round(op['lines'] / h, 1) if h > 0 else 0,
+            'accuracy': round(1 - (op['short_units'] / max(op['units'], 1)), 4),
+            'short_units': op['short_units'],
+        })
+    operator_rows.sort(key=lambda r: r['uph'], reverse=True)
+
+    operators = db.session.query(User).filter(User.role.in_(['WarehouseOps', 'Admin'])).filter(User.is_active == True).all()
+
+    return render_template('wms_kpis.html',
+                           from_date=from_date.isoformat(), to_date=to_date.isoformat(),
+                           operator_id=operator_id, urgency_filter=urgency_filter,
+                           total_waves=total_waves, avg_seconds=int(avg_seconds),
+                           global_uph=global_uph, global_lph=global_lph,
+                           global_accuracy=global_accuracy,
+                           operator_rows=operator_rows, operators=operators)
 
 
 def _parse_distribution_manual_file(file):

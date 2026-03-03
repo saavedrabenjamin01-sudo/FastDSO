@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Mi Picking — FastDSO{% endblock %}
+{% block content %}
+<div class="content-header">
+  <h1><i class="bi bi-person-badge"></i> Mi Picking</h1>
+  <p class="text-muted">Waves asignadas a mí — listas para picking</p>
+</div>
+
+{% if not waves %}
+<div class="card">
+  <div class="card-body text-center py-5 text-muted">
+    <i class="bi bi-inbox" style="font-size:2rem;"></i>
+    <p class="mt-2 mb-0">No tiene waves pendientes de picking.</p>
+  </div>
+</div>
+{% else %}
+<div class="row g-3">
+  {% for w in waves %}
+  <div class="col-md-6 col-lg-4">
+    <div class="card h-100" style="border-left:4px solid {% if w.urgency_level == 'URGENT' %}#ef4444{% elif w.urgency_level == 'MEDIUM' %}#f59e0b{% else %}#3b82f6{% endif %};">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start mb-2">
+          <h6 class="mb-0">
+            <a href="{{ url_for('wms_wave_detail', wave_id=w.id) }}">{{ w.plan.folio if w.plan else 'Wave #' ~ w.id }}</a>
+          </h6>
+          {% if w.urgency_level == 'URGENT' %}
+          <span class="badge" style="background:#ef4444;">URGENT</span>
+          {% elif w.urgency_level == 'MEDIUM' %}
+          <span class="badge" style="background:#f59e0b;color:#000;">MEDIUM</span>
+          {% else %}
+          <span class="badge" style="background:#3b82f6;">LOW</span>
+          {% endif %}
+        </div>
+        <div class="d-flex gap-3 mb-3 small">
+          <span><i class="bi bi-list-ul"></i> {{ w.total_lines }} líneas</span>
+          <span><i class="bi bi-boxes"></i> {{ "{:,}".format(w.total_units) }} uds</span>
+        </div>
+        {% set sc = {'ASSIGNED':'#8b5cf6','IN_PROGRESS':'#14b8a6'} %}
+        <span class="badge mb-3" style="background:{{ sc.get(w.status, '#6b7280') }};">{{ w.status }}</span>
+        {% if w.status == 'ASSIGNED' %}
+        <form method="post" action="{{ url_for('wms_wave_start_picking', wave_id=w.id) }}">
+          <button class="btn btn-primary w-100"><i class="bi bi-play-fill"></i> Iniciar Picking</button>
+        </form>
+        {% elif w.status == 'IN_PROGRESS' %}
+        <a href="{{ url_for('wms_wave_pick', wave_id=w.id) }}" class="btn btn-success w-100">
+          <i class="bi bi-arrow-right-circle"></i> Continuar Picking
+        </a>
+        {% if w.pick_started_at %}
+        <p class="text-muted small mt-2 mb-0">Iniciado: {{ w.pick_started_at.strftime('%d/%m %H:%M') }}</p>
+        {% endif %}
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

@@ -23,7 +23,8 @@
           {% endif %}
           <span class="urgency-pill urgency-{{ plan.urgency|lower }}">{{ plan.urgency }}</span>
           {% if latest_wave %}
-          <span class="badge {% if latest_wave.status == 'RELEASED' %}bg-info{% elif latest_wave.status == 'IN_PROGRESS' %}bg-primary{% elif latest_wave.status == 'DONE' %}bg-success{% elif latest_wave.status == 'NEEDS_REVIEW' %}bg-danger{% else %}bg-secondary{% endif %}" style="font-size:0.7rem;">
+          {% set wsc = {'READY_TO_ASSIGN':'bg-secondary','ASSIGNED':'bg-info','IN_PROGRESS':'bg-primary','PICKED':'bg-success','CLOSED':'bg-dark','NEEDS_REVIEW':'bg-danger','RELEASED':'bg-info','DONE':'bg-success'} %}
+          <span class="badge {{ wsc.get(latest_wave.status, 'bg-secondary') }}" style="font-size:0.7rem;">
             WMS: {{ latest_wave.status }}
           </span>
           <a href="{{ url_for('wms_wave_detail', wave_id=latest_wave.id) }}" class="btn btn-sm btn-outline-dark" style="font-size:0.7rem;">
