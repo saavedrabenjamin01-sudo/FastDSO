@@ -68,6 +68,9 @@
         <div class="kanban-card" data-plan-id="{{ plan.id }}">
           <div class="kanban-card-header">
             <span class="kanban-folio">{{ plan.folio }}</span>
+            {% if plan.source == 'MANUAL' %}
+            <span class="badge bg-dark" style="font-size:0.6rem;">MANUAL</span>
+            {% endif %}
             <span class="urgency-pill urgency-{{ plan.urgency|lower }}">{{ plan.urgency }}</span>
           </div>
           <div class="kanban-card-chips">

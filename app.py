@@ -667,6 +667,7 @@ class DistributionPlan(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     folio = db.Column(db.String(50), unique=True, nullable=False, index=True)
     source_run_id = db.Column(db.String(36), nullable=True, index=True)
+    source = db.Column(db.String(10), nullable=False, default='AUTO')
     status = db.Column(db.String(20), nullable=False, default='APPROVED', index=True)
     urgency = db.Column(db.String(10), nullable=False, default='MEDIUM')
     notes_commercial = db.Column(db.Text, nullable=True)
@@ -705,7 +706,7 @@ class DistributionPlanLine(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     plan_id = db.Column(db.Integer, db.ForeignKey('distribution_plan.id'), nullable=False, index=True)
     product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
-    store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False)
+    store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=True)
     qty_planned = db.Column(db.Integer, nullable=False, default=0)
     line_notes = db.Column(db.Text, nullable=True)
 
@@ -1149,6 +1150,13 @@ def _ensure_wms_defaults(session=None):
                 conn.execute(text("ALTER TABLE wms_inventory ADD COLUMN updated_at DATETIME"))
                 conn.commit()
             print("[WMS] Added column wms_inventory.updated_at")
+    if 'distribution_plan' in inspector.get_table_names():
+        plan_cols = [c['name'] for c in inspector.get_columns('distribution_plan')]
+        if 'source' not in plan_cols:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE distribution_plan ADD COLUMN source VARCHAR(10) NOT NULL DEFAULT 'AUTO'"))
+                conn.commit()
+            print("[WMS] Added column distribution_plan.source")
     wh = s.query(WmsWarehouse).filter_by(code='MAIN').first()
     if not wh:
         wh = WmsWarehouse(code='MAIN', name='Main Warehouse')
@@ -9700,6 +9708,290 @@ def wms_wave_finish_picking(wave_id):
     return redirect(url_for('wms_wave_detail', wave_id=wave_id))
 
 
+def _parse_distribution_manual_file(file):
+    import csv, io
+    filename = file.filename.lower()
+    rows = []
+
+    if filename.endswith('.xlsx') or filename.endswith('.xls'):
+        import openpyxl
+        wb = openpyxl.load_workbook(file, read_only=True, data_only=True)
+        ws = wb.active
+        headers_raw = [str(c.value or '').strip().lower() for c in next(ws.iter_rows(min_row=1, max_row=1))]
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            rows.append(dict(zip(headers_raw, [c if c is not None else '' for c in row])))
+        wb.close()
+    elif filename.endswith('.csv'):
+        text = file.read().decode('utf-8-sig')
+        reader = csv.DictReader(io.StringIO(text))
+        for r in reader:
+            rows.append({k.strip().lower(): v.strip() if isinstance(v, str) else v for k, v in r.items()})
+    else:
+        return [], "Formato no soportado. Use CSV o XLSX."
+
+    if not rows:
+        return [], "Archivo vacío."
+
+    col_map = {}
+    sample_keys = list(rows[0].keys())
+    for k in sample_keys:
+        kn = k.strip().lower()
+        if kn in ('sku', 'codigo', 'código', 'product_code', 'code'):
+            col_map['sku'] = k
+        elif kn in ('quantity', 'qty', 'cantidad', 'units', 'unidades', 'qty_total'):
+            col_map['qty'] = k
+        elif kn in ('product_name', 'producto', 'nombre', 'name', 'descripcion', 'descripción'):
+            col_map['product_name'] = k
+        elif kn in ('category', 'categoria', 'categoría', 'cat'):
+            col_map['category'] = k
+        elif kn in ('note', 'nota', 'notes', 'notas', 'observacion', 'observación'):
+            col_map['note'] = k
+
+    if 'sku' not in col_map:
+        return [], "No se encontró columna SKU (aceptados: sku, codigo, código, code)."
+    if 'qty' not in col_map:
+        return [], "No se encontró columna de cantidad (aceptados: quantity, qty, cantidad, units, unidades)."
+
+    agg = {}
+    for r in rows:
+        raw_sku = str(r.get(col_map['sku'], '')).strip()
+        sku = normalize_sku(raw_sku)
+        if not sku:
+            continue
+
+        raw_qty = r.get(col_map['qty'], '')
+        try:
+            qty = int(float(str(raw_qty)))
+        except (ValueError, TypeError):
+            entry = agg.setdefault(sku, {'sku': sku, 'qty': 0, 'product_name': '', 'category': '', 'note': '', 'warnings': []})
+            entry['warnings'].append(f'Cantidad no numérica: "{raw_qty}"')
+            continue
+
+        if qty <= 0:
+            entry = agg.setdefault(sku, {'sku': sku, 'qty': 0, 'product_name': '', 'category': '', 'note': '', 'warnings': []})
+            entry['warnings'].append(f'Cantidad no positiva: {qty}')
+            continue
+
+        entry = agg.setdefault(sku, {'sku': sku, 'qty': 0, 'product_name': '', 'category': '', 'note': '', 'warnings': []})
+        entry['qty'] += qty
+        if col_map.get('product_name'):
+            val = str(r.get(col_map['product_name'], '')).strip()
+            if val and not entry['product_name']:
+                entry['product_name'] = val
+        if col_map.get('category'):
+            val = str(r.get(col_map['category'], '')).strip()
+            if val and not entry['category']:
+                entry['category'] = val
+        if col_map.get('note'):
+            val = str(r.get(col_map['note'], '')).strip()
+            if val and not entry['note']:
+                entry['note'] = val
+
+    result = [v for v in agg.values() if v['qty'] > 0 or v['warnings']]
+    return result, None
+
+
+@app.route('/distribution/manual', methods=['GET', 'POST'])
+@login_required
+@require_permission('runs:view')
+def distribution_manual():
+    if request.method == 'GET':
+        return render_template('distribution_manual.html', step='upload')
+
+    action = request.form.get('action', 'parse')
+
+    if action == 'parse':
+        file = request.files.get('file')
+        if not file or not file.filename:
+            flash('Seleccione un archivo CSV o XLSX.', 'danger')
+            return render_template('distribution_manual.html', step='upload')
+
+        parsed, error = _parse_distribution_manual_file(file)
+        if error:
+            flash(error, 'danger')
+            return render_template('distribution_manual.html', step='upload')
+        if not parsed:
+            flash('No se encontraron líneas válidas en el archivo.', 'warning')
+            return render_template('distribution_manual.html', step='upload')
+
+        all_skus = [item['sku'] for item in parsed]
+        product_map = {}
+        for i in range(0, len(all_skus), 500):
+            chunk = all_skus[i:i+500]
+            for p in Product.query.filter(Product.sku.in_(chunk)).all():
+                product_map[p.sku] = p
+
+        cd_stock = get_cd_stock_map()
+        pid_by_sku = {p.sku: p.id for p in product_map.values()}
+
+        preview_lines = []
+        total_units = 0
+        skus_unknown = 0
+        skus_no_stock = 0
+
+        for item in parsed:
+            product = product_map.get(item['sku'])
+            status = 'OK'
+            status_warnings = list(item['warnings'])
+
+            if not product:
+                skus_unknown += 1
+                status = 'WARN'
+                status_warnings.append('SKU no encontrado en catálogo')
+                cd_qty = 0
+            else:
+                pid = product.id
+                cd_qty = cd_stock.get(pid, 0)
+                if item['qty'] > 0 and item['qty'] > cd_qty:
+                    skus_no_stock += 1
+                    status = 'WARN'
+                    status_warnings.append(f'Qty ({item["qty"]}) > Stock CD ({cd_qty})')
+                if not item['product_name']:
+                    item['product_name'] = product.name
+                if not item['category']:
+                    item['category'] = product.category or ''
+
+            if item['qty'] <= 0 and not status_warnings:
+                status = 'WARN'
+                status_warnings.append('Sin cantidad válida')
+
+            total_units += max(0, item['qty'])
+            preview_lines.append({
+                'sku': item['sku'],
+                'product_name': item['product_name'] or item['sku'],
+                'category': item['category'] or '',
+                'qty': item['qty'],
+                'status': status,
+                'warnings': '; '.join(status_warnings),
+                'note': item['note'],
+                'cd_stock': cd_qty
+            })
+
+        urgency = request.form.get('urgency', 'MEDIUM')
+        observation = request.form.get('observation', '').strip()
+
+        import json
+        return render_template(
+            'distribution_manual.html',
+            step='preview',
+            preview_lines=preview_lines[:20],
+            total_preview=len(preview_lines),
+            total_units=total_units,
+            total_skus=len([l for l in preview_lines if l['qty'] > 0]),
+            skus_unknown=skus_unknown,
+            skus_no_stock=skus_no_stock,
+            urgency=urgency,
+            observation=observation,
+            lines_json=json.dumps(preview_lines)
+        )
+
+    elif action == 'create':
+        import json
+        lines_json = request.form.get('lines_json', '[]')
+        urgency = request.form.get('urgency', 'MEDIUM')
+        observation = request.form.get('observation', '').strip()
+
+        try:
+            all_lines = json.loads(lines_json)
+        except (json.JSONDecodeError, TypeError):
+            flash('Error al procesar datos. Intente de nuevo.', 'danger')
+            return redirect(url_for('distribution_manual'))
+
+        valid_lines = [l for l in all_lines if l.get('qty', 0) > 0]
+        if not valid_lines:
+            flash('No hay líneas con cantidad válida.', 'warning')
+            return redirect(url_for('distribution_manual'))
+
+        all_skus = [l['sku'] for l in valid_lines]
+        product_map = {}
+        for i in range(0, len(all_skus), 500):
+            chunk = all_skus[i:i+500]
+            for p in Product.query.filter(Product.sku.in_(chunk)).all():
+                product_map[p.sku] = p
+
+        for l in valid_lines:
+            if l['sku'] not in product_map:
+                stub = Product(
+                    sku=l['sku'],
+                    name=l.get('product_name') or l['sku'],
+                    category=l.get('category') or 'SIN_CATEGORIA'
+                )
+                db.session.add(stub)
+                db.session.flush()
+                product_map[l['sku']] = stub
+
+        now = datetime.utcnow()
+        folio = f"MAN-{now.strftime('%Y%m%d-%H%M%S')}"
+        existing = DistributionPlan.query.filter_by(folio=folio).first()
+        if existing:
+            folio = f"{folio}-{now.strftime('%f')[:4]}"
+
+        plan = DistributionPlan(
+            folio=folio,
+            source='MANUAL',
+            status='APPROVED',
+            urgency=urgency if urgency in PLAN_URGENCIES else 'MEDIUM',
+            notes_commercial=observation or None,
+            created_by_user_id=current_user.id,
+            created_at=now,
+            approved_at=now,
+            approved_by_user_id=current_user.id
+        )
+        db.session.add(plan)
+        db.session.flush()
+
+        total_units_created = 0
+        for l in valid_lines:
+            product = product_map[l['sku']]
+            line = DistributionPlanLine(
+                plan_id=plan.id,
+                product_id=product.id,
+                store_id=None,
+                qty_planned=l['qty'],
+                line_notes=l.get('note') or None
+            )
+            db.session.add(line)
+            total_units_created += l['qty']
+
+        activity = PlanActivityLog(
+            plan_id=plan.id,
+            action='MANUAL_CREATED',
+            user_id=current_user.id,
+            comment=f'Folio manual creado con {len(valid_lines)} SKUs, {total_units_created} unidades'
+        )
+        db.session.add(activity)
+
+        db.session.commit()
+
+        wave_msg = ''
+        try:
+            wave, total_req, total_res = wms_create_pick_wave_for_plan(
+                plan.id,
+                priority=plan.urgency or 'MEDIUM',
+                warehouse_code='MAIN',
+                user=current_user
+            )
+            db.session.commit()
+            wave_msg = f' | Pick Wave #{wave.id} ({wave.status})'
+        except Exception as e:
+            db.session.rollback()
+            print(f"[WMS] ERROR creating pick wave for manual plan {plan.id}: {e}")
+            wave_msg = f' | Pick Wave no creada: {str(e)[:100]}'
+
+        log_audit(
+            action='distribution.manual.created',
+            entity_type='distribution_plan',
+            entity_id=plan.id,
+            status='success',
+            message=f'Folio manual {folio} creado: {len(valid_lines)} SKUs, {total_units_created} uds{wave_msg}'
+        )
+
+        flash(f'Folio {folio} creado exitosamente. {len(valid_lines)} SKUs, {total_units_created} unidades.{wave_msg} Listo para ejecución.', 'success')
+        return redirect(url_for('planner_detail', plan_id=plan.id))
+
+    return redirect(url_for('distribution_manual'))
+
+
 @app.route('/stock_cd', methods=['GET', 'POST'])
 @login_required
 @require_permission('stock_cd:upload')
@@ -16933,7 +17225,7 @@ def planner_export_picking(plan_id):
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     
     plan = DistributionPlan.query.get_or_404(plan_id)
-    lines = plan.lines.join(Product).join(Store).order_by(Product.sku, Store.name).all()
+    lines = plan.lines.join(Product).outerjoin(Store, DistributionPlanLine.store_id == Store.id).order_by(Product.sku, Store.name).all()
     
     wb = Workbook()
     ws = wb.active
@@ -16959,7 +17251,7 @@ def planner_export_picking(plan_id):
     for row_idx, line in enumerate(lines, 2):
         ws.cell(row=row_idx, column=1, value=line.product.sku).border = thin_border
         ws.cell(row=row_idx, column=2, value=line.product.name).border = thin_border
-        ws.cell(row=row_idx, column=3, value=line.store.name).border = thin_border
+        ws.cell(row=row_idx, column=3, value=line.store.name if line.store else '— (CD)').border = thin_border
         ws.cell(row=row_idx, column=4, value=line.qty_planned).border = thin_border
         ws.cell(row=row_idx, column=5, value=line.line_notes or '').border = thin_border
         

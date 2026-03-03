@@ -1,0 +1,109 @@
+Implement “Carga Manual de Distribución (WMS-ready)” in FastDSO as a new module under “Carga de archivos” or “Operaciones” (choose where it fits best). This creates a DistributionPlan (manual) whose lines are consolidated by SKU (qty_total), to be later approved and sent to FastPlanner, which will create a WMS pick wave (already implemented).
+
+SCOPE (V1)
+- User uploads a CSV or XLSX file with at minimum:
+  sku, quantity
+- Optional columns:
+  product_name, category, note
+- quantity is the TOTAL units to distribute from CD (consolidated). Do NOT require store destinations.
+- The plan will be tagged as manual and can be authorized like any other plan.
+
+DATA MODEL
+If not present, extend DistributionPlan / DistributionPlanLine:
+- DistributionPlan:
+  source (enum/text): 'AUTO'|'MANUAL' default 'AUTO'
+  title or folio label (already exists)
+  created_by_user_id, created_at, status (existing)
+  urgency (LOW|MEDIUM|URGENT) (existing or add if missing)
+  comment/observation (existing or add)
+- DistributionPlanLine:
+  plan_id
+  product_id
+  sku (denormalized ok)
+  product_name (denormalized ok)
+  category (optional denormalized ok)
+  qty_suggested (use this field as qty_total for manual)
+  qty_final (optional; set equal qty_suggested for manual)
+  destination_store_id nullable (keep null in manual)
+  note (line note optional)
+
+UI / ROUTES
+1) Sidebar: Add item “Distribución Manual” under “Operaciones” (or “Carga de archivos”, your choice).
+2) Create page: /distribution/manual
+   - Header: “Distribución Manual”
+   - Description: “Carga consolidada por SKU (picking se hará por folio).”
+   - Upload card with:
+       a) File input (csv/xlsx)
+       b) Urgencia selector (Bajo/Medio/Urgente)
+       c) Observación general textarea
+       d) Button “Procesar archivo”
+   - After processing, show a preview table with first 20 rows:
+       SKU | Producto | Categoría | Cantidad | Estado (OK/WARN)
+   - Show a summary KPI row:
+       SKUs cargados, Total unidades, SKUs desconocidos (sin producto), SKUs sin stock CD (warning)
+   - Buttons:
+       “Crear folio manual” (creates the plan and lines)
+       “Cancelar”
+
+3) Processing rules:
+   - Parse file -> normalize headers (accept SKU, sku; Quantity, qty, cantidad; etc).
+   - Aggregate by sku (sum quantities).
+   - Validate:
+       - quantity must be positive int
+       - sku non-empty string
+   - Product matching:
+       - Find Product by exact sku in product table.
+       - If not found, create Product stub ONLY if “ALLOW_STUB_PRODUCTS_MANUAL=true” else mark WARN and skip.
+         Stub fields: sku, name = product_name if provided else sku, category = provided or 'SIN_CATEGORIA'
+   - Stock CD check (optional warning):
+       - Look up current CD stock for that product (from stock_cd or inventory_baseline depending on your current truth table).
+       - If requested qty > cd_stock, mark WARN (but still allow create).
+   - Keep everything fast (batch queries).
+
+PLAN CREATION
+When user clicks “Crear folio manual”:
+- Create DistributionPlan:
+   - source='MANUAL'
+   - status='PENDING_AUTH' (or equivalent in your system)
+   - urgency from UI
+   - observation from UI
+   - folio: auto format “MAN-YYYYMMDD-HHMMSS” (or use existing folio generator)
+   - created_by_user_id=current_user.id
+- Create DistributionPlanLines for each sku with qty_total:
+   - qty_suggested = qty_total
+   - qty_final = qty_total
+   - destination_store_id = NULL
+   - category from product.category
+- Commit and redirect to plan detail page (or Centro de Corridas) with success popup:
+   “Folio MAN-xxxxx creado. Listo para autorización.”
+
+INTEGRATION WITH EXISTING AUTH FLOW
+- Do not change the existing authorization buttons.
+- Ensure manual plans appear in Centro de Corridas / FastPlanner approval list.
+- When approved and sent to FastPlanner, it should create WMS pick wave as usual.
+- For wave creation consolidated demand should read DistributionPlanLine.qty_final or qty_suggested and ignore destination store fields.
+
+TEMPLATES / STYLE
+- Use same FastDSO cards, rounded corners, blue gradient background.
+- Use the same “success/fail popup” style already used in other upload modules.
+- Spanish labels everywhere.
+
+TECH DETAILS
+- Add helper:
+   parse_distribution_manual_file(file) -> list of {sku, qty, product_name?, category?, note?, warnings[]}
+- Ensure XLSX parsing uses openpyxl.
+- Ensure CSV parsing uses python csv.
+- Prevent “too many SQL variables” by chunking IN queries for product lookups (e.g., chunks of 500).
+
+EDGE CASES
+- Duplicated SKUs: aggregate sums.
+- Non-numeric qty -> skip with WARN.
+- qty <= 0 -> skip with WARN.
+- Empty file -> error popup.
+- Very large files -> show “processing…” spinner and limit preview to 20.
+
+DELIVERABLES
+- app.py: routes + helpers + any model additions
+- templates/distribution_manual.html
+- sidebar update
+- Ensure app boots and manual folios appear for authorization.

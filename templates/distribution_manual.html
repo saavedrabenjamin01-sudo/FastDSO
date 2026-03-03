@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% block title %}Distribución Manual — FastDSO{% endblock %}
+{% block content %}
+<div class="content-header">
+  <h1><i class="bi bi-file-earmark-plus"></i> Distribución Manual</h1>
+  <p class="text-muted">Carga consolidada por SKU — el picking se hará por folio</p>
+</div>
+
+{% if step == 'upload' %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-header">
+        <span class="fw-semibold"><i class="bi bi-cloud-arrow-up"></i> Cargar archivo de distribución</span>
+      </div>
+      <div class="card-body">
+        <form method="post" enctype="multipart/form-data" id="parseForm">
+          <input type="hidden" name="action" value="parse">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Archivo (CSV o XLSX)</label>
+            <input type="file" name="file" class="form-control" accept=".csv,.xlsx,.xls" required>
+            <div class="form-text">Columnas requeridas: <code>sku</code>, <code>quantity</code>. Opcionales: <code>product_name</code>, <code>category</code>, <code>note</code></div>
+          </div>
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">Urgencia</label>
+              <select name="urgency" class="form-select">
+                <option value="LOW">Bajo</option>
+                <option value="MEDIUM" selected>Medio</option>
+                <option value="URGENT">Urgente</option>
+              </select>
+            </div>
+            <div class="col-md-8">
+              <label class="form-label fw-semibold">Observación general</label>
+              <textarea name="observation" class="form-control" rows="2" placeholder="Notas sobre esta distribución manual..."></textarea>
+            </div>
+          </div>
+          <div class="mt-4">
+            <button type="submit" class="btn btn-primary" id="parseBtn">
+              <i class="bi bi-upload"></i> Procesar archivo
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card mt-4">
+      <div class="card-body text-muted small">
+        <p class="mb-2"><strong>Formato esperado:</strong></p>
+        <table class="table table-sm table-bordered mb-0" style="font-size:0.8rem;">
+          <thead class="table-light">
+            <tr><th>sku</th><th>quantity</th><th>product_name</th><th>category</th><th>note</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>SKU001</td><td>50</td><td>Producto A</td><td>Categoría 1</td><td></td></tr>
+            <tr><td>SKU002</td><td>120</td><td>Producto B</td><td></td><td>Urgente</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% elif step == 'preview' %}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="query-kpi-card">
+      <div class="query-kpi-badge" style="background:linear-gradient(135deg,#6366f1,#4f46e5);">
+        <i class="bi bi-box-seam"></i>
+      </div>
+      <div class="query-kpi-body">
+        <span class="query-kpi-label">SKUs cargados</span>
+        <span class="query-kpi-number">{{ total_skus }}</span>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="query-kpi-card">
+      <div class="query-kpi-badge" style="background:linear-gradient(135deg,#3b82f6,#2563eb);">
+        <i class="bi bi-boxes"></i>
+      </div>
+      <div class="query-kpi-body">
+        <span class="query-kpi-label">Total unidades</span>
+        <span class="query-kpi-number">{{ "{:,}".format(total_units) }}</span>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="query-kpi-card">
+      <div class="query-kpi-badge" style="background:linear-gradient(135deg,{% if skus_unknown > 0 %}#ef4444,#dc2626{% else %}#22c55e,#16a34a{% endif %});">
+        <i class="bi bi-question-circle"></i>
+      </div>
+      <div class="query-kpi-body">
+        <span class="query-kpi-label">SKUs desconocidos</span>
+        <span class="query-kpi-number">{{ skus_unknown }}</span>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="query-kpi-card">
+      <div class="query-kpi-badge" style="background:linear-gradient(135deg,{% if skus_no_stock > 0 %}#eab308,#ca8a04{% else %}#22c55e,#16a34a{% endif %});">
+        <i class="bi bi-exclamation-triangle"></i>
+      </div>
+      <div class="query-kpi-body">
+        <span class="query-kpi-label">SKUs sin stock CD</span>
+        <span class="query-kpi-number">{{ skus_no_stock }}</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span class="fw-semibold"><i class="bi bi-table"></i> Vista previa ({{ preview_lines|length }}{% if total_preview > 20 %} de {{ total_preview }}{% endif %} líneas)</span>
+    <div class="d-flex gap-2">
+      <span class="urgency-pill urgency-{{ urgency|lower }}">{{ urgency }}</span>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0" style="font-size:0.85rem;">
+        <thead class="table-light">
+          <tr>
+            <th>SKU</th>
+            <th>Producto</th>
+            <th>Categoría</th>
+            <th class="text-end">Cantidad</th>
+            <th class="text-end">Stock CD</th>
+            <th class="text-center">Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for line in preview_lines %}
+          <tr{% if line.status == 'WARN' %} class="table-warning"{% endif %}>
+            <td><code>{{ line.sku }}</code></td>
+            <td><span style="max-width:200px; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ line.product_name }}">{{ line.product_name }}</span></td>
+            <td><span class="text-muted small">{{ line.category }}</span></td>
+            <td class="text-end fw-semibold">{{ "{:,}".format(line.qty) }}</td>
+            <td class="text-end">{{ "{:,}".format(line.cd_stock) }}</td>
+            <td class="text-center">
+              {% if line.status == 'OK' %}
+              <span class="badge bg-success">OK</span>
+              {% else %}
+              <span class="badge bg-warning text-dark" title="{{ line.warnings }}">WARN</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% if total_preview > 20 %}
+<div class="alert alert-info small mb-3">
+  <i class="bi bi-info-circle"></i> Mostrando 20 de {{ total_preview }} líneas. Todas las líneas válidas se incluirán al crear el folio.
+</div>
+{% endif %}
+
+{% if observation %}
+<div class="alert alert-secondary small mb-3">
+  <strong>Observación:</strong> {{ observation }}
+</div>
+{% endif %}
+
+<div class="d-flex gap-2 mb-4">
+  <form method="post">
+    <input type="hidden" name="action" value="create">
+    <input type="hidden" name="urgency" value="{{ urgency }}">
+    <input type="hidden" name="observation" value="{{ observation }}">
+    <input type="hidden" name="lines_json" value="{{ lines_json|e }}">
+    <button type="submit" class="btn btn-success" onclick="this.disabled=true; this.innerHTML='<i class=\'bi bi-hourglass-split\'></i> Creando...'; this.form.submit();">
+      <i class="bi bi-check-circle"></i> Crear folio manual
+    </button>
+  </form>
+  <a href="{{ url_for('distribution_manual') }}" class="btn btn-outline-secondary">
+    <i class="bi bi-x-circle"></i> Cancelar
+  </a>
+</div>
+{% endif %}
+{% endblock %}

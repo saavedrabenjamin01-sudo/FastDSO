@@ -169,6 +169,10 @@
         </a>
         {% endif %}
         {% if current_user.has_permission('runs:view') %}
+        <a class="nav-link" href="{{ url_for('distribution_manual') }}">
+          <span class="nav-icon"><i class="bi bi-file-earmark-plus"></i></span>
+          <span class="nav-text">Distribución manual</span>
+        </a>
         <a class="nav-link" href="{{ url_for('runs') }}">
           <span class="nav-icon"><i class="bi bi-clock-history"></i></span>
           <span class="nav-text">Centro de corridas</span>

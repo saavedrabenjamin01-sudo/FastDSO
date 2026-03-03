@@ -18,6 +18,9 @@
         <span class="fw-semibold"><i class="bi bi-info-circle"></i> Resumen</span>
         <div class="d-flex gap-2 align-items-center">
           <span class="badge bg-{{ 'success' if plan.status == 'APPROVED' else 'primary' if plan.status == 'IN_PROGRESS' else 'info' if plan.status == 'PACKED' else 'warning' if plan.status == 'DISPATCHED' else 'secondary' }}">{{ plan.status }}</span>
+          {% if plan.source == 'MANUAL' %}
+          <span class="badge bg-dark" style="font-size:0.7rem;">MANUAL</span>
+          {% endif %}
           <span class="urgency-pill urgency-{{ plan.urgency|lower }}">{{ plan.urgency }}</span>
           {% if latest_wave %}
           <span class="badge {% if latest_wave.status == 'RELEASED' %}bg-info{% elif latest_wave.status == 'IN_PROGRESS' %}bg-primary{% elif latest_wave.status == 'DONE' %}bg-success{% elif latest_wave.status == 'NEEDS_REVIEW' %}bg-danger{% else %}bg-secondary{% endif %}" style="font-size:0.7rem;">
@@ -109,7 +112,7 @@
               <tr>
                 <td><code>{{ line.product.sku }}</code></td>
                 <td>{{ line.product.name }}</td>
-                <td>{{ line.store.name }}</td>
+                <td>{{ line.store.name if line.store else '— (CD)' }}</td>
                 <td class="text-center fw-bold">{{ line.qty_planned }}</td>
                 <td class="text-muted small">{{ line.line_notes or '-' }}</td>
               </tr>
