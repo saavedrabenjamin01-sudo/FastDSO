@@ -1,0 +1,120 @@
+FASTWMS STRUCTURAL UPGRADE — Grouped by Location + Occupancy Visualization
+
+GOAL
+Upgrade /wms/inventory so inventory is grouped by LOCATION (accordion style) instead of flat rows.
+Maintain existing filters and sorting.
+
+STRUCTURE
+
+1) GROUP BY LOCATION
+
+In backend route:
+- Fetch inventory rows as before.
+- Build grouped structure:
+
+{
+  location_id: {
+    warehouse,
+    location_code,
+    location_type,
+    max_pallets,
+    total_units,
+    total_allocated,
+    total_available,
+    total_pallets,
+    products: [ list of sku rows for that location ]
+  }
+}
+
+Sort locations by:
+- total_available DESC (default)
+
+2) TEMPLATE STRUCTURE
+
+Replace flat table with:
+
+For each location:
+  Card container (rounded, shadow-sm)
+
+  Header row:
+    Warehouse badge
+    Location code (large bold)
+    Location type badge:
+        PICK -> blue
+        BULK -> gray
+        QA -> yellow
+        RETURNS -> red
+
+    Right side:
+      Units total
+      Available
+      Pallets
+      Occupancy bar
+
+  Occupancy bar logic:
+    If max_pallets exists:
+       percentage = total_pallets / max_pallets
+    else:
+       percentage = 0
+
+    Show horizontal progress bar:
+       green <60%
+       orange 60–85%
+       red >85%
+
+  Clicking header expands product table for that location.
+
+3) EXPANDED SECTION
+
+When expanded:
+  Table inside card:
+    SKU | Producto | Units | Allocated | Available | Pallets | Actions
+
+  - Highlight row red if Available == 0
+  - Right align numeric columns
+  - SKU monospace
+  - Truncate product name with tooltip
+
+4) LOCATION SUMMARY INFO
+
+Under header show small info line:
+  "X SKUs | Y unidades | Z disponibles"
+
+5) FILTERS COMPATIBILITY
+
+Filters must still apply before grouping.
+Do not break existing search/min units filters.
+
+6) KEEP ACTIONS
+
+Actions per SKU row:
+  View
+  Move (prefilled with sku + from_location)
+  Reserve (if exists, otherwise disabled)
+
+7) EMPTY STATES
+
+If no locations:
+  Show callout:
+    "No inventory found for current filters."
+
+8) PERFORMANCE
+
+Do grouping in Python, not template.
+Avoid nested heavy queries.
+Use one joined query and group in memory.
+
+9) DO NOT REMOVE
+
+Keep:
+- Export functionality
+- KPI cards at top
+- Existing filter bar
+
+DELIVERABLE
+
+- Clean accordion UI per location
+- Occupancy bar working
+- No broken filters
+- Default collapsed state
+- Visual aligned with FastDSO design

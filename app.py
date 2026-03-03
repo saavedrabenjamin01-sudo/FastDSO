@@ -8825,6 +8825,7 @@ def _wms_inventory_query(args):
             WmsWarehouse.code.label('warehouse'),
             WmsLocation.location_code,
             WmsLocation.location_type,
+            WmsLocation.max_pallets,
             Product.sku,
             Product.name.label('product_name'),
             WmsInventory.on_hand_units,
@@ -8883,6 +8884,7 @@ def _wms_inventory_query(args):
             'warehouse': r.warehouse,
             'location_code': r.location_code,
             'location_type': r.location_type,
+            'max_pallets': r.max_pallets,
             'sku': r.sku,
             'product_name': r.product_name,
             'on_hand_units': units,
@@ -8896,16 +8898,6 @@ def _wms_inventory_query(args):
         location_set.add(r.location_code)
         product_set.add(r.sku)
 
-    sort = (args.get('sort') or 'avail_desc').strip()
-    if sort == 'avail_desc':
-        inventory.sort(key=lambda x: x['available_units'], reverse=True)
-    elif sort == 'avail_asc':
-        inventory.sort(key=lambda x: x['available_units'])
-    elif sort == 'units_desc':
-        inventory.sort(key=lambda x: x['on_hand_units'], reverse=True)
-    elif sort == 'sku_asc':
-        inventory.sort(key=lambda x: x['sku'])
-
     kpis = {
         'total_locations': len(location_set),
         'total_skus': len(product_set),
@@ -8913,6 +8905,49 @@ def _wms_inventory_query(args):
         'total_available': total_available,
     }
     return inventory, kpis
+
+
+def _group_inventory_by_location(inventory, sort_key='avail_desc'):
+    from collections import OrderedDict
+    groups = OrderedDict()
+    for item in inventory:
+        key = f"{item['warehouse']}|{item['location_code']}"
+        if key not in groups:
+            groups[key] = {
+                'warehouse': item['warehouse'],
+                'location_code': item['location_code'],
+                'location_type': item['location_type'],
+                'max_pallets': item.get('max_pallets'),
+                'total_units': 0,
+                'total_allocated': 0,
+                'total_available': 0,
+                'total_pallets': 0,
+                'products': [],
+            }
+        g = groups[key]
+        g['total_units'] += item['on_hand_units']
+        g['total_allocated'] += item['allocated_units']
+        g['total_available'] += item['available_units']
+        g['total_pallets'] += (item['on_hand_pallets'] or 0)
+        g['products'].append(item)
+
+    for g in groups.values():
+        mp = g['max_pallets']
+        if mp and mp > 0 and g['total_pallets'] > 0:
+            g['occupancy_pct'] = min(round(g['total_pallets'] / mp * 100, 1), 100)
+        else:
+            g['occupancy_pct'] = 0
+
+    loc_list = list(groups.values())
+    if sort_key == 'avail_desc':
+        loc_list.sort(key=lambda x: x['total_available'], reverse=True)
+    elif sort_key == 'avail_asc':
+        loc_list.sort(key=lambda x: x['total_available'])
+    elif sort_key == 'units_desc':
+        loc_list.sort(key=lambda x: x['total_units'], reverse=True)
+    elif sort_key == 'sku_asc':
+        loc_list.sort(key=lambda x: x['location_code'])
+    return loc_list
 
 
 @app.route('/wms/inventory')
@@ -8924,26 +8959,16 @@ def wms_inventory():
     warehouses = [r[0] for r in db.session.query(WmsWarehouse.code).order_by(WmsWarehouse.code).all()]
     locations = [r[0] for r in db.session.query(WmsLocation.location_code).order_by(WmsLocation.location_code).distinct().all()]
 
-    per_page = 25
-    page = max(1, request.args.get('page', 1, type=int))
-    total = len(inventory)
-    total_pages = max(1, (total + per_page - 1) // per_page)
-    page = min(page, total_pages)
-    start = (page - 1) * per_page
-    end = start + per_page
-    page_items = inventory[start:end]
+    sort_key = (request.args.get('sort') or 'avail_desc').strip()
+    loc_groups = _group_inventory_by_location(inventory, sort_key)
 
     has_any_data = db.session.query(WmsInventory.id).first() is not None
 
     return render_template(
         'wms_inventory.html',
-        inventory=page_items,
+        loc_groups=loc_groups,
         kpis=kpis,
-        page=page,
-        total_pages=total_pages,
-        total=total,
-        start=start + 1,
-        end=min(end, total),
+        total=len(inventory),
         warehouses=warehouses,
         locations=locations,
         filters=request.args,

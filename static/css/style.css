@@ -7699,7 +7699,122 @@ body{
   font-weight: 700;
   color: #1e293b;
 }
+.wms-loc-card {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  overflow: hidden;
+}
+.wms-loc-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 20px;
+  cursor: pointer;
+  transition: background 0.15s;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.wms-loc-header:hover {
+  background: #f8fafc;
+}
+.wms-loc-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.wms-loc-wh-badge {
+  font-size: 0.7rem !important;
+}
+.wms-loc-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #1e293b;
+  font-family: 'SF Mono', 'Consolas', monospace;
+  letter-spacing: 0.3px;
+}
+.wms-loc-caret {
+  color: #94a3b8;
+  font-size: 0.8rem;
+  transition: transform 0.2s;
+  margin-left: 4px;
+}
+.wms-loc-header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.wms-loc-stat {
+  text-align: center;
+  min-width: 50px;
+}
+.wms-loc-stat-val {
+  display: block;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #1e293b;
+  line-height: 1.2;
+}
+.wms-loc-stat-label {
+  display: block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.wms-occ-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 80px;
+}
+.wms-occ-bar {
+  flex: 1;
+  height: 8px;
+  background: #e2e8f0;
+  border-radius: 4px;
+  overflow: hidden;
+  min-width: 50px;
+}
+.wms-occ-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s;
+}
+.wms-occ-pct {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #475569;
+  min-width: 28px;
+  text-align: right;
+}
+.wms-loc-summary {
+  padding: 0 20px 10px 20px;
+  font-size: 0.78rem;
+  color: #64748b;
+  border-bottom: 1px solid #f1f5f9;
+}
+.wms-loc-body {
+  padding: 0;
+}
+.wms-loc-body .wms-table thead th {
+  background: #f1f5f9;
+}
+.wms-row-danger {
+  background: #fef2f2 !important;
+}
+.wms-row-danger:hover {
+  background: #fee2e2 !important;
+}
 @media (max-width: 768px) {
   .wms-product-name { max-width: 120px; }
   .wms-table { font-size: 0.8rem; }
+  .wms-loc-header { padding: 10px 14px; }
+  .wms-loc-title { font-size: 0.95rem; }
+  .wms-loc-header-right { gap: 10px; }
+  .wms-loc-stat-val { font-size: 0.85rem; }
+  .wms-occ-wrap { min-width: 60px; }
 }

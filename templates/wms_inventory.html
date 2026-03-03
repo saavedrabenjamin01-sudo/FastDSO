@@ -87,7 +87,7 @@
     <strong>Disponibles</strong> = Unidades − Asignadas
   </div>
 
-  {% if inventory %}
+  {% if loc_groups %}
 
   <div class="row g-3 mb-4">
     <div class="col-6 col-lg-3">
@@ -137,27 +137,78 @@
     </div>
   </div>
 
-  <div class="query-card p-0">
-    <div class="d-flex justify-content-between align-items-center px-3 pt-3 pb-2 flex-wrap gap-2">
-      <span class="text-muted small">Mostrando {{ start }}–{{ end }} de {{ total }}</span>
-      <div class="d-flex gap-1 flex-wrap">
-        <span class="text-muted small me-1" style="line-height:30px;">Ordenar:</span>
-        {% set sort_opts = [('avail_desc','Disponibles ↓'),('avail_asc','Disponibles ↑'),('units_desc','Unidades ↓'),('sku_asc','SKU A-Z')] %}
-        {% for val, label in sort_opts %}
-        <a href="{{ url_for('wms_inventory') }}?{{ qs_params({'sort': val, 'page': ''}) }}"
-           class="btn btn-sm {% if fsort == val %}btn-primary{% else %}btn-outline-secondary{% endif %}" style="font-size:0.75rem;">
-          {{ label }}
-        </a>
-        {% endfor %}
+  <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+    <span class="text-muted small">{{ total }} ítems en {{ loc_groups|length }} ubicaciones</span>
+    <div class="d-flex gap-1 flex-wrap align-items-center">
+      <span class="text-muted small me-1">Ordenar:</span>
+      {% set sort_opts = [('avail_desc','Disponibles ↓'),('avail_asc','Disponibles ↑'),('units_desc','Unidades ↓'),('sku_asc','Ubicación A-Z')] %}
+      {% for val, label in sort_opts %}
+      <a href="{{ url_for('wms_inventory') }}?{{ qs_params({'sort': val}) }}"
+         class="btn btn-sm {% if fsort == val %}btn-primary{% else %}btn-outline-secondary{% endif %}" style="font-size:0.75rem;">
+        {{ label }}
+      </a>
+      {% endfor %}
+      <button class="btn btn-sm btn-outline-secondary ms-2" id="wmsExpandAll" style="font-size:0.75rem;" title="Expandir/Colapsar todo">
+        <i class="bi bi-arrows-expand"></i>
+      </button>
+    </div>
+  </div>
+
+  {% for loc in loc_groups %}
+  {% set occ = loc.occupancy_pct %}
+  {% set occ_color = 'success' if occ < 60 else ('warning' if occ <= 85 else 'danger') %}
+  <div class="wms-loc-card mb-3">
+    <div class="wms-loc-header" data-target="wms-loc-body-{{ loop.index }}" role="button">
+      <div class="wms-loc-header-left">
+        <span class="badge bg-secondary wms-loc-wh-badge">{{ loc.warehouse }}</span>
+        <span class="wms-loc-title">{{ loc.location_code }}</span>
+        {% if loc.location_type == 'PICK' %}
+          <span class="badge bg-primary wms-type-badge">PICK</span>
+        {% elif loc.location_type == 'BULK' %}
+          <span class="badge bg-secondary wms-type-badge">BULK</span>
+        {% elif loc.location_type == 'QA' %}
+          <span class="badge bg-warning text-dark wms-type-badge">QA</span>
+        {% elif loc.location_type == 'RETURNS' %}
+          <span class="badge bg-danger wms-type-badge">RETURNS</span>
+        {% elif loc.location_type %}
+          <span class="badge bg-light text-dark wms-type-badge">{{ loc.location_type }}</span>
+        {% endif %}
+        <i class="bi bi-chevron-down wms-loc-caret"></i>
+      </div>
+      <div class="wms-loc-header-right">
+        <div class="wms-loc-stat">
+          <span class="wms-loc-stat-val">{{ "{:,}".format(loc.total_units) }}</span>
+          <span class="wms-loc-stat-label">uds</span>
+        </div>
+        <div class="wms-loc-stat">
+          <span class="wms-loc-stat-val{% if loc.total_available <= 0 %} text-danger{% endif %}">{{ "{:,}".format(loc.total_available) }}</span>
+          <span class="wms-loc-stat-label">disp</span>
+        </div>
+        {% if loc.total_pallets > 0 or (loc.max_pallets and loc.max_pallets > 0) %}
+        <div class="wms-loc-stat">
+          <span class="wms-loc-stat-val">{{ loc.total_pallets|round(1) }}</span>
+          <span class="wms-loc-stat-label">pallets</span>
+        </div>
+        {% endif %}
+        {% if loc.max_pallets and loc.max_pallets > 0 %}
+        <div class="wms-occ-wrap" title="Ocupación: {{ occ }}% ({{ loc.total_pallets|round(1) }}/{{ loc.max_pallets }})">
+          <div class="wms-occ-bar">
+            <div class="wms-occ-fill bg-{{ occ_color }}" style="width:{{ occ }}%;"></div>
+          </div>
+          <span class="wms-occ-pct">{{ occ|int }}%</span>
+        </div>
+        {% endif %}
       </div>
     </div>
 
-    <div class="table-responsive">
+    <div class="wms-loc-summary">
+      {{ loc.products|length }} SKUs &nbsp;|&nbsp; {{ "{:,}".format(loc.total_units) }} unidades &nbsp;|&nbsp; {{ "{:,}".format(loc.total_available) }} disponibles
+    </div>
+
+    <div class="wms-loc-body" id="wms-loc-body-{{ loop.index }}" style="display:none;">
       <table class="wms-table">
         <thead>
           <tr>
-            <th>Warehouse</th>
-            <th>Ubicación</th>
             <th>SKU</th>
             <th>Producto</th>
             <th class="text-end">Unidades</th>
@@ -168,23 +219,10 @@
           </tr>
         </thead>
         <tbody>
-          {% for item in inventory %}
-          <tr>
-            <td><span class="badge bg-secondary" style="font-size:0.7rem;">{{ item.warehouse }}</span></td>
-            <td>
-              <code class="wms-loc-code">{{ item.location_code }}</code>
-              {% if item.location_type == 'PICK' %}
-                <span class="badge bg-primary wms-type-badge">PICK</span>
-              {% elif item.location_type == 'BULK' %}
-                <span class="badge bg-secondary wms-type-badge">BULK</span>
-              {% elif item.location_type %}
-                <span class="badge bg-light text-dark wms-type-badge">{{ item.location_type }}</span>
-              {% endif %}
-            </td>
+          {% for item in loc.products %}
+          <tr{% if item.available_units <= 0 %} class="wms-row-danger"{% endif %}>
             <td><code class="wms-sku">{{ item.sku }}</code></td>
-            <td>
-              <span class="wms-product-name" title="{{ item.product_name }}">{{ item.product_name }}</span>
-            </td>
+            <td><span class="wms-product-name" title="{{ item.product_name }}">{{ item.product_name }}</span></td>
             <td class="text-end fw-semibold">{{ "{:,}".format(item.on_hand_units) }}</td>
             <td class="text-end">
               {% if item.allocated_units > 0 %}
@@ -196,8 +234,6 @@
             <td class="text-end">
               {% if item.available_units <= 0 %}
                 <span class="text-danger fw-bold">{{ "{:,}".format(item.available_units) }}</span>
-              {% elif item.available_units < item.on_hand_units %}
-                <span class="text-info fw-semibold">{{ "{:,}".format(item.available_units) }}</span>
               {% else %}
                 <span class="fw-semibold">{{ "{:,}".format(item.available_units) }}</span>
               {% endif %}
@@ -210,10 +246,11 @@
               {% endif %}
             </td>
             <td class="text-center text-nowrap">
-              <button class="btn btn-sm btn-outline-secondary wms-row-toggle" data-target="detail-{{ loop.index }}" title="Ver detalle">
+              <a href="{{ url_for('stock_query') }}?q={{ item.sku }}"
+                 class="btn btn-sm btn-outline-secondary" title="Ver en Consulta de Stock">
                 <i class="bi bi-eye"></i>
-              </button>
-              <a href="{{ url_for('wms_moves') }}?sku={{ item.sku }}&from_loc={{ item.location_code }}"
+              </a>
+              <a href="{{ url_for('wms_moves') }}?sku={{ item.sku }}&from_loc={{ loc.location_code }}"
                  class="btn btn-sm btn-outline-primary" title="Mover">
                 <i class="bi bi-arrow-left-right"></i>
               </a>
@@ -222,90 +259,12 @@
               </button>
             </td>
           </tr>
-          <tr class="wms-detail-row" id="detail-{{ loop.index }}" style="display:none;">
-            <td colspan="9">
-              <div class="wms-detail-panel">
-                <div class="wms-detail-header">
-                  <code class="wms-sku">{{ item.sku }}</code> — {{ item.product_name }}
-                </div>
-                <div class="row g-3 mb-3">
-                  <div class="col-6 col-md-3">
-                    <div class="wms-detail-metric">
-                      <span class="wms-detail-metric-label">Unidades</span>
-                      <span class="wms-detail-metric-value">{{ "{:,}".format(item.on_hand_units) }}</span>
-                    </div>
-                  </div>
-                  <div class="col-6 col-md-3">
-                    <div class="wms-detail-metric">
-                      <span class="wms-detail-metric-label">Asignadas</span>
-                      <span class="wms-detail-metric-value">{{ "{:,}".format(item.allocated_units) }}</span>
-                    </div>
-                  </div>
-                  <div class="col-6 col-md-3">
-                    <div class="wms-detail-metric">
-                      <span class="wms-detail-metric-label">Disponibles</span>
-                      <span class="wms-detail-metric-value {% if item.available_units <= 0 %}text-danger{% endif %}">{{ "{:,}".format(item.available_units) }}</span>
-                    </div>
-                  </div>
-                  <div class="col-6 col-md-3">
-                    <div class="wms-detail-metric">
-                      <span class="wms-detail-metric-label">Pallets</span>
-                      <span class="wms-detail-metric-value">{{ item.on_hand_pallets if item.on_hand_pallets else '—' }}</span>
-                    </div>
-                  </div>
-                </div>
-                {% if item.available_units <= 0 %}
-                <div class="alert alert-warning py-2 px-3 mb-3 small">
-                  <i class="bi bi-exclamation-triangle me-1"></i>Sin disponibilidad en esta ubicación
-                </div>
-                {% endif %}
-                <div class="d-flex gap-2 flex-wrap">
-                  <a href="{{ url_for('stock_query') }}?q={{ item.sku }}" class="btn btn-sm btn-outline-secondary">
-                    <i class="bi bi-search me-1"></i>Consulta de Stock
-                  </a>
-                  <a href="{{ url_for('wms_moves') }}?sku={{ item.sku }}" class="btn btn-sm btn-outline-secondary">
-                    <i class="bi bi-clock-history me-1"></i>Movimientos del SKU
-                  </a>
-                </div>
-              </div>
-            </td>
-          </tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
-
-    {% if total_pages > 1 %}
-    <div class="d-flex justify-content-between align-items-center px-3 py-3 border-top">
-      <span class="text-muted small">Página {{ page }} de {{ total_pages }}</span>
-      <nav>
-        <ul class="pagination pagination-sm mb-0">
-          {% if page > 1 %}
-          <li class="page-item">
-            <a class="page-link" href="{{ url_for('wms_inventory') }}?{{ qs_params({'page': page - 1}) }}&page={{ page - 1 }}">‹</a>
-          </li>
-          {% endif %}
-          {% for p in range(1, total_pages + 1) %}
-            {% if p == page %}
-            <li class="page-item active"><span class="page-link">{{ p }}</span></li>
-            {% elif p <= 3 or p > total_pages - 3 or (p >= page - 1 and p <= page + 1) %}
-            <li class="page-item">
-              <a class="page-link" href="{{ url_for('wms_inventory') }}?{{ qs_params() }}&page={{ p }}">{{ p }}</a>
-            </li>
-            {% elif p == 4 or p == total_pages - 3 %}
-            <li class="page-item disabled"><span class="page-link">…</span></li>
-            {% endif %}
-          {% endfor %}
-          {% if page < total_pages %}
-          <li class="page-item">
-            <a class="page-link" href="{{ url_for('wms_inventory') }}?{{ qs_params({'page': page + 1}) }}&page={{ page + 1 }}">›</a>
-          </li>
-          {% endif %}
-        </ul>
-      </nav>
-    </div>
-    {% endif %}
   </div>
+  {% endfor %}
 
   {% elif has_any_data %}
   <div class="query-card">
@@ -339,15 +298,26 @@
 
 {% block extra_js %}
 <script>
-document.querySelectorAll('.wms-row-toggle').forEach(function(btn){
-  btn.addEventListener('click', function(){
-    var row = document.getElementById(this.dataset.target);
-    if(row){
-      var vis = row.style.display !== 'none';
-      row.style.display = vis ? 'none' : 'table-row';
-      this.querySelector('i').className = vis ? 'bi bi-eye' : 'bi bi-eye-slash';
-    }
+document.querySelectorAll('.wms-loc-header').forEach(function(hdr){
+  hdr.addEventListener('click', function(){
+    var body = document.getElementById(this.dataset.target);
+    if(!body) return;
+    var vis = body.style.display !== 'none';
+    body.style.display = vis ? 'none' : '';
+    var caret = this.querySelector('.wms-loc-caret');
+    if(caret) caret.style.transform = vis ? '' : 'rotate(180deg)';
   });
 });
+
+var expandBtn = document.getElementById('wmsExpandAll');
+if(expandBtn){
+  var expanded = false;
+  expandBtn.addEventListener('click', function(){
+    expanded = !expanded;
+    document.querySelectorAll('.wms-loc-body').forEach(function(b){ b.style.display = expanded ? '' : 'none'; });
+    document.querySelectorAll('.wms-loc-caret').forEach(function(c){ c.style.transform = expanded ? 'rotate(180deg)' : ''; });
+    this.querySelector('i').className = expanded ? 'bi bi-arrows-collapse' : 'bi bi-arrows-expand';
+  });
+}
 </script>
 {% endblock %}
