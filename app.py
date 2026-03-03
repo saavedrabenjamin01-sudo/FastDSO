@@ -923,13 +923,30 @@ class WmsPickWave(db.Model):
     plan_id = db.Column(db.Integer, db.ForeignKey('distribution_plan.id'), nullable=False, index=True)
     status = db.Column(db.String(20), nullable=False, default='RELEASED')
     priority = db.Column(db.String(10), nullable=False, default='MEDIUM')
+    urgency_level = db.Column(db.String(10), nullable=False, default='MEDIUM')
+    priority_rank = db.Column(db.Integer, nullable=False, default=2)
     created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    assigned_to = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    assigned_at = db.Column(db.DateTime, nullable=True)
+    pick_started_at = db.Column(db.DateTime, nullable=True)
+    pick_finished_at = db.Column(db.DateTime, nullable=True)
+    closed_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    total_lines = db.Column(db.Integer, nullable=False, default=0)
+    total_units = db.Column(db.Integer, nullable=False, default=0)
+    picked_lines = db.Column(db.Integer, nullable=False, default=0)
+    picked_units = db.Column(db.Integer, nullable=False, default=0)
+    short_lines = db.Column(db.Integer, nullable=False, default=0)
+    short_units = db.Column(db.Integer, nullable=False, default=0)
 
     plan = db.relationship('DistributionPlan', backref=db.backref('pick_waves', lazy='dynamic'))
-    created_by = db.relationship('User')
+    created_by = db.relationship('User', foreign_keys=[created_by_user_id])
+    assigned_operator = db.relationship('User', foreign_keys=[assigned_to])
     tasks = db.relationship('WmsPickTask', backref='wave', lazy='dynamic', cascade='all, delete-orphan')
     reservations = db.relationship('WmsPickReservation', backref='wave', lazy='dynamic', cascade='all, delete-orphan')
+
+WMS_URGENCY_RANK = {'URGENT': 1, 'MEDIUM': 2, 'LOW': 3}
+WMS_WAVE_ACTIVE_STATUSES = ('READY_TO_ASSIGN', 'ASSIGNED', 'IN_PROGRESS')
 
 
 class WmsPickTask(db.Model):
@@ -938,13 +955,40 @@ class WmsPickTask(db.Model):
     wave_id = db.Column(db.Integer, db.ForeignKey('wms_pick_wave.id'), nullable=False, index=True)
     product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
     sku = db.Column(db.String(64), nullable=False)
+    product_name = db.Column(db.String(200), nullable=True)
+    category = db.Column(db.String(100), nullable=True)
     qty_requested = db.Column(db.Integer, nullable=False, default=0)
     qty_picked = db.Column(db.Integer, nullable=False, default=0)
-    status = db.Column(db.String(20), nullable=False, default='OPEN')
+    short_qty = db.Column(db.Integer, nullable=False, default=0)
+    status = db.Column(db.String(20), nullable=False, default='PENDING')
+    location_hint = db.Column(db.String(100), nullable=True)
     note = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, nullable=True)
 
     product = db.relationship('Product')
+
+
+class WmsOperatorKpiDaily(db.Model):
+    __tablename__ = 'wms_operator_kpi_daily'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    work_date = db.Column(db.Date, nullable=False)
+    waves_completed = db.Column(db.Integer, nullable=False, default=0)
+    total_pick_seconds = db.Column(db.Integer, nullable=False, default=0)
+    total_units = db.Column(db.Integer, nullable=False, default=0)
+    total_lines = db.Column(db.Integer, nullable=False, default=0)
+    short_units = db.Column(db.Integer, nullable=False, default=0)
+    short_lines = db.Column(db.Integer, nullable=False, default=0)
+    units_per_hour = db.Column(db.Float, nullable=False, default=0.0)
+    lines_per_hour = db.Column(db.Float, nullable=False, default=0.0)
+    accuracy_rate = db.Column(db.Float, nullable=False, default=1.0)
+
+    user = db.relationship('User')
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'work_date', name='uq_operator_kpi_daily'),
+    )
 
 
 class WmsPickReservation(db.Model):
@@ -1177,6 +1221,44 @@ def _ensure_wms_defaults(session=None):
                 conn.execute(text("ALTER TABLE distribution_plan ADD COLUMN exceptions_count INTEGER NOT NULL DEFAULT 0"))
                 conn.commit()
             print("[WMS] Added column distribution_plan.exceptions_count")
+    if 'wms_pick_wave' in inspector.get_table_names():
+        wave_cols = [c['name'] for c in inspector.get_columns('wms_pick_wave')]
+        _wave_migrations = {
+            'urgency_level': "ALTER TABLE wms_pick_wave ADD COLUMN urgency_level VARCHAR(10) NOT NULL DEFAULT 'MEDIUM'",
+            'priority_rank': "ALTER TABLE wms_pick_wave ADD COLUMN priority_rank INTEGER NOT NULL DEFAULT 2",
+            'assigned_to': "ALTER TABLE wms_pick_wave ADD COLUMN assigned_to INTEGER",
+            'assigned_at': "ALTER TABLE wms_pick_wave ADD COLUMN assigned_at DATETIME",
+            'pick_started_at': "ALTER TABLE wms_pick_wave ADD COLUMN pick_started_at DATETIME",
+            'pick_finished_at': "ALTER TABLE wms_pick_wave ADD COLUMN pick_finished_at DATETIME",
+            'closed_at': "ALTER TABLE wms_pick_wave ADD COLUMN closed_at DATETIME",
+            'total_lines': "ALTER TABLE wms_pick_wave ADD COLUMN total_lines INTEGER NOT NULL DEFAULT 0",
+            'total_units': "ALTER TABLE wms_pick_wave ADD COLUMN total_units INTEGER NOT NULL DEFAULT 0",
+            'picked_lines': "ALTER TABLE wms_pick_wave ADD COLUMN picked_lines INTEGER NOT NULL DEFAULT 0",
+            'picked_units': "ALTER TABLE wms_pick_wave ADD COLUMN picked_units INTEGER NOT NULL DEFAULT 0",
+            'short_lines': "ALTER TABLE wms_pick_wave ADD COLUMN short_lines INTEGER NOT NULL DEFAULT 0",
+            'short_units': "ALTER TABLE wms_pick_wave ADD COLUMN short_units INTEGER NOT NULL DEFAULT 0",
+        }
+        for col_name, sql_stmt in _wave_migrations.items():
+            if col_name not in wave_cols:
+                with db.engine.connect() as conn:
+                    conn.execute(text(sql_stmt))
+                    conn.commit()
+                print(f"[WMS] Added column wms_pick_wave.{col_name}")
+    if 'wms_pick_task' in inspector.get_table_names():
+        task_cols = [c['name'] for c in inspector.get_columns('wms_pick_task')]
+        _task_migrations = {
+            'product_name': "ALTER TABLE wms_pick_task ADD COLUMN product_name VARCHAR(200)",
+            'category': "ALTER TABLE wms_pick_task ADD COLUMN category VARCHAR(100)",
+            'short_qty': "ALTER TABLE wms_pick_task ADD COLUMN short_qty INTEGER NOT NULL DEFAULT 0",
+            'location_hint': "ALTER TABLE wms_pick_task ADD COLUMN location_hint VARCHAR(100)",
+            'updated_at': "ALTER TABLE wms_pick_task ADD COLUMN updated_at DATETIME",
+        }
+        for col_name, sql_stmt in _task_migrations.items():
+            if col_name not in task_cols:
+                with db.engine.connect() as conn:
+                    conn.execute(text(sql_stmt))
+                    conn.commit()
+                print(f"[WMS] Added column wms_pick_task.{col_name}")
     wh = s.query(WmsWarehouse).filter_by(code='MAIN').first()
     if not wh:
         wh = WmsWarehouse(code='MAIN', name='Main Warehouse')

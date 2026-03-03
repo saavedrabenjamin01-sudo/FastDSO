@@ -1,0 +1,169 @@
+Implement full WMS Operator Performance system (assignment + picking workflow + KPIs) in FastDSO, in ONE pass.
+
+GOAL
+- Warehouse manager assigns pick waves (no self-assign).
+- Operators pick in real time.
+- Track productivity per operator (time, units/hour, lines/hour, accuracy).
+- Provide a KPI dashboard for warehouse performance.
+- Keep FastDSO visual style (cards, pills/badges, same spacing).
+
+DATA MODEL CHANGES
+1) Extend WmsPickWave table/model:
+- urgency_level: enum/string (LOW, MEDIUM, URGENT) default MEDIUM
+- priority_rank: int (URGENT=1, MEDIUM=2, LOW=3) stored for ordering
+- assigned_to: FK user.id nullable
+- assigned_at: datetime nullable
+- pick_started_at: datetime nullable
+- pick_finished_at: datetime nullable
+- closed_at: datetime nullable
+- status: string with allowed values:
+  READY_TO_ASSIGN, ASSIGNED, IN_PROGRESS, PICKED, CLOSED, CANCELLED
+- total_lines: int (computed at creation) store it
+- total_units: int (computed at creation) store it
+- picked_lines: int default 0
+- picked_units: int default 0
+- short_lines: int default 0
+- short_units: int default 0
+
+2) Create WmsPickTask table/model (one row per SKU to pick for a wave):
+- id
+- wave_id FK
+- product_id FK
+- sku (denormalized ok)
+- product_name (denormalized ok)
+- category (nullable)
+- requested_qty int
+- picked_qty int default 0
+- short_qty int default 0
+- status string: PENDING, PICKED, SHORT
+- location_hint string nullable (best location/bin to pick from, if exists)
+- updated_at datetime
+
+3) Create WmsOperatorKpiDaily table/model (optional but recommended):
+- id
+- user_id FK
+- work_date (date)
+- waves_completed int
+- total_pick_seconds int
+- total_units int
+- total_lines int
+- short_units int
+- short_lines int
+- units_per_hour float
+- lines_per_hour float
+- accuracy_rate float
+This can be computed on the fly, but store daily rollups for speed.
+
+BUSINESS RULES (CRITICAL)
+A) Priority gating:
+- If there is ANY wave with urgency URGENT and status in (READY_TO_ASSIGN, ASSIGNED, IN_PROGRESS),
+  then manager cannot assign a LOW/MEDIUM wave.
+- Also operators cannot start a LOW/MEDIUM wave if any URGENT exists in active statuses.
+
+B) No picking without assignment:
+- Operators can only access waves where assigned_to == current_user.id.
+
+C) Consolidated pick:
+- We pick one consolidated list per folio/wave (no store separation here).
+- Dispatch separation happens later (out of scope).
+
+ROUTES / PAGES
+1) Manager page: /wms/waves (permission admin OR warehouse_manager)
+- Table/cards listing waves with: folio, urgency badge, totals, status, assigned operator, timestamps, actions
+- Actions:
+  - "Assign operator" (only when status READY_TO_ASSIGN)
+  - "Reassign" (only admin/manager; keeps audit)
+  - "Open wave" (read-only view)
+- Assignment modal:
+  - dropdown of users with role "warehouse" (operators)
+  - confirm
+  - on confirm:
+    - enforce Priority gating
+    - set assigned_to, assigned_at=now, status=ASSIGNED
+
+2) Operator page: /wms/my-waves (permission warehouse role)
+- Shows only waves assigned to me with status in (ASSIGNED, IN_PROGRESS)
+- "Start" button:
+  - if status ASSIGNED: set pick_started_at=now, status=IN_PROGRESS
+  - enforce Priority gating (block if urgent exists and this wave not urgent)
+- "Continue" for IN_PROGRESS
+
+3) Picking screen: /wms/waves/<wave_id>/pick
+- Operator-only if assigned_to matches
+- Shows tasks table (paginated 10/25/50):
+  Columns: SKU, Product, Requested, Picked, Short, Status, Location Hint
+- Each row has controls:
+  - input picked_qty (default requested)
+  - auto-calc short_qty = requested - picked (min 0)
+  - quick buttons: "Pick all", "Short all", "Pick 0"
+  - save row updates (POST)
+- Update wave counters in real time:
+  picked_units, picked_lines, short_units, short_lines
+- Top summary strip:
+  progress bar % lines done
+  units done / total
+  ETA style text optional
+- "Finish picking" button appears when all tasks status != PENDING:
+  sets pick_finished_at=now, status=PICKED
+
+4) Close wave screen (manager or operator depending on policy):
+- Button "Close wave"
+- On close:
+  status=CLOSED, closed_at=now
+  Write audit entry
+  Trigger FastPlanner status update: planner_folio -> READY_TO_DISPATCH (or equivalent)
+
+KPIs / REPORTING
+1) Add /wms/kpis (manager/admin)
+- Filters: date range, operator, urgency
+- KPI cards:
+  - Waves completed
+  - Avg pick time per wave
+  - Units/hour
+  - Lines/hour
+  - Accuracy rate (1 - short_units/total_units)
+- Table ranking by operator:
+  columns: operator, waves, pick_hours, units, lines, units/hour, lines/hour, accuracy
+- Clicking operator opens detail: /wms/kpis/operator/<user_id>?range=...
+
+2) KPI calculation logic:
+- pick_seconds = sum((pick_finished_at - pick_started_at) for waves CLOSED or PICKED in range)
+- units_per_hour = total_units / (pick_seconds/3600) (guard division by zero)
+- lines_per_hour = total_lines / (pick_seconds/3600)
+- accuracy_rate = 1 - (short_units / max(total_units,1))
+
+PERFORMANCE NOTES
+- Avoid heavy joins per request:
+  - Denormalize sku/product_name in WmsPickTask.
+- Add indexes:
+  - WmsPickWave(status, urgency_level, assigned_to)
+  - WmsPickTask(wave_id, status)
+
+UI (FASTDSO STYLE)
+- Use same layout as other modules: top header, cards, pills, table with soft borders
+- Urgency pills:
+  URGENT red, MEDIUM orange, LOW blue (use existing color scheme)
+- Status pills:
+  READY gray, ASSIGNED purple, IN_PROGRESS teal, PICKED green, CLOSED dark
+- Modal style consistent with processing popups
+
+DELIVERABLES
+- DB migrations or create_all updates
+- Updated templates:
+  templates/wms_waves.html
+  templates/wms_my_waves.html
+  templates/wms_pick.html
+  templates/wms_kpis.html
+- Updated sidebar menu under “Operaciones” or “WMS”:
+  - WMS Waves
+  - My Picking
+  - WMS KPIs
+
+VALIDATION CHECKLIST (run after)
+- Create a wave → totals correct
+- Assign operator (blocks if urgent pending)
+- Operator starts → status IN_PROGRESS + timestamp
+- Pick a few rows → counters update
+- Finish picking → status PICKED
+- Close wave → status CLOSED + planner status updated
+- KPI dashboard shows operator metrics correctly
