@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block title %}Pick Wave #{{ wave.id }} — FastWMS{% endblock %}
+{% block content %}
+<div class="content-header">
+  <div class="d-flex align-items-center gap-3">
+    <a href="{{ url_for('planner_detail', plan_id=plan.id) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
+    <div>
+      <h1 class="mb-0"><i class="bi bi-boxes"></i> Pick Wave #{{ wave.id }}</h1>
+      <p class="text-muted mb-0">Folio: {{ plan.folio }} &nbsp;|&nbsp; Bodega: {{ wave.warehouse_code }}</p>
+    </div>
+    <div class="ms-auto d-flex gap-2 align-items-center">
+      <span class="urgency-pill urgency-{{ wave.priority|lower }}">{{ wave.priority }}</span>
+      <span class="badge {% if wave.status == 'RELEASED' %}bg-info{% elif wave.status == 'IN_PROGRESS' %}bg-primary{% elif wave.status == 'DONE' %}bg-success{% elif wave.status == 'NEEDS_REVIEW' %}bg-danger{% else %}bg-secondary{% endif %}" style="font-size:0.8rem; padding:6px 12px;">
+        {{ wave.status }}
+      </span>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="query-kpi-card">
+      <div class="query-kpi-badge" style="background:linear-gradient(135deg,#6366f1,#4f46e5);">
+        <i class="bi bi-box-seam"></i>
+      </div>
+      <div class="query-kpi-body">
+        <span class="query-kpi-label">SKUs solicitados</span>
+        <span class="query-kpi-number">{{ total_skus }}</span>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="query-kpi-card">
+      <div class="query-kpi-badge" style="background:linear-gradient(135deg,#3b82f6,#2563eb);">
+        <i class="bi bi-boxes"></i>
+      </div>
+      <div class="query-kpi-body">
+        <span class="query-kpi-label">Unidades solicitadas</span>
+        <span class="query-kpi-number">{{ "{:,}".format(total_requested) }}</span>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="query-kpi-card">
+      <div class="query-kpi-badge" style="background:linear-gradient(135deg,#22c55e,#16a34a);">
+        <i class="bi bi-check2-circle"></i>
+      </div>
+      <div class="query-kpi-body">
+        <span class="query-kpi-label">Unidades reservadas</span>
+        <span class="query-kpi-number">{{ "{:,}".format(total_reserved) }}</span>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="query-kpi-card">
+      <div class="query-kpi-badge" style="background:linear-gradient(135deg,{% if fulfillment_pct >= 100 %}#22c55e,#16a34a{% elif fulfillment_pct >= 80 %}#eab308,#ca8a04{% else %}#ef4444,#dc2626{% endif %});">
+        <i class="bi bi-percent"></i>
+      </div>
+      <div class="query-kpi-body">
+        <span class="query-kpi-label">% Cumplimiento</span>
+        <span class="query-kpi-number">{{ fulfillment_pct }}%</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if can_operate %}
+<div class="d-flex gap-2 mb-4">
+  {% if wave.status == 'RELEASED' %}
+  <form method="post" action="{{ url_for('wms_wave_start_picking', wave_id=wave.id) }}">
+    <button type="submit" class="btn btn-primary">
+      <i class="bi bi-play-circle"></i> Marcar en Picking
+    </button>
+  </form>
+  {% endif %}
+  {% if wave.status == 'IN_PROGRESS' and fully_reserved %}
+  <form method="post" action="{{ url_for('wms_wave_finish_picking', wave_id=wave.id) }}" onsubmit="return confirm('¿Confirmar finalización de picking? Se descontará el stock del inventario WMS.')">
+    <button type="submit" class="btn btn-success">
+      <i class="bi bi-check-circle"></i> Finalizar Picking
+    </button>
+  </form>
+  {% elif wave.status == 'IN_PROGRESS' and not fully_reserved %}
+  <button class="btn btn-secondary" disabled title="No se puede finalizar: hay SKUs con reserva parcial o sin stock">
+    <i class="bi bi-check-circle"></i> Finalizar Picking (requiere reserva completa)
+  </button>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="card mb-4">
+  <div class="card-header">
+    <span class="fw-semibold"><i class="bi bi-list-task"></i> Tareas de Picking</span>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0" style="font-size:0.85rem;">
+        <thead class="table-light">
+          <tr>
+            <th>SKU</th>
+            <th>Producto</th>
+            <th class="text-end">Solicitado</th>
+            <th class="text-end">Reservado</th>
+            <th class="text-end">Faltante</th>
+            <th class="text-center">Estado</th>
+            <th>Nota</th>
+            <th class="text-center">Ubicaciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in tasks %}
+          <tr{% if t.shortage > 0 %} class="table-danger"{% elif t.status == 'DONE' %} class="table-success"{% endif %}>
+            <td><code>{{ t.sku }}</code></td>
+            <td><span style="max-width:200px; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ t.product_name }}">{{ t.product_name }}</span></td>
+            <td class="text-end fw-semibold">{{ "{:,}".format(t.qty_requested) }}</td>
+            <td class="text-end">
+              {% if t.qty_reserved >= t.qty_requested %}
+              <span class="text-success fw-semibold">{{ "{:,}".format(t.qty_reserved) }}</span>
+              {% elif t.qty_reserved > 0 %}
+              <span class="text-warning fw-semibold">{{ "{:,}".format(t.qty_reserved) }}</span>
+              {% else %}
+              <span class="text-danger fw-semibold">0</span>
+              {% endif %}
+            </td>
+            <td class="text-end">
+              {% if t.shortage > 0 %}
+              <span class="text-danger fw-bold">-{{ "{:,}".format(t.shortage) }}</span>
+              {% else %}
+              <span class="text-muted">0</span>
+              {% endif %}
+            </td>
+            <td class="text-center">
+              <span class="badge {% if t.status == 'OPEN' %}bg-secondary{% elif t.status == 'PICKING' %}bg-primary{% elif t.status == 'DONE' %}bg-success{% else %}bg-dark{% endif %}">
+                {{ t.status }}
+              </span>
+            </td>
+            <td>
+              {% if t.note %}
+              <span class="text-muted small" title="{{ t.note }}">{{ t.note[:40] }}{% if t.note|length > 40 %}…{% endif %}</span>
+              {% endif %}
+            </td>
+            <td class="text-center">
+              {% if t.reservations %}
+              <button class="btn btn-xs btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#res-{{ t.id }}" title="Ver ubicaciones">
+                <i class="bi bi-geo-alt"></i> {{ t.reservations|length }}
+              </button>
+              {% else %}
+              <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% if t.reservations %}
+          <tr class="collapse" id="res-{{ t.id }}">
+            <td colspan="8" class="bg-light px-4 py-2">
+              <table class="table table-sm table-borderless mb-0" style="font-size:0.8rem; max-width:400px;">
+                <thead>
+                  <tr class="text-muted">
+                    <th>Ubicación</th>
+                    <th class="text-end">Reservado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for r in t.reservations %}
+                  <tr>
+                    <td><code>{{ r.location_code }}</code></td>
+                    <td class="text-end fw-semibold">{{ "{:,}".format(r.qty_reserved) }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header">
+    <span class="fw-semibold"><i class="bi bi-info-circle"></i> Información</span>
+  </div>
+  <div class="card-body small text-muted">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <i class="bi bi-calendar-plus"></i> Creada: {{ wave.created_at.strftime('%d/%m/%Y %H:%M') }}
+      </div>
+      <div class="col-md-4">
+        <i class="bi bi-person"></i> Creada por: {{ wave.created_by.username if wave.created_by else '—' }}
+      </div>
+      <div class="col-md-4">
+        <i class="bi bi-building"></i> Bodega: {{ wave.warehouse_code }}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

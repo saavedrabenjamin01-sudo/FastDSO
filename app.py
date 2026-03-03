@@ -910,6 +910,54 @@ class WmsInventoryEvent(db.Model):
     product = db.relationship('Product')
 
 
+PICK_WAVE_STATUSES = ['RELEASED', 'IN_PROGRESS', 'DONE', 'NEEDS_REVIEW', 'CANCELLED']
+PICK_WAVE_PRIORITIES = ['LOW', 'MEDIUM', 'URGENT']
+PICK_TASK_STATUSES = ['OPEN', 'PICKING', 'DONE', 'CANCELLED']
+
+
+class WmsPickWave(db.Model):
+    __tablename__ = 'wms_pick_wave'
+    id = db.Column(db.Integer, primary_key=True)
+    warehouse_code = db.Column(db.String(20), nullable=False, default='MAIN')
+    plan_id = db.Column(db.Integer, db.ForeignKey('distribution_plan.id'), nullable=False, index=True)
+    status = db.Column(db.String(20), nullable=False, default='RELEASED')
+    priority = db.Column(db.String(10), nullable=False, default='MEDIUM')
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    plan = db.relationship('DistributionPlan', backref=db.backref('pick_waves', lazy='dynamic'))
+    created_by = db.relationship('User')
+    tasks = db.relationship('WmsPickTask', backref='wave', lazy='dynamic', cascade='all, delete-orphan')
+    reservations = db.relationship('WmsPickReservation', backref='wave', lazy='dynamic', cascade='all, delete-orphan')
+
+
+class WmsPickTask(db.Model):
+    __tablename__ = 'wms_pick_task'
+    id = db.Column(db.Integer, primary_key=True)
+    wave_id = db.Column(db.Integer, db.ForeignKey('wms_pick_wave.id'), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    sku = db.Column(db.String(64), nullable=False)
+    qty_requested = db.Column(db.Integer, nullable=False, default=0)
+    qty_picked = db.Column(db.Integer, nullable=False, default=0)
+    status = db.Column(db.String(20), nullable=False, default='OPEN')
+    note = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    product = db.relationship('Product')
+
+
+class WmsPickReservation(db.Model):
+    __tablename__ = 'wms_pick_reservation'
+    id = db.Column(db.Integer, primary_key=True)
+    wave_id = db.Column(db.Integer, db.ForeignKey('wms_pick_wave.id'), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    location_id = db.Column(db.Integer, db.ForeignKey('wms_location.id'), nullable=False)
+    qty_reserved = db.Column(db.Integer, nullable=False, default=0)
+
+    product = db.relationship('Product')
+    location = db.relationship('WmsLocation')
+
+
 # ------------------ Operational Stock Helpers ------------------
 def _get_baseline_date(scope, session=None):
     s = session or db.session
@@ -1135,6 +1183,153 @@ def _sync_wms_to_stockcd(warehouse_id, snapshot_date, session=None):
     else:
         s.add(InventoryBaseline(scope='cd', baseline_date=snapshot_date))
     s.flush()
+
+
+def wms_create_pick_wave_for_plan(plan_id, priority='MEDIUM', warehouse_code='MAIN', user=None):
+    wh = db.session.query(WmsWarehouse).filter_by(code=warehouse_code).first()
+    if not wh:
+        raise ValueError(f"Warehouse {warehouse_code} not found")
+
+    demand_rows = (
+        db.session.query(
+            DistributionPlanLine.product_id,
+            func.sum(DistributionPlanLine.qty_planned).label('total_qty')
+        )
+        .filter(DistributionPlanLine.plan_id == plan_id)
+        .filter(DistributionPlanLine.qty_planned > 0)
+        .group_by(DistributionPlanLine.product_id)
+        .all()
+    )
+    if not demand_rows:
+        raise ValueError("No hay líneas con cantidad > 0 en este plan")
+
+    product_ids_needed = [r.product_id for r in demand_rows]
+    demand_map = {r.product_id: int(r.total_qty) for r in demand_rows}
+
+    products_map = {
+        p.id: p for p in db.session.query(Product).filter(Product.id.in_(product_ids_needed)).all()
+    }
+
+    inv_rows = (
+        db.session.query(WmsInventory)
+        .filter(WmsInventory.warehouse_id == wh.id)
+        .filter(WmsInventory.product_id.in_(product_ids_needed))
+        .order_by(
+            WmsInventory.product_id,
+            (WmsInventory.on_hand_units - WmsInventory.allocated_units).desc()
+        )
+        .all()
+    )
+    inv_by_product = {}
+    for inv in inv_rows:
+        inv_by_product.setdefault(inv.product_id, []).append(inv)
+
+    wave = WmsPickWave(
+        warehouse_code=warehouse_code,
+        plan_id=plan_id,
+        priority=priority,
+        created_by_user_id=user.id if user else None
+    )
+    db.session.add(wave)
+    db.session.flush()
+
+    total_requested = 0
+    total_reserved = 0
+    has_shortage = False
+
+    for pid, qty_needed in demand_map.items():
+        product = products_map.get(pid)
+        sku = product.sku if product else f"PID-{pid}"
+        total_requested += qty_needed
+
+        locations = inv_by_product.get(pid, [])
+        qty_remaining = qty_needed
+        task_reserved = 0
+
+        reservations_for_task = []
+        for inv in locations:
+            if qty_remaining <= 0:
+                break
+            avail = max(0, (inv.on_hand_units or 0) - (inv.allocated_units or 0))
+            if avail <= 0:
+                continue
+            to_reserve = min(avail, qty_remaining)
+            inv.allocated_units = (inv.allocated_units or 0) + to_reserve
+            inv.updated_at = datetime.utcnow()
+            qty_remaining -= to_reserve
+            task_reserved += to_reserve
+
+            reservations_for_task.append(WmsPickReservation(
+                wave_id=wave.id,
+                product_id=pid,
+                location_id=inv.location_id,
+                qty_reserved=to_reserve
+            ))
+
+            db.session.add(WmsInventoryEvent(
+                event_type='PICK_RESERVE',
+                ref_type='pick_wave',
+                ref_id=str(wave.id),
+                warehouse_id=wh.id,
+                location_id=inv.location_id,
+                product_id=pid,
+                delta_units=0,
+                delta_pallets=0,
+                note=f"Reserva picking: {to_reserve} uds para wave #{wave.id}"
+            ))
+
+        total_reserved += task_reserved
+
+        task_status = 'OPEN'
+        task_note = None
+        if task_reserved == 0:
+            task_status = 'OPEN'
+            task_note = 'NO_STOCK_AVAILABLE'
+            has_shortage = True
+        elif task_reserved < qty_needed:
+            task_note = f'PARTIAL: reservado {task_reserved}/{qty_needed}'
+            has_shortage = True
+
+        task = WmsPickTask(
+            wave_id=wave.id,
+            product_id=pid,
+            sku=sku,
+            qty_requested=qty_needed,
+            qty_picked=0,
+            status=task_status,
+            note=task_note
+        )
+        db.session.add(task)
+        for res in reservations_for_task:
+            db.session.add(res)
+
+    wave.status = 'NEEDS_REVIEW' if has_shortage else 'RELEASED'
+    db.session.flush()
+
+    print(f"[WMS] wave created: wave_id={wave.id}, plan_id={plan_id}, "
+          f"requested_units={total_requested}, reserved_units={total_reserved}, status={wave.status}")
+
+    try:
+        log_audit(
+            action='wms.wave.created',
+            entity_type='wms_pick_wave',
+            entity_id=wave.id,
+            status='success',
+            message=f'Pick Wave #{wave.id} creada para plan {plan_id}',
+            metadata={
+                'wave_id': wave.id,
+                'plan_id': plan_id,
+                'total_skus': len(demand_map),
+                'total_units_requested': total_requested,
+                'total_units_reserved': total_reserved,
+                'wave_status': wave.status,
+                'warehouse_code': warehouse_code
+            }
+        )
+    except Exception:
+        pass
+
+    return wave, total_requested, total_reserved
 
 
 def get_store_operational_stock_bulk(store_ids=None, product_ids=None, as_of_date=None, session=None):
@@ -9350,6 +9545,161 @@ def wms_move_detail(move_id):
     return render_template('wms_move_detail.html', run=run_data, lines=lines_data)
 
 
+@app.route('/wms/waves/<int:wave_id>')
+@login_required
+@require_permission('wms:view')
+def wms_wave_detail(wave_id):
+    wave = db.session.get(WmsPickWave, wave_id)
+    if not wave:
+        flash('Pick Wave no encontrada.', 'warning')
+        return redirect(url_for('planner'))
+
+    plan = wave.plan
+    tasks = (
+        db.session.query(WmsPickTask)
+        .filter(WmsPickTask.wave_id == wave_id)
+        .order_by(WmsPickTask.sku)
+        .all()
+    )
+
+    reservations = (
+        db.session.query(WmsPickReservation, WmsLocation.location_code)
+        .join(WmsLocation, WmsPickReservation.location_id == WmsLocation.id)
+        .filter(WmsPickReservation.wave_id == wave_id)
+        .order_by(WmsPickReservation.product_id, WmsLocation.location_code)
+        .all()
+    )
+    res_by_product = {}
+    for res, loc_code in reservations:
+        res_by_product.setdefault(res.product_id, []).append({
+            'location_code': loc_code,
+            'qty_reserved': res.qty_reserved
+        })
+
+    total_requested = sum(t.qty_requested for t in tasks)
+    total_reserved = sum(
+        sum(r['qty_reserved'] for r in res_by_product.get(t.product_id, []))
+        for t in tasks
+    )
+    fulfillment_pct = round(total_reserved / total_requested * 100, 1) if total_requested > 0 else 0
+
+    tasks_data = []
+    for t in tasks:
+        prod_reservations = res_by_product.get(t.product_id, [])
+        task_reserved = sum(r['qty_reserved'] for r in prod_reservations)
+        tasks_data.append({
+            'id': t.id,
+            'sku': t.sku,
+            'product_name': t.product.name if t.product else t.sku,
+            'qty_requested': t.qty_requested,
+            'qty_reserved': task_reserved,
+            'qty_picked': t.qty_picked,
+            'shortage': max(0, t.qty_requested - task_reserved),
+            'status': t.status,
+            'note': t.note,
+            'reservations': prod_reservations
+        })
+
+    can_operate = current_user.has_permission('planner:operate') or current_user.has_permission('wms:view')
+    fully_reserved = all(td['shortage'] == 0 for td in tasks_data)
+
+    return render_template(
+        'wms_wave_detail.html',
+        wave=wave,
+        plan=plan,
+        tasks=tasks_data,
+        total_skus=len(tasks),
+        total_requested=total_requested,
+        total_reserved=total_reserved,
+        fulfillment_pct=fulfillment_pct,
+        can_operate=can_operate,
+        fully_reserved=fully_reserved
+    )
+
+
+@app.route('/wms/waves/<int:wave_id>/start_picking', methods=['POST'])
+@login_required
+@require_permission('planner:operate')
+def wms_wave_start_picking(wave_id):
+    wave = db.session.get(WmsPickWave, wave_id)
+    if not wave:
+        flash('Pick Wave no encontrada.', 'warning')
+        return redirect(url_for('planner'))
+    if wave.status not in ('RELEASED',):
+        flash(f'Solo se puede iniciar picking en waves con estado RELEASED (actual: {wave.status})', 'warning')
+        return redirect(url_for('wms_wave_detail', wave_id=wave_id))
+    wave.status = 'IN_PROGRESS'
+    for task in wave.tasks.filter(WmsPickTask.status == 'OPEN').all():
+        task.status = 'PICKING'
+    db.session.commit()
+    log_audit(action='wms.wave.start_picking', entity_type='wms_pick_wave', entity_id=wave.id,
+              status='success', message=f'Pick Wave #{wave.id} marcada EN PROGRESO')
+    flash(f'Pick Wave #{wave.id} marcada en picking', 'success')
+    return redirect(url_for('wms_wave_detail', wave_id=wave_id))
+
+
+@app.route('/wms/waves/<int:wave_id>/finish_picking', methods=['POST'])
+@login_required
+@require_permission('planner:operate')
+def wms_wave_finish_picking(wave_id):
+    wave = db.session.get(WmsPickWave, wave_id)
+    if not wave:
+        flash('Pick Wave no encontrada.', 'warning')
+        return redirect(url_for('planner'))
+    if wave.status not in ('IN_PROGRESS',):
+        flash(f'Solo se puede finalizar picking en waves EN PROGRESO (actual: {wave.status})', 'warning')
+        return redirect(url_for('wms_wave_detail', wave_id=wave_id))
+
+    reservations = wave.reservations.all()
+    res_by_product = {}
+    for res in reservations:
+        res_by_product.setdefault(res.product_id, 0)
+        res_by_product[res.product_id] += res.qty_reserved
+
+    tasks = wave.tasks.all()
+    for t in tasks:
+        task_reserved = res_by_product.get(t.product_id, 0)
+        if task_reserved < t.qty_requested:
+            flash(f'No se puede finalizar: SKU {t.sku} tiene reserva parcial ({task_reserved}/{t.qty_requested}). Resuelva las incidencias primero.', 'danger')
+            return redirect(url_for('wms_wave_detail', wave_id=wave_id))
+
+    wh = db.session.query(WmsWarehouse).filter_by(code=wave.warehouse_code).first()
+    for res in reservations:
+        inv = (
+            db.session.query(WmsInventory)
+            .filter_by(warehouse_id=wh.id, location_id=res.location_id, product_id=res.product_id)
+            .first()
+        )
+        if inv:
+            inv.on_hand_units = max(0, (inv.on_hand_units or 0) - res.qty_reserved)
+            inv.allocated_units = max(0, (inv.allocated_units or 0) - res.qty_reserved)
+            inv.updated_at = datetime.utcnow()
+
+        db.session.add(WmsInventoryEvent(
+            event_type='PICK_CONFIRM',
+            ref_type='pick_wave',
+            ref_id=str(wave.id),
+            warehouse_id=wh.id,
+            location_id=res.location_id,
+            product_id=res.product_id,
+            delta_units=-res.qty_reserved,
+            delta_pallets=0,
+            note=f"Picking confirmado: -{res.qty_reserved} uds desde wave #{wave.id}"
+        ))
+
+    for t in tasks:
+        t.qty_picked = t.qty_requested
+        t.status = 'DONE'
+
+    wave.status = 'DONE'
+    db.session.commit()
+
+    log_audit(action='wms.wave.finish_picking', entity_type='wms_pick_wave', entity_id=wave.id,
+              status='success', message=f'Pick Wave #{wave.id} finalizada — stock descontado')
+    flash(f'Pick Wave #{wave.id} finalizada — stock descontado del inventario WMS', 'success')
+    return redirect(url_for('wms_wave_detail', wave_id=wave_id))
+
+
 @app.route('/stock_cd', methods=['GET', 'POST'])
 @login_required
 @require_permission('stock_cd:upload')
@@ -10382,19 +10732,35 @@ def approve_and_send(run_id):
     run.approved_by_user_id = current_user.id
     run.approved_at = datetime.utcnow()
     run.planner_plan_id = plan.id
-    
+
     db.session.commit()
-    
+
+    wave_msg = ''
+    try:
+        wave, total_req, total_res = wms_create_pick_wave_for_plan(
+            plan.id,
+            priority=plan.urgency or 'MEDIUM',
+            warehouse_code='MAIN',
+            user=current_user
+        )
+        db.session.commit()
+        wave_msg = f' | WMS Pick Wave #{wave.id} creada ({wave.status})'
+    except Exception as e:
+        db.session.rollback()
+        print(f"[WMS] ERROR creating pick wave for plan {plan.id}: {e}")
+        wave_msg = f' | WMS Pick Wave no creada: {str(e)}'
+        flash(f'Plan creado pero la Pick Wave WMS no se pudo generar: {str(e)}', 'warning')
+
     log_audit(
         action='run.approved_and_sent',
         entity_type='run',
         entity_id=run.id,
         run_id=run_id,
         status='success',
-        message=f'Aprobado y enviado a FastPlanner como {plan.folio}'
+        message=f'Aprobado y enviado a FastPlanner como {plan.folio}{wave_msg}'
     )
     
-    flash(f'Corrida aprobada y enviada a FastPlanner como {plan.folio}', 'success')
+    flash(f'Corrida aprobada y enviada a FastPlanner como {plan.folio}{wave_msg}', 'success')
     return redirect(url_for('runs'))
 
 
@@ -16170,6 +16536,21 @@ def planner():
     can_start_medium = (urgent_blockers == 0)
     can_start_low = (urgent_blockers == 0 and medium_blockers == 0)
 
+    all_plan_ids = []
+    for plans in plans_by_status.values():
+        all_plan_ids.extend([p.id for p in plans])
+    waves_map = {}
+    if all_plan_ids:
+        waves = (
+            db.session.query(WmsPickWave)
+            .filter(WmsPickWave.plan_id.in_(all_plan_ids))
+            .order_by(WmsPickWave.created_at.desc())
+            .all()
+        )
+        for w in waves:
+            if w.plan_id not in waves_map:
+                waves_map[w.plan_id] = w
+
     return render_template(
         'planner.html',
         plans_by_status=plans_by_status,
@@ -16181,7 +16562,8 @@ def planner():
         urgent_blockers=urgent_blockers,
         medium_blockers=medium_blockers,
         can_start_medium=can_start_medium,
-        can_start_low=can_start_low
+        can_start_low=can_start_low,
+        waves_map=waves_map
     )
 
 
@@ -16203,6 +16585,13 @@ def planner_detail(plan_id):
     activities = plan.activity_logs.limit(50).all()
     can_operate = current_user.has_permission('planner:operate')
 
+    latest_wave = (
+        db.session.query(WmsPickWave)
+        .filter(WmsPickWave.plan_id == plan.id)
+        .order_by(WmsPickWave.created_at.desc())
+        .first()
+    )
+
     return render_template(
         'planner_detail.html',
         plan=plan,
@@ -16211,7 +16600,8 @@ def planner_detail(plan_id):
         page=page,
         total_pages=total_pages,
         total_lines=total_lines,
-        can_operate=can_operate
+        can_operate=can_operate,
+        latest_wave=latest_wave
     )
 
 

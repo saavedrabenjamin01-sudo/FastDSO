@@ -1,0 +1,84 @@
+You are working on the FastDSO Flask app (single repo) with FastPlanner + FastWMS already created. Implement OPTION A: when a Distribution Plan is approved and sent to FastPlanner, automatically create a WMS Pick Wave consolidated by SKU for warehouse MAIN.
+
+GOALS
+1) Consolidated picking: pick is created per SKU (sum of units across all destination stores) for a given distribution plan/folio.
+2) WMS must reserve inventory (allocated) when wave is created, to prevent phantom stock.
+3) Warehouse is single: MAIN.
+4) FastPlanner should show WMS status badge and a button to open the pick wave detail.
+5) Do NOT build store separation/dispatch module now; keep plan lines with store destinations as-is, but WMS pick wave is consolidated.
+
+DATABASE / MODELS
+Add (or ensure) these WMS models exist (SQLAlchemy):
+- WmsPickWave: id, warehouse_code (default 'MAIN'), plan_id (FK DistributionPlan), status (RELEASED|IN_PROGRESS|DONE|NEEDS_REVIEW|CANCELLED), priority (LOW|MEDIUM|URGENT), created_by_user_id, created_at
+- WmsPickTask: id, wave_id (FK), product_id (FK Product), sku (denormalized ok), qty_requested, qty_picked (default 0), status (OPEN|PICKING|DONE|CANCELLED), note, created_at
+- WmsInventory: id, warehouse_code, location_code, product_id, units (stock físico), allocated_units (reservadas), pallets, updated_at
+If WmsInventory exists already, DO NOT break it—just add allocated_units if missing and create migration/auto-add on startup.
+
+ALLOCATION RULES
+- available_units = units - allocated_units
+- when creating wave, allocate qty_to_reserve = min(total_needed_for_sku, total_available_across_locations)
+- reserve by consuming availability from locations in a deterministic order:
+   1) lowest location_code (A1, A2, etc) OR highest units first (choose ONE; pick “highest available first” to reduce fragmentation)
+- For each reserved portion, create a task line or keep one task per SKU and store location breakdown internally:
+   V1: create ONE task per SKU (consolidated) and reserve across locations anyway (allocated_units updated per location). The task will reference sku/product and qty_requested total.
+   Add a JSON field or a helper table only if needed; otherwise store reservation breakdown in a new table:
+     WmsPickReservation: id, wave_id, product_id, location_code, qty_reserved
+   (Recommended: use WmsPickReservation to keep traceability.)
+- If total_reserved_for_sku == 0, still create the task with status NEEDS_REVIEW and note “NO_STOCK_AVAILABLE”, and set wave status NEEDS_REVIEW.
+
+INTEGRATION POINT (FastPlanner approval)
+Find the code path where a distribution plan/folio transitions to “approved and sent to FastPlanner”.
+- Rename button text remains as you defined (Approve and send to FastPlanner).
+- On that endpoint AFTER the status update commit, call:
+   wms_create_pick_wave_for_plan(plan_id, priority_from_plan_or_ui, warehouse_code='MAIN', user=current_user)
+- This function must:
+   a) build consolidated demand by SKU from DistributionPlanLine where qty_suggested > 0 (or qty_final)
+   b) create WmsPickWave
+   c) reserve inventory (update WmsInventory.allocated_units)
+   d) create WmsPickTask + WmsPickReservation records
+   e) set wave status:
+       - RELEASED if all SKUs reserved fully
+       - NEEDS_REVIEW if any SKU reserved partially or 0
+   f) write a log entry (audit_log) with summary: wave_id, total_skus, total_units_requested, total_units_reserved.
+
+UI CHANGES
+1) FastPlanner kanban cards: show a small badge:
+   - “WMS: RELEASED / IN_PROGRESS / DONE / NEEDS_REVIEW”
+   Pull from the latest wave for that plan (if exists).
+2) Add a button “Ver Picking” on the plan card/detail if wave exists:
+   - route: /wms/waves/<wave_id>
+3) Create a new page template wms_wave_detail.html consistent with FastDSO styling:
+   - header: Wave #id, Plan Folio, Priority pill, Status pill
+   - KPIs: SKUs requested, Units requested, Units reserved, % fulfillment
+   - table: SKU, Producto, Qty requested, Qty reserved, Shortage, Status
+   - collapsible section per SKU showing reservations by location (from WmsPickReservation): location_code, qty_reserved
+4) Add a minimal action on that page:
+   - “Marcar en picking” -> sets wave status IN_PROGRESS
+   - “Finalizar picking” -> validates all tasks qty_picked == qty_requested, then:
+        - decrement WmsInventory.units by picked qty per location using WmsPickReservation as the source of truth
+        - decrement allocated_units accordingly
+        - set tasks DONE and wave DONE
+   V1: allow “Finalizar picking” only if fully reserved; otherwise keep NEEDS_REVIEW (do not allow finalize).
+
+SAFETY / TRANSACTIONS
+- Use a database transaction around wave creation + reservations.
+- If any exception occurs, rollback and do NOT change plan status; return a flash error.
+- Avoid slow N+1 queries; prefetch inventories for all SKUs in one query.
+
+COMPATIBILITY
+- Do not modify existing distribution logic.
+- Do not change stock_cd baseline logic; WMS uses its own inventory table.
+- If allocated_units column missing: add it automatically on startup (SQLite) using raw ALTER TABLE guarded by try/except and a one-time flag table or PRAGMA check.
+
+TESTING (manual)
+Add a small debug print/log:
+[WMS] wave created: wave_id=..., plan_id=..., requested_units=..., reserved_units=..., status=...
+Ensure approval flow now creates the wave and the “Ver Picking” button appears.
+
+Deliverables:
+- app.py updated with models/routes/helpers
+- templates wms_wave_detail.html
+- updates to FastPlanner templates to show WMS badge + button
+- no broken imports, app boots.
+
+Make sure all labels are in Spanish in the UI.

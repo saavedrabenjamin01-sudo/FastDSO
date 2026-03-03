@@ -16,9 +16,17 @@
     <div class="card mb-4">
       <div class="card-header d-flex justify-content-between align-items-center">
         <span class="fw-semibold"><i class="bi bi-info-circle"></i> Resumen</span>
-        <div class="d-flex gap-2">
+        <div class="d-flex gap-2 align-items-center">
           <span class="badge bg-{{ 'success' if plan.status == 'APPROVED' else 'primary' if plan.status == 'IN_PROGRESS' else 'info' if plan.status == 'PACKED' else 'warning' if plan.status == 'DISPATCHED' else 'secondary' }}">{{ plan.status }}</span>
           <span class="urgency-pill urgency-{{ plan.urgency|lower }}">{{ plan.urgency }}</span>
+          {% if latest_wave %}
+          <span class="badge {% if latest_wave.status == 'RELEASED' %}bg-info{% elif latest_wave.status == 'IN_PROGRESS' %}bg-primary{% elif latest_wave.status == 'DONE' %}bg-success{% elif latest_wave.status == 'NEEDS_REVIEW' %}bg-danger{% else %}bg-secondary{% endif %}" style="font-size:0.7rem;">
+            WMS: {{ latest_wave.status }}
+          </span>
+          <a href="{{ url_for('wms_wave_detail', wave_id=latest_wave.id) }}" class="btn btn-sm btn-outline-dark" style="font-size:0.7rem;">
+            <i class="bi bi-box-arrow-up-right"></i> Ver Picking
+          </a>
+          {% endif %}
         </div>
       </div>
       <div class="card-body">
