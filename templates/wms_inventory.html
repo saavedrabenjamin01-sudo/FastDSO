@@ -157,49 +157,65 @@
   {% for loc in loc_groups %}
   {% set occ = loc.occupancy_pct %}
   {% set occ_color = 'success' if occ < 60 else ('warning' if occ <= 85 else 'danger') %}
+  {% set is_overload = loc.max_pallets and loc.max_pallets > 0 and loc.total_pallets > loc.max_pallets %}
   <div class="wms-loc-card mb-3">
     <div class="wms-loc-header" data-target="wms-loc-body-{{ loop.index }}" role="button">
       <div class="wms-loc-header-left">
         <span class="badge bg-secondary wms-loc-wh-badge">{{ loc.warehouse }}</span>
         <span class="wms-loc-title">{{ loc.location_code }}</span>
         {% if loc.location_type == 'PICK' %}
-          <span class="badge bg-primary wms-type-badge">PICK</span>
+          <span class="badge wms-badge-pick">PICK</span>
         {% elif loc.location_type == 'BULK' %}
-          <span class="badge bg-secondary wms-type-badge">BULK</span>
+          <span class="badge wms-badge-bulk">BULK</span>
         {% elif loc.location_type == 'QA' %}
-          <span class="badge bg-warning text-dark wms-type-badge">QA</span>
+          <span class="badge wms-badge-qa">QA</span>
         {% elif loc.location_type == 'RETURNS' %}
-          <span class="badge bg-danger wms-type-badge">RETURNS</span>
+          <span class="badge wms-badge-returns">RETURNS</span>
         {% elif loc.location_type %}
           <span class="badge bg-light text-dark wms-type-badge">{{ loc.location_type }}</span>
+        {% endif %}
+        <span class="wms-loc-sku-count">{{ loc.products|length }} SKUs</span>
+        {% if loc.total_available == 0 %}
+          <span class="badge wms-risk-badge wms-risk-sindisp">SIN DISP</span>
+        {% elif loc.total_available < 10 %}
+          <span class="badge wms-risk-badge wms-risk-bajo">BAJO</span>
+        {% endif %}
+        {% if is_overload %}
+          <span class="badge wms-risk-badge wms-risk-overload">SOBRECARGA</span>
         {% endif %}
         <i class="bi bi-chevron-down wms-loc-caret"></i>
       </div>
       <div class="wms-loc-header-right">
         <div class="wms-loc-stat">
           <span class="wms-loc-stat-val">{{ "{:,}".format(loc.total_units) }}</span>
-          <span class="wms-loc-stat-label">uds</span>
+          <span class="wms-loc-stat-label">UDS</span>
         </div>
         <div class="wms-loc-stat">
-          <span class="wms-loc-stat-val{% if loc.total_available <= 0 %} text-danger{% endif %}">{{ "{:,}".format(loc.total_available) }}</span>
-          <span class="wms-loc-stat-label">disp</span>
+          <span class="wms-loc-stat-val{% if loc.total_available <= 0 %} text-danger{% elif loc.total_available < 10 %} text-warning{% endif %}">{{ "{:,}".format(loc.total_available) }}</span>
+          <span class="wms-loc-stat-label">DISP</span>
         </div>
         {% if loc.total_pallets > 0 or (loc.max_pallets and loc.max_pallets > 0) %}
         <div class="wms-loc-stat">
-          <span class="wms-loc-stat-val">{{ loc.total_pallets|round(1) }}</span>
-          <span class="wms-loc-stat-label">pallets</span>
+          <span class="wms-loc-stat-val{% if is_overload %} text-danger{% endif %}">{{ loc.total_pallets|round(1) }}</span>
+          <span class="wms-loc-stat-label">PALLETS</span>
         </div>
         {% endif %}
         {% if loc.max_pallets and loc.max_pallets > 0 %}
         <div class="wms-occ-wrap" title="Ocupación: {{ occ }}% ({{ loc.total_pallets|round(1) }}/{{ loc.max_pallets }})">
           <div class="wms-occ-bar">
-            <div class="wms-occ-fill bg-{{ occ_color }}" style="width:{{ occ }}%;"></div>
+            <div class="wms-occ-fill bg-{{ occ_color }}" style="width:{{ [occ, 100]|min }}%;"></div>
           </div>
-          <span class="wms-occ-pct">{{ occ|int }}%</span>
+          <span class="wms-occ-pct text-{{ occ_color }}">{{ occ|int }}%</span>
         </div>
         {% endif %}
       </div>
     </div>
+
+    {% if loc.max_pallets and loc.max_pallets > 0 %}
+    <div class="wms-occ-bar-full">
+      <div class="wms-occ-fill bg-{{ occ_color }}" style="width:{{ [occ, 100]|min }}%;"></div>
+    </div>
+    {% endif %}
 
     <div class="wms-loc-summary">
       {{ loc.products|length }} SKUs &nbsp;|&nbsp; {{ "{:,}".format(loc.total_units) }} unidades &nbsp;|&nbsp; {{ "{:,}".format(loc.total_available) }} disponibles
@@ -226,7 +242,8 @@
             <td class="text-end fw-semibold">{{ "{:,}".format(item.on_hand_units) }}</td>
             <td class="text-end">
               {% if item.allocated_units > 0 %}
-                <span class="text-warning fw-semibold">{{ "{:,}".format(item.allocated_units) }}</span>
+                <span class="badge wms-badge-reserved">RESERVADO</span>
+                <span class="fw-semibold ms-1">{{ "{:,}".format(item.allocated_units) }}</span>
               {% else %}
                 <span class="text-muted">0</span>
               {% endif %}
@@ -234,6 +251,10 @@
             <td class="text-end">
               {% if item.available_units <= 0 %}
                 <span class="text-danger fw-bold">{{ "{:,}".format(item.available_units) }}</span>
+                <span class="badge wms-risk-badge wms-risk-sindisp ms-1">SIN DISP</span>
+              {% elif item.available_units < 10 %}
+                <span class="text-warning fw-bold">{{ "{:,}".format(item.available_units) }}</span>
+                <span class="badge wms-risk-badge wms-risk-bajo ms-1">BAJO</span>
               {% else %}
                 <span class="fw-semibold">{{ "{:,}".format(item.available_units) }}</span>
               {% endif %}
