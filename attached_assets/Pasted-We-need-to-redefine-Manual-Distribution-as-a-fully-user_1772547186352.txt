@@ -1,0 +1,89 @@
+We need to redefine “Manual Distribution” as a fully user-defined distribution (no automation, no category routing).
+
+GOAL
+- User uploads an Excel/CSV where each row already defines destination store and quantity.
+- System only validates + normalizes + creates a DistributionPlan/Run (same approval flow as automated runs).
+- No allocation logic. No store selection logic. Category is informational only.
+
+FILE FORMAT (REQUIRED columns)
+- sku
+- quantity
+- store   (store name exactly as Store.name, but we will normalize spacing/case)
+
+OPTIONAL columns
+- product_name
+- category
+- note
+
+STEP 1 — Update Manual Distribution Upload UI
+Update templates/manual_distribution.html (or existing manual section in rebalancing.html):
+- Show required columns: sku, quantity, store
+- Show optional columns: product_name, category, note
+- Add “Download template” link (point to static template file if exists)
+- Add urgency + observation fields (same as approval flow):
+  - urgency: low / medium / urgent
+  - observation: free text
+- On submit: show loader popup (reuse existing loader modal)
+
+STEP 2 — Backend: Manual Distribution Upload Handler
+Update the route that handles manual distribution file (e.g. /distribution/manual or /rebalancing/manual):
+Processing rules:
+1) Read file to DataFrame. Strip BOM. Standardize column names to lowercase snake-case.
+2) Validate required columns exist: sku, quantity, store
+3) Clean values:
+   - sku: string, strip, remove spaces
+   - quantity: int >= 0 (reject negatives). Rows with qty==0 should be ignored (do not create lines).
+   - store: strip, collapse multiple spaces, keep as provided for matching.
+4) Resolve store_id:
+   - Match by exact store name first.
+   - If not found, also try normalized match: lower(trim, collapse spaces).
+   - If still not found: collect as error “UNKNOWN_STORE”.
+5) Resolve product_id:
+   - Find Product by sku.
+   - If not found: create Product stub:
+        sku=sku,
+        name=product_name if provided else sku,
+        category=category if provided else NULL
+     If found and product_name provided and current name is empty/sku, update name.
+     If found and category provided and Product.category is empty, update category.
+6) Aggregate duplicates:
+   - If file contains same (sku, store) multiple times: sum quantity into one line.
+7) If any UNKNOWN_STORE errors: do not create plan. Show clear error list (top 20) and count.
+8) Create plan/run:
+   - Create DistributionPlan (or DistributionRun/Run depending on current architecture):
+       source="MANUAL"
+       status="PENDING_AUTH"
+       folio="MAN-YYYYMMDD-HHMMSS" (or allow user input optional)
+       created_by=current_user.id
+       urgency=selected urgency
+       observation=observation
+   - Create DistributionPlanLine rows for each (sku, store_id):
+       quantity = aggregated qty
+       note/category if provided
+   - IMPORTANT: do NOT create any line with qty=0
+9) After creation:
+   - Redirect to Run detail page and open the “Send for Authorization” popup automatically
+     (or show a success popup with buttons: “Send for Authorization”, “View in FastPlanner”).
+
+STEP 3 — Integrations
+- Ensure manual plan appears in:
+  - Centro de Corridas (tag as “Manual”)
+  - Approval flow (manager/admin)
+  - FastPlanner board after approval
+  - WMS picking wave uses these lines “as-is”
+- Export of plan must include only rows with qty>0.
+
+STEP 4 — UX/Feedback
+- After upload show a compact summary:
+   Total rows processed, lines created, distinct SKUs, distinct stores, total units.
+- If any rows were ignored (qty=0), show count.
+- If errors: show actionable message (unknown store names list + hint to download store master list).
+
+IMPLEMENT SAFELY
+- Avoid “too many SQL variables”: use chunked lookups for products/stores.
+- Use bulk insert for lines.
+
+DELIVERABLES
+- Updated manual distribution template + route
+- Works with SQLite create_all (no breaking migrations)
+- No changes to automated distribution logic

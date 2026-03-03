@@ -1157,6 +1157,26 @@ def _ensure_wms_defaults(session=None):
                 conn.execute(text("ALTER TABLE distribution_plan ADD COLUMN source VARCHAR(10) NOT NULL DEFAULT 'AUTO'"))
                 conn.commit()
             print("[WMS] Added column distribution_plan.source")
+        if 'closed_by_user_id' not in plan_cols:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE distribution_plan ADD COLUMN closed_by_user_id INTEGER"))
+                conn.commit()
+            print("[WMS] Added column distribution_plan.closed_by_user_id")
+        if 'closed_at' not in plan_cols:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE distribution_plan ADD COLUMN closed_at DATETIME"))
+                conn.commit()
+            print("[WMS] Added column distribution_plan.closed_at")
+        if 'exceptions_file_name' not in plan_cols:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE distribution_plan ADD COLUMN exceptions_file_name TEXT"))
+                conn.commit()
+            print("[WMS] Added column distribution_plan.exceptions_file_name")
+        if 'exceptions_count' not in plan_cols:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE distribution_plan ADD COLUMN exceptions_count INTEGER NOT NULL DEFAULT 0"))
+                conn.commit()
+            print("[WMS] Added column distribution_plan.exceptions_count")
     wh = s.query(WmsWarehouse).filter_by(code='MAIN').first()
     if not wh:
         wh = WmsWarehouse(code='MAIN', name='Main Warehouse')
@@ -9709,7 +9729,7 @@ def wms_wave_finish_picking(wave_id):
 
 
 def _parse_distribution_manual_file(file):
-    import csv, io
+    import csv, io, re as _re
     filename = file.filename.lower()
     rows = []
 
@@ -9740,6 +9760,8 @@ def _parse_distribution_manual_file(file):
             col_map['sku'] = k
         elif kn in ('quantity', 'qty', 'cantidad', 'units', 'unidades', 'qty_total'):
             col_map['qty'] = k
+        elif kn in ('store', 'tienda', 'store_name', 'sucursal', 'destino'):
+            col_map['store'] = k
         elif kn in ('product_name', 'producto', 'nombre', 'name', 'descripcion', 'descripción'):
             col_map['product_name'] = k
         elif kn in ('category', 'categoria', 'categoría', 'cat'):
@@ -9751,28 +9773,52 @@ def _parse_distribution_manual_file(file):
         return [], "No se encontró columna SKU (aceptados: sku, codigo, código, code)."
     if 'qty' not in col_map:
         return [], "No se encontró columna de cantidad (aceptados: quantity, qty, cantidad, units, unidades)."
+    if 'store' not in col_map:
+        return [], "No se encontró columna de tienda (aceptados: store, tienda, sucursal, destino)."
+
+    def _normalize_store_name(s):
+        s = str(s).strip()
+        s = _re.sub(r'\s+', ' ', s)
+        return s
 
     agg = {}
+    ignored_zero = 0
+    skipped_invalid = 0
+    store_display = {}
     for r in rows:
         raw_sku = str(r.get(col_map['sku'], '')).strip()
         sku = normalize_sku(raw_sku)
         if not sku:
+            skipped_invalid += 1
+            continue
+
+        raw_store = _normalize_store_name(r.get(col_map['store'], ''))
+        if not raw_store:
+            skipped_invalid += 1
             continue
 
         raw_qty = r.get(col_map['qty'], '')
         try:
             qty = int(float(str(raw_qty)))
         except (ValueError, TypeError):
-            entry = agg.setdefault(sku, {'sku': sku, 'qty': 0, 'product_name': '', 'category': '', 'note': '', 'warnings': []})
-            entry['warnings'].append(f'Cantidad no numérica: "{raw_qty}"')
+            skipped_invalid += 1
+            continue
+        if qty < 0:
+            skipped_invalid += 1
+            continue
+        if qty == 0:
+            ignored_zero += 1
             continue
 
-        if qty <= 0:
-            entry = agg.setdefault(sku, {'sku': sku, 'qty': 0, 'product_name': '', 'category': '', 'note': '', 'warnings': []})
-            entry['warnings'].append(f'Cantidad no positiva: {qty}')
-            continue
+        store_norm = raw_store.strip().lower()
+        if store_norm not in store_display:
+            store_display[store_norm] = raw_store
 
-        entry = agg.setdefault(sku, {'sku': sku, 'qty': 0, 'product_name': '', 'category': '', 'note': '', 'warnings': []})
+        key = (sku, store_norm)
+        entry = agg.setdefault(key, {
+            'sku': sku, 'store': store_display[store_norm], 'qty': 0,
+            'product_name': '', 'category': '', 'note': ''
+        })
         entry['qty'] += qty
         if col_map.get('product_name'):
             val = str(r.get(col_map['product_name'], '')).strip()
@@ -9787,8 +9833,8 @@ def _parse_distribution_manual_file(file):
             if val and not entry['note']:
                 entry['note'] = val
 
-    result = [v for v in agg.values() if v['qty'] > 0 or v['warnings']]
-    return result, None
+    result = list(agg.values())
+    return result, None, ignored_zero, skipped_invalid
 
 
 @app.route('/distribution/manual', methods=['GET', 'POST'])
@@ -9806,7 +9852,16 @@ def distribution_manual():
             flash('Seleccione un archivo CSV o XLSX.', 'danger')
             return render_template('distribution_manual.html', step='upload')
 
-        parsed, error = _parse_distribution_manual_file(file)
+        result = _parse_distribution_manual_file(file)
+        if len(result) == 2:
+            parsed, error = result
+            ignored_zero = 0
+            skipped_invalid = 0
+        elif len(result) == 3:
+            parsed, error, ignored_zero = result
+            skipped_invalid = 0
+        else:
+            parsed, error, ignored_zero, skipped_invalid = result
         if error:
             flash(error, 'danger')
             return render_template('distribution_manual.html', step='upload')
@@ -9814,59 +9869,96 @@ def distribution_manual():
             flash('No se encontraron líneas válidas en el archivo.', 'warning')
             return render_template('distribution_manual.html', step='upload')
 
-        all_skus = [item['sku'] for item in parsed]
+        all_skus = list(set(item['sku'] for item in parsed))
         product_map = {}
         for i in range(0, len(all_skus), 500):
             chunk = all_skus[i:i+500]
             for p in Product.query.filter(Product.sku.in_(chunk)).all():
                 product_map[p.sku] = p
 
-        cd_stock = get_cd_stock_map()
-        pid_by_sku = {p.sku: p.id for p in product_map.values()}
+        all_store_names = list(set(item['store'] for item in parsed))
+        store_map = {}
+        store_norm_map = {}
+        for i in range(0, len(all_store_names), 500):
+            chunk = all_store_names[i:i+500]
+            for s in Store.query.filter(Store.name.in_(chunk)).all():
+                store_map[s.name] = s
+                store_norm_map[s.name.strip().lower()] = s
+        if len(store_map) < len(all_store_names):
+            all_stores_db = Store.query.all()
+            for s in all_stores_db:
+                norm = s.name.strip().lower()
+                if norm not in store_norm_map:
+                    store_norm_map[norm] = s
 
+        unknown_stores = set()
+        for item in parsed:
+            if item['store'] not in store_map:
+                norm = item['store'].strip().lower()
+                if norm in store_norm_map:
+                    store_map[item['store']] = store_norm_map[norm]
+                else:
+                    unknown_stores.add(item['store'])
+
+        if unknown_stores:
+            unknown_list = sorted(unknown_stores)[:20]
+            extra = len(unknown_stores) - 20 if len(unknown_stores) > 20 else 0
+            msg = f"Se encontraron {len(unknown_stores)} tienda(s) no reconocida(s): " + ", ".join(f'"{s}"' for s in unknown_list)
+            if extra > 0:
+                msg += f" ... y {extra} más"
+            msg += ". Verifique los nombres contra el catálogo de tiendas."
+            flash(msg, 'danger')
+            return render_template('distribution_manual.html', step='upload', unknown_stores=unknown_list)
+
+        cd_stock = get_cd_stock_map()
         preview_lines = []
         total_units = 0
-        skus_unknown = 0
-        skus_no_stock = 0
+        skus_new = 0
+        skus_low_stock = 0
 
+        sku_cd_checked = set()
         for item in parsed:
             product = product_map.get(item['sku'])
+            store = store_map.get(item['store'])
             status = 'OK'
-            status_warnings = list(item['warnings'])
+            warnings_list = []
 
             if not product:
-                skus_unknown += 1
-                status = 'WARN'
-                status_warnings.append('SKU no encontrado en catálogo')
+                if item['sku'] not in sku_cd_checked:
+                    skus_new += 1
+                    sku_cd_checked.add(item['sku'])
+                warnings_list.append('SKU nuevo (se creará)')
                 cd_qty = 0
             else:
                 pid = product.id
                 cd_qty = cd_stock.get(pid, 0)
-                if item['qty'] > 0 and item['qty'] > cd_qty:
-                    skus_no_stock += 1
-                    status = 'WARN'
-                    status_warnings.append(f'Qty ({item["qty"]}) > Stock CD ({cd_qty})')
+                if item['sku'] not in sku_cd_checked and item['qty'] > cd_qty:
+                    skus_low_stock += 1
+                    sku_cd_checked.add(item['sku'])
                 if not item['product_name']:
                     item['product_name'] = product.name
                 if not item['category']:
                     item['category'] = product.category or ''
 
-            if item['qty'] <= 0 and not status_warnings:
+            if warnings_list:
                 status = 'WARN'
-                status_warnings.append('Sin cantidad válida')
 
-            total_units += max(0, item['qty'])
+            total_units += item['qty']
             preview_lines.append({
                 'sku': item['sku'],
+                'store': item['store'],
+                'store_id': store.id if store else None,
                 'product_name': item['product_name'] or item['sku'],
                 'category': item['category'] or '',
                 'qty': item['qty'],
                 'status': status,
-                'warnings': '; '.join(status_warnings),
+                'warnings': '; '.join(warnings_list),
                 'note': item['note'],
                 'cd_stock': cd_qty
             })
 
+        distinct_skus = len(set(l['sku'] for l in preview_lines))
+        distinct_stores = len(set(l['store'] for l in preview_lines))
         urgency = request.form.get('urgency', 'MEDIUM')
         observation = request.form.get('observation', '').strip()
 
@@ -9877,9 +9969,12 @@ def distribution_manual():
             preview_lines=preview_lines[:20],
             total_preview=len(preview_lines),
             total_units=total_units,
-            total_skus=len([l for l in preview_lines if l['qty'] > 0]),
-            skus_unknown=skus_unknown,
-            skus_no_stock=skus_no_stock,
+            total_skus=distinct_skus,
+            total_stores=distinct_stores,
+            skus_new=skus_new,
+            skus_low_stock=skus_low_stock,
+            ignored_zero=ignored_zero,
+            skipped_invalid=skipped_invalid,
             urgency=urgency,
             observation=observation,
             lines_json=json.dumps(preview_lines)
@@ -9897,12 +9992,12 @@ def distribution_manual():
             flash('Error al procesar datos. Intente de nuevo.', 'danger')
             return redirect(url_for('distribution_manual'))
 
-        valid_lines = [l for l in all_lines if l.get('qty', 0) > 0]
+        valid_lines = [l for l in all_lines if l.get('qty', 0) > 0 and l.get('store_id')]
         if not valid_lines:
-            flash('No hay líneas con cantidad válida.', 'warning')
+            flash('No hay líneas con cantidad y tienda válida.', 'warning')
             return redirect(url_for('distribution_manual'))
 
-        all_skus = [l['sku'] for l in valid_lines]
+        all_skus = list(set(l['sku'] for l in valid_lines))
         product_map = {}
         for i in range(0, len(all_skus), 500):
             chunk = all_skus[i:i+500]
@@ -9914,11 +10009,20 @@ def distribution_manual():
                 stub = Product(
                     sku=l['sku'],
                     name=l.get('product_name') or l['sku'],
-                    category=l.get('category') or 'SIN_CATEGORIA'
+                    category=l.get('category') or None
                 )
                 db.session.add(stub)
                 db.session.flush()
                 product_map[l['sku']] = stub
+            else:
+                product = product_map[l['sku']]
+                updated = False
+                if l.get('product_name') and (not product.name or product.name == product.sku):
+                    product.name = l['product_name']
+                    updated = True
+                if l.get('category') and not product.category:
+                    product.category = l['category']
+                    updated = True
 
         now = datetime.utcnow()
         folio = f"MAN-{now.strftime('%Y%m%d-%H%M%S')}"
@@ -9941,26 +10045,27 @@ def distribution_manual():
         db.session.flush()
 
         total_units_created = 0
+        lines_created = 0
         for l in valid_lines:
             product = product_map[l['sku']]
             line = DistributionPlanLine(
                 plan_id=plan.id,
                 product_id=product.id,
-                store_id=None,
+                store_id=l['store_id'],
                 qty_planned=l['qty'],
                 line_notes=l.get('note') or None
             )
             db.session.add(line)
             total_units_created += l['qty']
+            lines_created += 1
 
         activity = PlanActivityLog(
             plan_id=plan.id,
             action='MANUAL_CREATED',
             user_id=current_user.id,
-            comment=f'Folio manual creado con {len(valid_lines)} SKUs, {total_units_created} unidades'
+            comment=f'Folio manual creado con {lines_created} líneas, {len(set(l["sku"] for l in valid_lines))} SKUs, {total_units_created} uds'
         )
         db.session.add(activity)
-
         db.session.commit()
 
         wave_msg = ''
@@ -9983,10 +10088,10 @@ def distribution_manual():
             entity_type='distribution_plan',
             entity_id=plan.id,
             status='success',
-            message=f'Folio manual {folio} creado: {len(valid_lines)} SKUs, {total_units_created} uds{wave_msg}'
+            message=f'Folio manual {folio}: {lines_created} líneas, {total_units_created} uds{wave_msg}'
         )
 
-        flash(f'Folio {folio} creado exitosamente. {len(valid_lines)} SKUs, {total_units_created} unidades.{wave_msg} Listo para ejecución.', 'success')
+        flash(f'Folio {folio} creado. {lines_created} líneas, {total_units_created} unidades.{wave_msg}', 'success')
         return redirect(url_for('planner_detail', plan_id=plan.id))
 
     return redirect(url_for('distribution_manual'))

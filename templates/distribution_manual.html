@@ -3,7 +3,7 @@
 {% block content %}
 <div class="content-header">
   <h1><i class="bi bi-file-earmark-plus"></i> Distribución Manual</h1>
-  <p class="text-muted">Carga consolidada por SKU — el picking se hará por folio</p>
+  <p class="text-muted">Distribución definida por usuario — SKU, cantidad y tienda destino por fila</p>
 </div>
 
 {% if step == 'upload' %}
@@ -19,7 +19,10 @@
           <div class="mb-3">
             <label class="form-label fw-semibold">Archivo (CSV o XLSX)</label>
             <input type="file" name="file" class="form-control" accept=".csv,.xlsx,.xls" required>
-            <div class="form-text">Columnas requeridas: <code>sku</code>, <code>quantity</code>. Opcionales: <code>product_name</code>, <code>category</code>, <code>note</code></div>
+            <div class="form-text">
+              Columnas requeridas: <code>sku</code>, <code>quantity</code>, <code>store</code>.
+              Opcionales: <code>product_name</code>, <code>category</code>, <code>note</code>
+            </div>
           </div>
           <div class="row g-3">
             <div class="col-md-4">
@@ -44,18 +47,43 @@
       </div>
     </div>
 
+    {% if unknown_stores is defined and unknown_stores %}
+    <div class="card mt-4 border-danger">
+      <div class="card-header bg-danger text-white">
+        <i class="bi bi-exclamation-octagon"></i> Tiendas no reconocidas
+      </div>
+      <div class="card-body">
+        <p class="mb-2 small text-muted">Los siguientes nombres de tienda no coinciden con el catálogo. Verifique ortografía y mayúsculas:</p>
+        <ul class="mb-0 small">
+          {% for s in unknown_stores %}
+          <li><code>{{ s }}</code></li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+    {% endif %}
+
     <div class="card mt-4">
       <div class="card-body text-muted small">
         <p class="mb-2"><strong>Formato esperado:</strong></p>
         <table class="table table-sm table-bordered mb-0" style="font-size:0.8rem;">
           <thead class="table-light">
-            <tr><th>sku</th><th>quantity</th><th>product_name</th><th>category</th><th>note</th></tr>
+            <tr>
+              <th>sku <span class="text-danger">*</span></th>
+              <th>quantity <span class="text-danger">*</span></th>
+              <th>store <span class="text-danger">*</span></th>
+              <th>product_name</th>
+              <th>category</th>
+              <th>note</th>
+            </tr>
           </thead>
           <tbody>
-            <tr><td>SKU001</td><td>50</td><td>Producto A</td><td>Categoría 1</td><td></td></tr>
-            <tr><td>SKU002</td><td>120</td><td>Producto B</td><td></td><td>Urgente</td></tr>
+            <tr><td>SKU001</td><td>50</td><td>Tienda Centro</td><td>Producto A</td><td>Categoría 1</td><td></td></tr>
+            <tr><td>SKU001</td><td>30</td><td>Tienda Norte</td><td>Producto A</td><td></td><td></td></tr>
+            <tr><td>SKU002</td><td>120</td><td>Tienda Centro</td><td>Producto B</td><td></td><td>Urgente</td></tr>
           </tbody>
         </table>
+        <p class="mt-2 mb-0"><span class="text-danger">*</span> Requerido. Si el mismo SKU+tienda aparece más de una vez, las cantidades se suman. Filas con cantidad 0 se ignoran.</p>
       </div>
     </div>
   </div>
@@ -69,7 +97,7 @@
         <i class="bi bi-box-seam"></i>
       </div>
       <div class="query-kpi-body">
-        <span class="query-kpi-label">SKUs cargados</span>
+        <span class="query-kpi-label">SKUs distintos</span>
         <span class="query-kpi-number">{{ total_skus }}</span>
       </div>
     </div>
@@ -77,6 +105,17 @@
   <div class="col-6 col-lg-3">
     <div class="query-kpi-card">
       <div class="query-kpi-badge" style="background:linear-gradient(135deg,#3b82f6,#2563eb);">
+        <i class="bi bi-shop"></i>
+      </div>
+      <div class="query-kpi-body">
+        <span class="query-kpi-label">Tiendas destino</span>
+        <span class="query-kpi-number">{{ total_stores }}</span>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="query-kpi-card">
+      <div class="query-kpi-badge" style="background:linear-gradient(135deg,#22c55e,#16a34a);">
         <i class="bi bi-boxes"></i>
       </div>
       <div class="query-kpi-body">
@@ -87,27 +126,42 @@
   </div>
   <div class="col-6 col-lg-3">
     <div class="query-kpi-card">
-      <div class="query-kpi-badge" style="background:linear-gradient(135deg,{% if skus_unknown > 0 %}#ef4444,#dc2626{% else %}#22c55e,#16a34a{% endif %});">
-        <i class="bi bi-question-circle"></i>
+      <div class="query-kpi-badge" style="background:linear-gradient(135deg,#eab308,#ca8a04);">
+        <i class="bi bi-list-ol"></i>
       </div>
       <div class="query-kpi-body">
-        <span class="query-kpi-label">SKUs desconocidos</span>
-        <span class="query-kpi-number">{{ skus_unknown }}</span>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg-3">
-    <div class="query-kpi-card">
-      <div class="query-kpi-badge" style="background:linear-gradient(135deg,{% if skus_no_stock > 0 %}#eab308,#ca8a04{% else %}#22c55e,#16a34a{% endif %});">
-        <i class="bi bi-exclamation-triangle"></i>
-      </div>
-      <div class="query-kpi-body">
-        <span class="query-kpi-label">SKUs sin stock CD</span>
-        <span class="query-kpi-number">{{ skus_no_stock }}</span>
+        <span class="query-kpi-label">Líneas totales</span>
+        <span class="query-kpi-number">{{ total_preview }}</span>
       </div>
     </div>
   </div>
 </div>
+
+{% if skus_new > 0 or ignored_zero > 0 or skipped_invalid|default(0) > 0 %}
+<div class="row g-3 mb-3">
+  {% if skus_new > 0 %}
+  <div class="col-auto">
+    <div class="alert alert-info small mb-0 py-2 px-3">
+      <i class="bi bi-plus-circle"></i> <strong>{{ skus_new }}</strong> SKU(s) nuevo(s) — se crearán al confirmar
+    </div>
+  </div>
+  {% endif %}
+  {% if ignored_zero > 0 %}
+  <div class="col-auto">
+    <div class="alert alert-secondary small mb-0 py-2 px-3">
+      <i class="bi bi-dash-circle"></i> <strong>{{ ignored_zero }}</strong> fila(s) ignorada(s) por cantidad = 0
+    </div>
+  </div>
+  {% endif %}
+  {% if skipped_invalid|default(0) > 0 %}
+  <div class="col-auto">
+    <div class="alert alert-warning small mb-0 py-2 px-3">
+      <i class="bi bi-exclamation-triangle"></i> <strong>{{ skipped_invalid }}</strong> fila(s) descartada(s) por datos inválidos (SKU vacío, tienda vacía, cantidad no numérica o negativa)
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
 
 <div class="card mb-4">
   <div class="card-header d-flex justify-content-between align-items-center">
@@ -123,7 +177,7 @@
           <tr>
             <th>SKU</th>
             <th>Producto</th>
-            <th>Categoría</th>
+            <th>Tienda</th>
             <th class="text-end">Cantidad</th>
             <th class="text-end">Stock CD</th>
             <th class="text-center">Estado</th>
@@ -133,8 +187,8 @@
           {% for line in preview_lines %}
           <tr{% if line.status == 'WARN' %} class="table-warning"{% endif %}>
             <td><code>{{ line.sku }}</code></td>
-            <td><span style="max-width:200px; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ line.product_name }}">{{ line.product_name }}</span></td>
-            <td><span class="text-muted small">{{ line.category }}</span></td>
+            <td><span style="max-width:180px; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ line.product_name }}">{{ line.product_name }}</span></td>
+            <td>{{ line.store }}</td>
             <td class="text-end fw-semibold">{{ "{:,}".format(line.qty) }}</td>
             <td class="text-end">{{ "{:,}".format(line.cd_stock) }}</td>
             <td class="text-center">
@@ -154,7 +208,7 @@
 
 {% if total_preview > 20 %}
 <div class="alert alert-info small mb-3">
-  <i class="bi bi-info-circle"></i> Mostrando 20 de {{ total_preview }} líneas. Todas las líneas válidas se incluirán al crear el folio.
+  <i class="bi bi-info-circle"></i> Mostrando 20 de {{ total_preview }} líneas. Todas las líneas se incluirán al crear el folio.
 </div>
 {% endif %}
 
