@@ -995,12 +995,45 @@ class WmsPickReservation(db.Model):
     __tablename__ = 'wms_pick_reservation'
     id = db.Column(db.Integer, primary_key=True)
     wave_id = db.Column(db.Integer, db.ForeignKey('wms_pick_wave.id'), nullable=False, index=True)
+    task_id = db.Column(db.Integer, db.ForeignKey('wms_pick_task.id'), nullable=True, index=True)
     product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
     location_id = db.Column(db.Integer, db.ForeignKey('wms_location.id'), nullable=False)
+    location_code = db.Column(db.String(100), nullable=True)
     qty_reserved = db.Column(db.Integer, nullable=False, default=0)
+    qty_picked = db.Column(db.Integer, nullable=False, default=0)
+    status = db.Column(db.String(20), nullable=False, default='OPEN')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, nullable=True)
 
     product = db.relationship('Product')
     location = db.relationship('WmsLocation')
+
+
+WMS_PICK_ISSUE_REASONS = [
+    'NO_STOCK', 'DAMAGED', 'NOT_FOUND', 'LOCATION_BLOCKED',
+    'MIXED_SKU', 'COUNT_MISMATCH', 'QUALITY_HOLD', 'OTHER'
+]
+
+
+class WmsPickIssue(db.Model):
+    __tablename__ = 'wms_pick_issue'
+    id = db.Column(db.Integer, primary_key=True)
+    wave_id = db.Column(db.Integer, db.ForeignKey('wms_pick_wave.id'), nullable=False, index=True)
+    task_id = db.Column(db.Integer, db.ForeignKey('wms_pick_task.id'), nullable=False, index=True)
+    reservation_id = db.Column(db.Integer, db.ForeignKey('wms_pick_reservation.id'), nullable=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    sku = db.Column(db.String(64), nullable=False)
+    location_id = db.Column(db.Integer, db.ForeignKey('wms_location.id'), nullable=True)
+    location_code = db.Column(db.String(100), nullable=True)
+    missing_qty = db.Column(db.Integer, nullable=False, default=0)
+    reason_code = db.Column(db.String(30), nullable=False)
+    operator_note = db.Column(db.Text, nullable=True)
+    reported_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    product = db.relationship('Product')
+    location = db.relationship('WmsLocation')
+    reported_by = db.relationship('User')
 
 
 # ------------------ Operational Stock Helpers ------------------
@@ -1259,6 +1292,22 @@ def _ensure_wms_defaults(session=None):
                     conn.execute(text(sql_stmt))
                     conn.commit()
                 print(f"[WMS] Added column wms_pick_task.{col_name}")
+    if 'wms_pick_reservation' in inspector.get_table_names():
+        res_cols = [c['name'] for c in inspector.get_columns('wms_pick_reservation')]
+        _res_migrations = {
+            'task_id': "ALTER TABLE wms_pick_reservation ADD COLUMN task_id INTEGER",
+            'location_code': "ALTER TABLE wms_pick_reservation ADD COLUMN location_code VARCHAR(100)",
+            'qty_picked': "ALTER TABLE wms_pick_reservation ADD COLUMN qty_picked INTEGER NOT NULL DEFAULT 0",
+            'status': "ALTER TABLE wms_pick_reservation ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'OPEN'",
+            'created_at': "ALTER TABLE wms_pick_reservation ADD COLUMN created_at DATETIME",
+            'updated_at': "ALTER TABLE wms_pick_reservation ADD COLUMN updated_at DATETIME",
+        }
+        for col_name, sql_stmt in _res_migrations.items():
+            if col_name not in res_cols:
+                with db.engine.connect() as conn:
+                    conn.execute(text(sql_stmt))
+                    conn.commit()
+                print(f"[WMS] Added column wms_pick_reservation.{col_name}")
     wh = s.query(WmsWarehouse).filter_by(code='MAIN').first()
     if not wh:
         wh = WmsWarehouse(code='MAIN', name='Main Warehouse')
@@ -1296,6 +1345,7 @@ def _sync_wms_to_stockcd(warehouse_id, snapshot_date, session=None):
 
 
 def wms_create_pick_wave_for_plan(plan_id, priority='MEDIUM', warehouse_code='MAIN', user=None):
+    print(f"[WMS] wave create start plan={plan_id} warehouse={warehouse_code}")
     wh = db.session.query(WmsWarehouse).filter_by(code=warehouse_code).first()
     if not wh:
         raise ValueError(f"Warehouse {warehouse_code} not found")
@@ -1320,19 +1370,43 @@ def wms_create_pick_wave_for_plan(plan_id, priority='MEDIUM', warehouse_code='MA
         p.id: p for p in db.session.query(Product).filter(Product.id.in_(product_ids_needed)).all()
     }
 
+    loc_type_map = {
+        loc.id: loc.location_type or 'BULK'
+        for loc in db.session.query(WmsLocation).filter_by(warehouse_id=wh.id).all()
+    }
+    loc_code_map = {
+        loc.id: loc.location_code
+        for loc in db.session.query(WmsLocation).filter_by(warehouse_id=wh.id).all()
+    }
+    loc_active_map = {
+        loc.id: loc.is_active
+        for loc in db.session.query(WmsLocation).filter_by(warehouse_id=wh.id).all()
+    }
+
+    LOCATION_TYPE_PRIORITY = {'PICK': 1, 'BULK': 2}
+
     inv_rows = (
         db.session.query(WmsInventory)
         .filter(WmsInventory.warehouse_id == wh.id)
         .filter(WmsInventory.product_id.in_(product_ids_needed))
-        .order_by(
-            WmsInventory.product_id,
-            (WmsInventory.on_hand_units - WmsInventory.allocated_units).desc()
-        )
         .all()
     )
+
     inv_by_product = {}
     for inv in inv_rows:
+        if not loc_active_map.get(inv.location_id, False):
+            continue
+        avail = max(0, (inv.on_hand_units or 0) - (inv.allocated_units or 0))
+        if avail <= 0:
+            continue
         inv_by_product.setdefault(inv.product_id, []).append(inv)
+
+    for pid in inv_by_product:
+        inv_by_product[pid].sort(key=lambda i: (
+            LOCATION_TYPE_PRIORITY.get(loc_type_map.get(i.location_id, 'BULK'), 9),
+            max(0, (i.on_hand_units or 0) - (i.allocated_units or 0)),
+            loc_code_map.get(i.location_id, '')
+        ))
 
     urgency = priority if priority in WMS_URGENCY_RANK else 'MEDIUM'
     wave = WmsPickWave(
@@ -1357,30 +1431,31 @@ def wms_create_pick_wave_for_plan(plan_id, priority='MEDIUM', warehouse_code='MA
         product = products_map.get(pid)
         sku = product.sku if product else f"PID-{pid}"
         total_requested += qty_needed
-
-        locations = inv_by_product.get(pid, [])
         qty_remaining = qty_needed
         task_reserved = 0
-
         reservations_for_task = []
-        for inv in locations:
+
+        for inv in inv_by_product.get(pid, []):
             if qty_remaining <= 0:
                 break
             avail = max(0, (inv.on_hand_units or 0) - (inv.allocated_units or 0))
             if avail <= 0:
                 continue
             to_reserve = min(avail, qty_remaining)
-            inv.allocated_units = (inv.allocated_units or 0) + to_reserve
+            inv.allocated_units = min(
+                inv.on_hand_units or 0,
+                (inv.allocated_units or 0) + to_reserve
+            )
             inv.updated_at = datetime.utcnow()
             qty_remaining -= to_reserve
             task_reserved += to_reserve
 
-            reservations_for_task.append(WmsPickReservation(
-                wave_id=wave.id,
-                product_id=pid,
-                location_id=inv.location_id,
-                qty_reserved=to_reserve
-            ))
+            loc_code = loc_code_map.get(inv.location_id, '')
+            reservations_for_task.append({
+                'location_id': inv.location_id,
+                'location_code': loc_code,
+                'qty_reserved': to_reserve,
+            })
 
             db.session.add(WmsInventoryEvent(
                 event_type='PICK_RESERVE',
@@ -1391,26 +1466,20 @@ def wms_create_pick_wave_for_plan(plan_id, priority='MEDIUM', warehouse_code='MA
                 product_id=pid,
                 delta_units=0,
                 delta_pallets=0,
-                note=f"Reserva picking: {to_reserve} uds para wave #{wave.id}"
+                note=f"Reserva picking: {to_reserve} uds en {loc_code} para wave #{wave.id}"
             ))
 
         total_reserved += task_reserved
+        task_short = qty_remaining
+        if task_short > 0:
+            has_shortage = True
 
-        task_status = 'PENDING'
-        task_note = None
+        task_status = 'OPEN' if task_short == 0 else 'SHORT'
+        task_note = None if task_short == 0 else f'PARTIAL: reservado {task_reserved}/{qty_needed}'
         if task_reserved == 0:
             task_note = 'NO_STOCK_AVAILABLE'
-            has_shortage = True
-        elif task_reserved < qty_needed:
-            task_note = f'PARTIAL: reservado {task_reserved}/{qty_needed}'
-            has_shortage = True
 
-        best_loc = None
-        if reservations_for_task:
-            best_res = max(reservations_for_task, key=lambda r: r.qty_reserved)
-            loc_obj = db.session.get(WmsLocation, best_res.location_id)
-            if loc_obj:
-                best_loc = loc_obj.location_code
+        best_loc = reservations_for_task[0]['location_code'] if reservations_for_task else None
 
         task = WmsPickTask(
             wave_id=wave.id,
@@ -1420,20 +1489,33 @@ def wms_create_pick_wave_for_plan(plan_id, priority='MEDIUM', warehouse_code='MA
             category=product.category if product else None,
             qty_requested=qty_needed,
             qty_picked=0,
-            short_qty=0,
+            short_qty=task_short,
             status=task_status,
             location_hint=best_loc,
             note=task_note
         )
         db.session.add(task)
-        for res in reservations_for_task:
-            db.session.add(res)
+        db.session.flush()
+
+        for r in reservations_for_task:
+            db.session.add(WmsPickReservation(
+                wave_id=wave.id,
+                task_id=task.id,
+                product_id=pid,
+                location_id=r['location_id'],
+                location_code=r['location_code'],
+                qty_reserved=r['qty_reserved'],
+                qty_picked=0,
+                status='OPEN',
+            ))
+
+        print(f"[WMS] reserve sku={sku} required={qty_needed} reserved={task_reserved} remaining={task_short}")
 
     wave.status = 'NEEDS_REVIEW' if has_shortage else 'READY_TO_ASSIGN'
     db.session.flush()
 
-    print(f"[WMS] wave created: wave_id={wave.id}, plan_id={plan_id}, "
-          f"requested_units={total_requested}, reserved_units={total_reserved}, status={wave.status}")
+    print(f"[WMS] wave created: wave_id={wave.id} plan_id={plan_id} "
+          f"requested={total_requested} reserved={total_reserved} status={wave.status}")
 
     try:
         log_audit(
@@ -9688,48 +9770,74 @@ def wms_wave_detail(wave_id):
         .all()
     )
 
-    reservations = (
-        db.session.query(WmsPickReservation, WmsLocation.location_code)
-        .join(WmsLocation, WmsPickReservation.location_id == WmsLocation.id)
+    reservations_raw = (
+        db.session.query(WmsPickReservation)
         .filter(WmsPickReservation.wave_id == wave_id)
-        .order_by(WmsPickReservation.product_id, WmsLocation.location_code)
+        .order_by(WmsPickReservation.task_id, WmsPickReservation.id)
         .all()
     )
-    res_by_product = {}
-    for res, loc_code in reservations:
-        res_by_product.setdefault(res.product_id, []).append({
+    res_by_task = {}
+    for res in reservations_raw:
+        loc_code = res.location_code
+        if not loc_code:
+            loc_obj = db.session.get(WmsLocation, res.location_id)
+            loc_code = loc_obj.location_code if loc_obj else f'LOC-{res.location_id}'
+        res_by_task.setdefault(res.task_id, []).append({
+            'id': res.id,
             'location_code': loc_code,
-            'qty_reserved': res.qty_reserved
+            'qty_reserved': res.qty_reserved,
+            'qty_picked': res.qty_picked or 0,
+            'status': res.status or 'OPEN',
+        })
+
+    issues_raw = (
+        db.session.query(WmsPickIssue)
+        .filter(WmsPickIssue.wave_id == wave_id)
+        .order_by(WmsPickIssue.task_id, WmsPickIssue.id)
+        .all()
+    )
+    issues_by_task = {}
+    for iss in issues_raw:
+        issues_by_task.setdefault(iss.task_id, []).append({
+            'id': iss.id,
+            'location_code': iss.location_code or '—',
+            'missing_qty': iss.missing_qty,
+            'reason_code': iss.reason_code,
+            'operator_note': iss.operator_note or '',
+            'created_at': iss.created_at.strftime('%d/%m %H:%M') if iss.created_at else '',
         })
 
     total_requested = sum(t.qty_requested for t in tasks)
     total_reserved = sum(
-        sum(r['qty_reserved'] for r in res_by_product.get(t.product_id, []))
+        sum(r['qty_reserved'] for r in res_by_task.get(t.id, []))
         for t in tasks
     )
     fulfillment_pct = round(total_reserved / total_requested * 100, 1) if total_requested > 0 else 0
 
     tasks_data = []
     for t in tasks:
-        prod_reservations = res_by_product.get(t.product_id, [])
-        task_reserved = sum(r['qty_reserved'] for r in prod_reservations)
+        task_reservations = res_by_task.get(t.id, [])
+        task_reserved = sum(r['qty_reserved'] for r in task_reservations)
+        task_issues = issues_by_task.get(t.id, [])
         tasks_data.append({
             'id': t.id,
             'sku': t.sku,
             'product_name': t.product_name or (t.product.name if t.product else t.sku),
             'qty_requested': t.qty_requested,
             'qty_reserved': task_reserved,
-            'qty_picked': t.qty_picked,
-            'short_qty': t.short_qty,
+            'qty_picked': t.qty_picked or 0,
+            'short_qty': t.short_qty or 0,
             'shortage': max(0, t.qty_requested - task_reserved),
             'status': t.status,
             'note': t.note,
             'location_hint': t.location_hint,
-            'reservations': prod_reservations
+            'reservations': task_reservations,
+            'issues': task_issues,
         })
 
     can_operate = current_user.has_permission('planner:operate') or current_user.has_permission('wms:view')
     fully_reserved = all(td['shortage'] == 0 for td in tasks_data)
+    has_issues = bool(issues_raw)
 
     return render_template(
         'wms_wave_detail.html',
@@ -9741,7 +9849,9 @@ def wms_wave_detail(wave_id):
         total_reserved=total_reserved,
         fulfillment_pct=fulfillment_pct,
         can_operate=can_operate,
-        fully_reserved=fully_reserved
+        fully_reserved=fully_reserved,
+        has_issues=has_issues,
+        issue_reasons=WMS_PICK_ISSUE_REASONS,
     )
 
 
@@ -10077,6 +10187,317 @@ def wms_wave_close(wave_id):
               status='success', message=f'Wave #{wave.id} cerrada')
     flash(f'Wave #{wave.id} cerrada exitosamente.', 'success')
     return redirect(url_for('wms_waves_list'))
+
+
+def _wms_recompute_task_reservations(task):
+    reservations = (
+        db.session.query(WmsPickReservation)
+        .filter_by(task_id=task.id)
+        .order_by(WmsPickReservation.id)
+        .all()
+    )
+    remaining_to_alloc = task.qty_picked or 0
+    for res in reservations:
+        can_alloc = min(res.qty_reserved, remaining_to_alloc)
+        res.qty_picked = can_alloc
+        remaining_to_alloc -= can_alloc
+        if res.qty_picked >= res.qty_reserved:
+            res.status = 'PICKED'
+        elif res.qty_picked > 0:
+            res.status = 'PARTIAL'
+        else:
+            res.status = 'OPEN'
+        res.updated_at = datetime.utcnow()
+
+
+@app.route('/api/wms/waves/<int:wave_id>/start', methods=['POST'])
+@login_required
+@require_permission('wms:view')
+def api_wms_wave_start(wave_id):
+    wave = db.session.get(WmsPickWave, wave_id)
+    if not wave:
+        return jsonify({'error': 'Wave no encontrada'}), 404
+    if wave.status != 'ASSIGNED':
+        return jsonify({'error': f'Solo se puede iniciar picking en estado ASSIGNED (actual: {wave.status})'}), 400
+    if wave.assigned_to != current_user.id and not current_user.has_permission('admin:users'):
+        return jsonify({'error': 'No autorizado'}), 403
+    allowed, msg = _wms_check_priority_gating(wave)
+    if not allowed:
+        return jsonify({'error': msg}), 400
+    wave.status = 'IN_PROGRESS'
+    wave.pick_started_at = datetime.utcnow()
+    db.session.commit()
+    print(f"[WMS] wave {wave_id} iniciada por operador {current_user.username}")
+    return jsonify({'ok': True, 'status': wave.status})
+
+
+@app.route('/api/wms/tasks/<int:task_id>/pick', methods=['POST'])
+@login_required
+@require_permission('wms:view')
+def api_wms_task_pick(task_id):
+    task = db.session.get(WmsPickTask, task_id)
+    if not task:
+        return jsonify({'error': 'Tarea no encontrada'}), 404
+
+    wave = db.session.get(WmsPickWave, task.wave_id)
+    if not wave or wave.status != 'IN_PROGRESS':
+        return jsonify({'error': 'La wave no está en progreso'}), 400
+    if wave.assigned_to != current_user.id and not current_user.has_permission('admin:users'):
+        return jsonify({'error': 'No autorizado'}), 403
+
+    data = request.get_json(silent=True) or {}
+    picked_qty = data.get('picked_qty')
+    note = data.get('note', '')
+    if picked_qty is None:
+        return jsonify({'error': 'picked_qty requerido'}), 400
+    try:
+        picked_qty = int(picked_qty)
+    except (ValueError, TypeError):
+        return jsonify({'error': 'picked_qty debe ser entero'}), 400
+    if picked_qty < 0:
+        return jsonify({'error': 'picked_qty no puede ser negativo'}), 400
+
+    remaining_capacity = (task.qty_requested or 0) - (task.qty_picked or 0) - (task.short_qty or 0)
+    if picked_qty > remaining_capacity:
+        return jsonify({'error': f'picked_qty ({picked_qty}) supera la cantidad pendiente ({remaining_capacity})'}), 400
+
+    wh = db.session.query(WmsWarehouse).filter_by(code=wave.warehouse_code).first()
+
+    task_reservations = (
+        db.session.query(WmsPickReservation)
+        .filter_by(task_id=task.id)
+        .filter(WmsPickReservation.status.in_(('OPEN', 'PARTIAL')))
+        .order_by(WmsPickReservation.id)
+        .all()
+    )
+    qty_to_apply = picked_qty
+    for res in task_reservations:
+        if qty_to_apply <= 0:
+            break
+        available_in_res = res.qty_reserved - (res.qty_picked or 0)
+        if available_in_res <= 0:
+            continue
+        apply_here = min(available_in_res, qty_to_apply)
+        res.qty_picked = (res.qty_picked or 0) + apply_here
+        if res.qty_picked >= res.qty_reserved:
+            res.status = 'PICKED'
+        else:
+            res.status = 'PARTIAL'
+        res.updated_at = datetime.utcnow()
+        qty_to_apply -= apply_here
+
+        if wh and apply_here > 0:
+            inv = (
+                db.session.query(WmsInventory)
+                .filter_by(warehouse_id=wh.id, location_id=res.location_id, product_id=task.product_id)
+                .first()
+            )
+            if inv:
+                inv.on_hand_units = max(0, (inv.on_hand_units or 0) - apply_here)
+                inv.allocated_units = max(0, (inv.allocated_units or 0) - apply_here)
+                inv.updated_at = datetime.utcnow()
+            db.session.add(WmsInventoryEvent(
+                event_type='PICK_PICK',
+                ref_type='pick_task',
+                ref_id=str(task.id),
+                warehouse_id=wh.id,
+                location_id=res.location_id,
+                product_id=task.product_id,
+                delta_units=-apply_here,
+                delta_pallets=0,
+                note=f"Pick: -{apply_here} uds en {res.location_code or res.location_id} task #{task.id}"
+            ))
+
+    task.qty_picked = (task.qty_picked or 0) + picked_qty
+    if note:
+        task.note = note
+    _total_accounted = task.qty_picked + (task.short_qty or 0)
+    if task.qty_picked >= task.qty_requested:
+        task.status = 'DONE'
+    elif _total_accounted >= task.qty_requested and (task.short_qty or 0) > 0:
+        task.status = 'SHORT'
+    elif task.qty_picked > 0 or (task.short_qty or 0) > 0:
+        task.status = 'IN_PROGRESS'
+    task.updated_at = datetime.utcnow()
+    _wms_update_wave_counters(wave)
+    db.session.commit()
+    print(f"[WMS] pick sku={task.sku} picked={picked_qty} remaining={task.qty_requested - task.qty_picked - (task.short_qty or 0)}")
+    return jsonify({
+        'ok': True,
+        'task_status': task.status,
+        'qty_picked': task.qty_picked,
+        'short_qty': task.short_qty or 0,
+        'qty_requested': task.qty_requested,
+    })
+
+
+@app.route('/api/wms/tasks/<int:task_id>/report-issue', methods=['POST'])
+@login_required
+@require_permission('wms:view')
+def api_wms_task_report_issue(task_id):
+    task = db.session.get(WmsPickTask, task_id)
+    if not task:
+        return jsonify({'error': 'Tarea no encontrada'}), 404
+
+    wave = db.session.get(WmsPickWave, task.wave_id)
+    if not wave or wave.status != 'IN_PROGRESS':
+        return jsonify({'error': 'La wave no está en progreso'}), 400
+    if wave.assigned_to != current_user.id and not current_user.has_permission('admin:users'):
+        return jsonify({'error': 'No autorizado'}), 403
+
+    data = request.get_json(silent=True) or {}
+    missing_qty = data.get('missing_qty')
+    reason_code = data.get('reason_code', '')
+    operator_note = data.get('operator_note', '')
+
+    if missing_qty is None:
+        return jsonify({'error': 'missing_qty requerido'}), 400
+    try:
+        missing_qty = int(missing_qty)
+    except (ValueError, TypeError):
+        return jsonify({'error': 'missing_qty debe ser entero'}), 400
+    if missing_qty <= 0:
+        return jsonify({'error': 'missing_qty debe ser mayor a 0'}), 400
+    if reason_code not in WMS_PICK_ISSUE_REASONS:
+        return jsonify({'error': f'reason_code inválido. Opciones: {WMS_PICK_ISSUE_REASONS}'}), 400
+
+    remaining_capacity = (task.qty_requested or 0) - (task.qty_picked or 0) - (task.short_qty or 0)
+    if missing_qty > remaining_capacity:
+        missing_qty = remaining_capacity
+    if missing_qty <= 0:
+        return jsonify({'error': 'No hay cantidad pendiente para reportar'}), 400
+
+    open_reservations = (
+        db.session.query(WmsPickReservation)
+        .filter_by(task_id=task.id)
+        .filter(WmsPickReservation.status.in_(('OPEN', 'PARTIAL')))
+        .order_by(WmsPickReservation.id)
+        .all()
+    )
+
+    wh = db.session.query(WmsWarehouse).filter_by(code=wave.warehouse_code).first()
+    qty_to_release = missing_qty
+    affected_reservation = open_reservations[0] if open_reservations else None
+
+    for res in open_reservations:
+        if qty_to_release <= 0:
+            break
+        available_in_res = res.qty_reserved - (res.qty_picked or 0)
+        if available_in_res <= 0:
+            continue
+        release_here = min(available_in_res, qty_to_release)
+        qty_to_release -= release_here
+
+        if wh:
+            inv = (
+                db.session.query(WmsInventory)
+                .filter_by(warehouse_id=wh.id, location_id=res.location_id, product_id=task.product_id)
+                .first()
+            )
+            if inv:
+                inv.allocated_units = max(0, (inv.allocated_units or 0) - release_here)
+                inv.updated_at = datetime.utcnow()
+            db.session.add(WmsInventoryEvent(
+                event_type='PICK_SHORT_RELEASE',
+                ref_type='pick_task',
+                ref_id=str(task.id),
+                warehouse_id=wh.id,
+                location_id=res.location_id,
+                product_id=task.product_id,
+                delta_units=0,
+                delta_pallets=0,
+                note=f"Short release: {release_here} uds liberadas en {res.location_code or res.location_id} task #{task.id} razón={reason_code}"
+            ))
+
+        remaining_in_res = available_in_res - release_here
+        if remaining_in_res <= 0:
+            res.status = 'SHORT'
+        else:
+            res.status = 'PARTIAL'
+        res.updated_at = datetime.utcnow()
+
+    issue = WmsPickIssue(
+        wave_id=wave.id,
+        task_id=task.id,
+        reservation_id=affected_reservation.id if affected_reservation else None,
+        product_id=task.product_id,
+        sku=task.sku,
+        location_id=affected_reservation.location_id if affected_reservation else None,
+        location_code=affected_reservation.location_code if affected_reservation else None,
+        missing_qty=missing_qty,
+        reason_code=reason_code,
+        operator_note=operator_note or None,
+        reported_by_user_id=current_user.id,
+    )
+    db.session.add(issue)
+
+    task.short_qty = (task.short_qty or 0) + missing_qty
+    if (task.qty_picked or 0) + task.short_qty >= task.qty_requested:
+        task.status = 'SHORT'
+    else:
+        task.status = 'IN_PROGRESS'
+    task.updated_at = datetime.utcnow()
+
+    if reason_code in ('DAMAGED', 'QUALITY_HOLD', 'MIXED_SKU') and wh and affected_reservation:
+        db.session.add(WmsInventoryEvent(
+            event_type='QUALITY_FLAG',
+            ref_type='pick_issue',
+            ref_id=str(issue.id) if issue.id else '?',
+            warehouse_id=wh.id,
+            location_id=affected_reservation.location_id,
+            product_id=task.product_id,
+            delta_units=0,
+            delta_pallets=0,
+            note=f"Incidencia calidad: {reason_code} — {operator_note or ''} (task #{task.id})"
+        ))
+
+    _wms_update_wave_counters(wave)
+    db.session.commit()
+    print(f"[WMS] issue sku={task.sku} missing={missing_qty} reason={reason_code}")
+    return jsonify({
+        'ok': True,
+        'task_status': task.status,
+        'short_qty': task.short_qty,
+        'qty_picked': task.qty_picked or 0,
+        'qty_requested': task.qty_requested,
+    })
+
+
+@app.route('/api/wms/waves/<int:wave_id>/finish', methods=['POST'])
+@login_required
+@require_permission('wms:view')
+def api_wms_wave_finish(wave_id):
+    wave = db.session.get(WmsPickWave, wave_id)
+    if not wave:
+        return jsonify({'error': 'Wave no encontrada'}), 404
+    if wave.status != 'IN_PROGRESS':
+        return jsonify({'error': f'Solo se puede finalizar en estado IN_PROGRESS (actual: {wave.status})'}), 400
+    if wave.assigned_to != current_user.id and not current_user.has_permission('admin:users'):
+        return jsonify({'error': 'No autorizado'}), 403
+
+    tasks = wave.tasks.all()
+    incomplete = [t for t in tasks if t.status not in ('DONE', 'SHORT')]
+    if incomplete:
+        return jsonify({
+            'error': f'No se puede finalizar: {len(incomplete)} tarea(s) sin completar. Estado requerido: DONE o SHORT.',
+            'incomplete_skus': [t.sku for t in incomplete]
+        }), 400
+
+    wave.status = 'PICKED'
+    wave.pick_finished_at = datetime.utcnow()
+    _wms_update_wave_counters(wave)
+    db.session.commit()
+
+    try:
+        _wms_rollup_operator_kpi(wave.assigned_to, date.today())
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    print(f"[WMS] wave finished id={wave_id} status={wave.status}")
+    log_audit(action='wms.wave.finish', entity_type='wms_pick_wave', entity_id=wave.id,
+              status='success', message=f'Wave #{wave.id} finalizada via API')
+    return jsonify({'ok': True, 'status': wave.status, 'picked_units': wave.picked_units, 'short_units': wave.short_units})
 
 
 @app.route('/wms/kpis')

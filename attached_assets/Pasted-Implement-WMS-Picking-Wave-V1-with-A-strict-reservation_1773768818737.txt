@@ -1,0 +1,294 @@
+Implement WMS Picking Wave V1 with:
+A) strict reservation priority logic by location
+B) operator issue reporting during picking execution
+
+CONTEXT
+FastDSO + FastWMS already exist in a single Flask app.
+We need picking waves to be created from approved plans/folios and executed by operators.
+This version uses:
+- single warehouse: MAIN
+- picking consolidated by SKU per folio
+- no store separation in picking stage
+- exact reservation breakdown by location
+- operator must be able to report why a SKU could not be fully picked
+
+PART A — PICK WAVE RESERVATION PRIORITY
+
+BUSINESS RULE
+For each SKU in a pick wave, reserve inventory from eligible locations in this exact order:
+
+1) location_type priority:
+   - PICK first
+   - BULK second
+2) inside the same type:
+   - lower available_units first
+3) if tie:
+   - location_code ascending
+
+ELIGIBILITY
+A location is eligible only if:
+- warehouse_code == "MAIN"
+- is_active == true
+- available_units > 0
+
+Where:
+available_units = on_hand_units - allocated_units
+
+OBJECTIVE
+This policy should empty small locations first and reduce stock fragmentation.
+
+MODELS
+Ensure these models/tables exist:
+
+1) WmsPickWave
+- id
+- plan_id
+- warehouse_code
+- status (READY_TO_ASSIGN, ASSIGNED, IN_PROGRESS, PICKED, CLOSED, NEEDS_REVIEW)
+- urgency_level
+- priority_rank
+- assigned_to
+- assigned_at
+- pick_started_at
+- pick_finished_at
+- closed_at
+- total_lines
+- total_units
+- picked_lines
+- picked_units
+- short_lines
+- short_units
+- created_at
+
+2) WmsPickTask
+- id
+- wave_id
+- product_id
+- sku
+- product_name
+- requested_qty
+- picked_qty
+- short_qty
+- status (OPEN, IN_PROGRESS, DONE, SHORT)
+- note
+- created_at
+- updated_at
+
+3) WmsPickReservation
+- id
+- wave_id
+- task_id
+- product_id
+- location_id
+- location_code
+- reserved_qty
+- picked_qty default 0
+- status (OPEN, PICKED, SHORT, PARTIAL)
+- created_at
+- updated_at
+
+RESERVATION SERVICE
+Create or update service function:
+
+create_pick_wave_from_plan(plan_id, warehouse_code="MAIN", created_by_user_id=None)
+
+Behavior:
+1) Aggregate requested quantities by SKU from approved plan lines
+2) For each SKU:
+   - required_qty = sum(plan line qty_final, or qty_suggested if qty_final not used)
+   - fetch all eligible inventory rows for that product in MAIN
+   - compute available_units
+   - sort rows by:
+       a) location_type_priority (PICK=1, BULK=2)
+       b) available_units ascending
+       c) location_code ascending
+   - reserve until required_qty is met:
+       reserve_qty = min(remaining_qty, available_units)
+       increment inventory.allocated_units by reserve_qty
+       create WmsPickReservation
+       remaining_qty -= reserve_qty
+3) Create one WmsPickTask per SKU:
+   - requested_qty = required_qty
+   - picked_qty = 0
+   - short_qty = remaining_qty if any
+   - status:
+       OPEN if fully reserved
+       SHORT if partially reserved or zero reserved
+4) Wave status:
+   - READY_TO_ASSIGN if all SKUs fully reserved
+   - NEEDS_REVIEW if any SKU has short_qty > 0
+5) Use one DB transaction. On error rollback everything.
+6) Never allow allocated_units > on_hand_units.
+
+PART B — OPERATOR ISSUE REPORTING DURING PICKING
+
+BUSINESS GOAL
+When an operator cannot fully pick a SKU or a reservation, they must report:
+- missing quantity
+- reason code
+- note
+- exact location where the issue occurred
+This must be stored in a dedicated issue log, not just a generic note.
+
+NEW MODEL
+Create table/model:
+
+4) WmsPickIssue
+- id
+- wave_id
+- task_id
+- reservation_id nullable
+- product_id
+- sku
+- location_id nullable
+- location_code nullable
+- missing_qty
+- reason_code
+- operator_note nullable
+- reported_by_user_id
+- created_at
+
+Allowed reason_code values:
+- NO_STOCK
+- DAMAGED
+- NOT_FOUND
+- LOCATION_BLOCKED
+- MIXED_SKU
+- COUNT_MISMATCH
+- QUALITY_HOLD
+- OTHER
+
+PICK EXECUTION LOGIC
+We are not building the full mobile UI yet, but backend must support execution and issue reporting now.
+
+Create/update these endpoints:
+
+1) POST /api/wms/waves/<wave_id>/start
+- only assigned operator or manager can start
+- if wave status == ASSIGNED, set:
+   status = IN_PROGRESS
+   pick_started_at = now()
+
+2) POST /api/wms/tasks/<task_id>/pick
+Input JSON:
+{
+  "picked_qty": int,
+  "note": optional
+}
+Behavior:
+- validate picked_qty >= 0
+- picked_qty cannot exceed requested remaining qty for task
+- update WmsPickTask.picked_qty += picked_qty
+- update task.status:
+   DONE if picked_qty total == requested_qty and no shortages
+   IN_PROGRESS otherwise
+- allocate picked_qty proportionally across OPEN reservations in order of location priority already stored
+- for each affected reservation:
+   increment reservation.picked_qty
+   if reservation.picked_qty == reservation.reserved_qty -> status PICKED
+   else -> status PARTIAL
+- decrement WmsInventory.on_hand_units by picked amount
+- decrement WmsInventory.allocated_units by picked amount
+- update wave picked_units / picked_lines counters
+
+3) POST /api/wms/tasks/<task_id>/report-issue
+Input JSON:
+{
+  "missing_qty": int,
+  "reason_code": "...",
+  "operator_note": "..."
+}
+Behavior:
+- missing_qty must be > 0
+- create WmsPickIssue rows for the relevant reservation(s) / location(s)
+- increment task.short_qty by missing_qty
+- update task.status:
+   SHORT if picked_qty + short_qty >= requested_qty
+   else IN_PROGRESS
+- update reservation statuses to SHORT or PARTIAL as needed
+- release unpicked allocated stock for the affected reservation:
+   reservation short means the remaining reserved-but-not-pickable qty should be removed from allocated_units
+   IMPORTANT: do NOT decrease on_hand_units for missing qty, only decrease allocated_units because it was not physically picked
+- if reason_code in (DAMAGED, QUALITY_HOLD, MIXED_SKU):
+   optionally create a WMS inventory event/log flag for investigation
+- update wave short_units / short_lines counters
+
+4) POST /api/wms/waves/<wave_id>/finish
+Behavior:
+- wave can be finished only if all tasks are DONE or SHORT
+- set:
+   pick_finished_at = now()
+   status = PICKED
+- manager/admin can later close it:
+   status = CLOSED
+   closed_at = now()
+
+STATE RULES
+Task status logic:
+- OPEN: nothing picked yet, no issue reported
+- IN_PROGRESS: partial picked, still pending
+- DONE: picked_qty == requested_qty
+- SHORT: requested_qty cannot be fully picked and issue(s) recorded
+
+Reservation status logic:
+- OPEN: reserved but untouched
+- PARTIAL: partially picked
+- PICKED: fully picked
+- SHORT: issue reported against remaining reserved qty
+
+WAVE COUNTERS
+Update these on every pick or issue action:
+- picked_units
+- picked_lines
+- short_units
+- short_lines
+
+UI REQUIREMENTS
+Keep all labels in Spanish.
+
+1) Wave detail page
+- show task table with:
+  SKU | Producto | Solicitado | Pickeado | Faltante | Estado
+- expandable section under each task:
+  location_code | reserved_qty | picked_qty | status
+- add buttons on each row:
+  - “Registrar pick”
+  - “Reportar incidencia”
+
+2) Issue modal/form fields:
+- missing_qty
+- reason_code dropdown
+- operator_note textarea
+
+3) Visual cues:
+- SHORT rows highlighted in orange/red
+- DONE rows green
+- NEEDS_REVIEW badge on wave if any shortage exists
+
+LOGGING
+Add debug logs:
+[WMS] wave create start plan=...
+[WMS] reserve sku=... required=... reserved=... remaining=...
+[WMS] issue sku=... missing=... reason=...
+[WMS] pick sku=... picked=... remaining=...
+[WMS] wave finished id=... status=...
+
+INTEGRATION
+When approved plan is sent to FastPlanner:
+- automatically call create_pick_wave_from_plan(...)
+- wave status appears on planner card/detail
+- if wave status NEEDS_REVIEW, show warning badge
+
+SAFETY
+- Never allow negative on_hand_units
+- Never allow allocated_units > on_hand_units before picking
+- Never allow negative allocated_units when releasing shortages
+- Use transactions for all pick/issue updates
+
+DELIVERABLES
+- models/tables created or extended
+- reservation priority logic implemented
+- issue reporting model + endpoints
+- wave/task state transitions implemented
+- wave detail page updated
+- no breaking changes to existing FastDSO modules

@@ -2,13 +2,16 @@
 {% block title %}Pick Wave #{{ wave.id }} — FastWMS{% endblock %}
 {% block content %}
 <div class="content-header">
-  <div class="d-flex align-items-center gap-3">
+  <div class="d-flex align-items-center gap-3 flex-wrap">
     <a href="{{ url_for('planner_detail', plan_id=plan.id) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
     <div>
       <h1 class="mb-0"><i class="bi bi-boxes"></i> Pick Wave #{{ wave.id }}</h1>
       <p class="text-muted mb-0">Folio: {{ plan.folio }} &nbsp;|&nbsp; Bodega: {{ wave.warehouse_code }}</p>
     </div>
-    <div class="ms-auto d-flex gap-2 align-items-center">
+    <div class="ms-auto d-flex gap-2 align-items-center flex-wrap">
+      {% if wave.status == 'NEEDS_REVIEW' or has_issues %}
+      <span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle"></i> NEEDS REVIEW</span>
+      {% endif %}
       {% if wave.urgency_level == 'URGENT' %}
       <span class="badge" style="background:#ef4444;">URGENT</span>
       {% elif wave.urgency_level == 'MEDIUM' %}
@@ -17,7 +20,7 @@
       <span class="badge" style="background:#3b82f6;">LOW</span>
       {% endif %}
       {% set sc = {'READY_TO_ASSIGN':'#6b7280','ASSIGNED':'#8b5cf6','IN_PROGRESS':'#14b8a6','PICKED':'#22c55e','CLOSED':'#374151','NEEDS_REVIEW':'#f59e0b','CANCELLED':'#9ca3af','DONE':'#22c55e','RELEASED':'#3b82f6'} %}
-      <span class="badge" style="background:{{ sc.get(wave.status, '#6b7280') }};{% if wave.status in ('NEEDS_REVIEW',) %}color:#000;{% endif %} font-size:0.8rem; padding:6px 12px;">
+      <span class="badge" style="background:{{ sc.get(wave.status, '#6b7280') }};{% if wave.status == 'NEEDS_REVIEW' %}color:#000;{% endif %} font-size:0.8rem; padding:6px 12px;">
         {{ wave.status }}
       </span>
     </div>
@@ -27,9 +30,7 @@
 <div class="row g-3 mb-4">
   <div class="col-6 col-lg-3">
     <div class="query-kpi-card">
-      <div class="query-kpi-badge" style="background:linear-gradient(135deg,#6366f1,#4f46e5);">
-        <i class="bi bi-box-seam"></i>
-      </div>
+      <div class="query-kpi-badge" style="background:linear-gradient(135deg,#6366f1,#4f46e5);"><i class="bi bi-box-seam"></i></div>
       <div class="query-kpi-body">
         <span class="query-kpi-label">SKUs solicitados</span>
         <span class="query-kpi-number">{{ total_skus }}</span>
@@ -38,9 +39,7 @@
   </div>
   <div class="col-6 col-lg-3">
     <div class="query-kpi-card">
-      <div class="query-kpi-badge" style="background:linear-gradient(135deg,#3b82f6,#2563eb);">
-        <i class="bi bi-boxes"></i>
-      </div>
+      <div class="query-kpi-badge" style="background:linear-gradient(135deg,#3b82f6,#2563eb);"><i class="bi bi-boxes"></i></div>
       <div class="query-kpi-body">
         <span class="query-kpi-label">Unidades solicitadas</span>
         <span class="query-kpi-number">{{ "{:,}".format(total_requested) }}</span>
@@ -49,9 +48,7 @@
   </div>
   <div class="col-6 col-lg-3">
     <div class="query-kpi-card">
-      <div class="query-kpi-badge" style="background:linear-gradient(135deg,#22c55e,#16a34a);">
-        <i class="bi bi-check2-circle"></i>
-      </div>
+      <div class="query-kpi-badge" style="background:linear-gradient(135deg,#22c55e,#16a34a);"><i class="bi bi-check2-circle"></i></div>
       <div class="query-kpi-body">
         <span class="query-kpi-label">Unidades reservadas</span>
         <span class="query-kpi-number">{{ "{:,}".format(total_reserved) }}</span>
@@ -60,9 +57,7 @@
   </div>
   <div class="col-6 col-lg-3">
     <div class="query-kpi-card">
-      <div class="query-kpi-badge" style="background:linear-gradient(135deg,{% if fulfillment_pct >= 100 %}#22c55e,#16a34a{% elif fulfillment_pct >= 80 %}#eab308,#ca8a04{% else %}#ef4444,#dc2626{% endif %});">
-        <i class="bi bi-percent"></i>
-      </div>
+      <div class="query-kpi-badge" style="background:linear-gradient(135deg,{% if fulfillment_pct >= 100 %}#22c55e,#16a34a{% elif fulfillment_pct >= 80 %}#eab308,#ca8a04{% else %}#ef4444,#dc2626{% endif %});"><i class="bi bi-percent"></i></div>
       <div class="query-kpi-body">
         <span class="query-kpi-label">% Cumplimiento</span>
         <span class="query-kpi-number">{{ fulfillment_pct }}%</span>
@@ -72,21 +67,19 @@
 </div>
 
 {% if can_operate %}
-<div class="d-flex gap-2 mb-4">
+<div class="d-flex gap-2 mb-4 flex-wrap">
   {% if wave.status == 'ASSIGNED' and (wave.assigned_to == current_user.id or current_user.has_permission('admin:users')) %}
-  <form method="post" action="{{ url_for('wms_wave_start_picking', wave_id=wave.id) }}">
-    <button type="submit" class="btn btn-primary">
-      <i class="bi bi-play-circle"></i> Iniciar Picking
-    </button>
-  </form>
+  <button class="btn btn-primary" id="btn-start-wave" onclick="apiStartWave({{ wave.id }})">
+    <i class="bi bi-play-circle"></i> Iniciar Picking
+  </button>
   {% endif %}
   {% if wave.status == 'IN_PROGRESS' %}
-  <a href="{{ url_for('wms_wave_pick', wave_id=wave.id) }}" class="btn btn-primary">
-    <i class="bi bi-cart-check"></i> Ir a Picking
-  </a>
+  <button class="btn btn-success" id="btn-finish-wave" onclick="apiFinishWave({{ wave.id }})">
+    <i class="bi bi-check2-all"></i> Finalizar Wave
+  </button>
   {% endif %}
-  {% if wave.status == 'PICKED' %}
-  <form method="post" action="{{ url_for('wms_wave_close', wave_id=wave.id) }}" onsubmit="return confirm('¿Cerrar esta wave?')">
+  {% if wave.status in ('PICKED', 'DONE') %}
+  <form method="post" action="{{ url_for('wms_wave_close', wave_id=wave.id) }}" onsubmit="return confirm('¿Cerrar esta wave definitivamente?')">
     <button type="submit" class="btn btn-dark">
       <i class="bi bi-check2-square"></i> Cerrar Wave
     </button>
@@ -96,8 +89,9 @@
 {% endif %}
 
 <div class="card mb-4">
-  <div class="card-header">
+  <div class="card-header d-flex align-items-center justify-content-between">
     <span class="fw-semibold"><i class="bi bi-list-task"></i> Tareas de Picking</span>
+    <small class="text-muted">Estado wave: <strong>{{ wave.status }}</strong></small>
   </div>
   <div class="card-body p-0">
     <div class="table-responsive">
@@ -111,15 +105,24 @@
             <th class="text-end">Recogido</th>
             <th class="text-end">Faltante</th>
             <th class="text-center">Estado</th>
-            <th>Ubicación</th>
-            <th class="text-center">Detalle</th>
+            <th class="text-center">Ubicaciones</th>
+            {% if wave.status == 'IN_PROGRESS' and can_operate %}
+            <th class="text-center">Acciones</th>
+            {% endif %}
           </tr>
         </thead>
         <tbody>
           {% for t in tasks %}
-          <tr{% if t.shortage > 0 %} class="table-danger"{% elif t.status in ('DONE','PICKED') %} class="table-success"{% endif %}>
+          {% set row_class = '' %}
+          {% if t.status in ('SHORT',) %}{% set row_class = 'table-warning' %}
+          {% elif t.status in ('DONE',) %}{% set row_class = 'table-success' %}
+          {% elif t.shortage > 0 %}{% set row_class = 'table-danger' %}
+          {% endif %}
+          <tr class="{{ row_class }}">
             <td><code>{{ t.sku }}</code></td>
-            <td><span style="max-width:200px; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ t.product_name }}">{{ t.product_name }}</span></td>
+            <td>
+              <span style="max-width:180px; display:inline-block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ t.product_name }}">{{ t.product_name }}</span>
+            </td>
             <td class="text-end fw-semibold">{{ "{:,}".format(t.qty_requested) }}</td>
             <td class="text-end">
               {% if t.qty_reserved >= t.qty_requested %}
@@ -132,50 +135,86 @@
             </td>
             <td class="text-end">{{ "{:,}".format(t.qty_picked) }}</td>
             <td class="text-end">
-              {% if t.shortage > 0 %}
-              <span class="text-danger fw-bold">-{{ "{:,}".format(t.shortage) }}</span>
+              {% if t.short_qty > 0 %}
+              <span class="text-danger fw-bold">-{{ "{:,}".format(t.short_qty) }}</span>
               {% else %}
               <span class="text-muted">0</span>
               {% endif %}
             </td>
             <td class="text-center">
-              {% set tsc = {'PENDING':'bg-secondary','OPEN':'bg-secondary','PICKING':'bg-primary','PICKED':'bg-success','SHORT':'bg-warning text-dark','DONE':'bg-success'} %}
+              {% set tsc = {'OPEN':'bg-secondary','PENDING':'bg-secondary','IN_PROGRESS':'bg-primary','DONE':'bg-success','SHORT':'bg-warning text-dark','PICKING':'bg-primary','PICKED':'bg-success'} %}
               <span class="badge {{ tsc.get(t.status, 'bg-dark') }}">{{ t.status }}</span>
-            </td>
-            <td>
-              {% if t.get('location_hint') %}
-              <span class="badge bg-light text-dark border"><i class="bi bi-geo-alt"></i> {{ t.location_hint }}</span>
-              {% endif %}
             </td>
             <td class="text-center">
               {% if t.reservations %}
-              <button class="btn btn-xs btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#res-{{ t.id }}" title="Ver ubicaciones">
+              <button class="btn btn-xs btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#res-{{ t.id }}" title="Ver ubicaciones reservadas">
                 <i class="bi bi-geo-alt"></i> {{ t.reservations|length }}
               </button>
               {% else %}
               <span class="text-muted">—</span>
               {% endif %}
             </td>
+            {% if wave.status == 'IN_PROGRESS' and can_operate %}
+            <td class="text-center">
+              <div class="d-flex gap-1 justify-content-center">
+                {% if t.status not in ('DONE',) %}
+                <button class="btn btn-xs btn-success"
+                        onclick="openPickModal({{ t.id }}, '{{ t.sku }}', {{ t.qty_requested }}, {{ t.qty_picked }}, {{ t.short_qty }})"
+                        title="Registrar pick">
+                  <i class="bi bi-check-circle"></i> Pick
+                </button>
+                {% endif %}
+                {% if t.qty_requested - t.qty_picked - t.short_qty > 0 %}
+                <button class="btn btn-xs btn-warning text-dark"
+                        onclick="openIssueModal({{ t.id }}, '{{ t.sku }}', {{ t.qty_requested }}, {{ t.qty_picked }}, {{ t.short_qty }})"
+                        title="Reportar incidencia">
+                  <i class="bi bi-exclamation-triangle"></i>
+                </button>
+                {% endif %}
+              </div>
+            </td>
+            {% endif %}
           </tr>
           {% if t.reservations %}
           <tr class="collapse" id="res-{{ t.id }}">
-            <td colspan="9" class="bg-light px-4 py-2">
-              <table class="table table-sm table-borderless mb-0" style="font-size:0.8rem; max-width:400px;">
-                <thead>
-                  <tr class="text-muted">
-                    <th>Ubicación</th>
-                    <th class="text-end">Reservado</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {% for r in t.reservations %}
-                  <tr>
-                    <td><code>{{ r.location_code }}</code></td>
-                    <td class="text-end fw-semibold">{{ "{:,}".format(r.qty_reserved) }}</td>
-                  </tr>
+            <td colspan="{{ 9 if wave.status == 'IN_PROGRESS' and can_operate else 8 }}" class="bg-light p-0">
+              <div class="px-4 py-2">
+                <table class="table table-sm table-borderless mb-0" style="font-size:0.78rem; max-width:480px;">
+                  <thead>
+                    <tr class="text-muted">
+                      <th>Ubicación</th>
+                      <th class="text-end">Reservado</th>
+                      <th class="text-end">Recogido</th>
+                      <th class="text-center">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for r in t.reservations %}
+                    {% set rsc = {'OPEN':'bg-secondary','PARTIAL':'bg-primary','PICKED':'bg-success','SHORT':'bg-warning text-dark'} %}
+                    <tr>
+                      <td><code>{{ r.location_code }}</code></td>
+                      <td class="text-end">{{ "{:,}".format(r.qty_reserved) }}</td>
+                      <td class="text-end fw-semibold {% if r.qty_picked == r.qty_reserved %}text-success{% elif r.qty_picked > 0 %}text-primary{% endif %}">{{ "{:,}".format(r.qty_picked) }}</td>
+                      <td class="text-center"><span class="badge {{ rsc.get(r.status, 'bg-secondary') }}" style="font-size:0.7rem;">{{ r.status }}</span></td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+                {% if t.issues %}
+                <div class="mt-2 border-top pt-2">
+                  <p class="text-muted small mb-1"><i class="bi bi-exclamation-circle text-warning"></i> Incidencias reportadas</p>
+                  {% for iss in t.issues %}
+                  <div class="d-flex gap-2 align-items-start mb-1 small">
+                    <span class="badge bg-warning text-dark">{{ iss.reason_code }}</span>
+                    <span class="text-danger fw-semibold">-{{ iss.missing_qty }} uds</span>
+                    <span class="text-muted">{{ iss.location_code }}</span>
+                    {% if iss.operator_note %}<span class="text-muted">— {{ iss.operator_note }}</span>{% endif %}
+                    <span class="text-muted ms-auto">{{ iss.created_at }}</span>
+                  </div>
                   {% endfor %}
-                </tbody>
-              </table>
+                </div>
+                {% endif %}
+              </div>
             </td>
           </tr>
           {% endif %}
@@ -187,17 +226,11 @@
 </div>
 
 <div class="card mb-4">
-  <div class="card-header">
-    <span class="fw-semibold"><i class="bi bi-info-circle"></i> Información</span>
-  </div>
+  <div class="card-header"><span class="fw-semibold"><i class="bi bi-info-circle"></i> Información</span></div>
   <div class="card-body small text-muted">
     <div class="row g-3">
-      <div class="col-md-3">
-        <i class="bi bi-calendar-plus"></i> Creada: {{ wave.created_at.strftime('%d/%m/%Y %H:%M') }}
-      </div>
-      <div class="col-md-3">
-        <i class="bi bi-person"></i> Creada por: {{ wave.created_by.username if wave.created_by else '—' }}
-      </div>
+      <div class="col-md-3"><i class="bi bi-calendar-plus"></i> Creada: {{ wave.created_at.strftime('%d/%m/%Y %H:%M') }}</div>
+      <div class="col-md-3"><i class="bi bi-person"></i> Creada por: {{ wave.created_by.username if wave.created_by else '—' }}</div>
       <div class="col-md-3">
         <i class="bi bi-person-badge"></i> Operador: {{ wave.assigned_operator.username if wave.assigned_operator else '—' }}
         {% if wave.assigned_at %}<br><small>Asignado: {{ wave.assigned_at.strftime('%d/%m %H:%M') }}</small>{% endif %}
@@ -211,4 +244,177 @@
     </div>
   </div>
 </div>
+
+<!-- Modal: Registrar Pick -->
+<div class="modal fade" id="pickModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-check-circle text-success"></i> Registrar Pick</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-2">SKU: <code id="pick-sku"></code></p>
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Cantidad recogida <span class="text-danger">*</span></label>
+          <input type="number" id="pick-qty-input" class="form-control" min="0" value="0">
+          <div class="form-text" id="pick-qty-help"></div>
+        </div>
+        <div class="mb-2">
+          <label class="form-label fw-semibold">Nota (opcional)</label>
+          <input type="text" id="pick-note-input" class="form-control" placeholder="Observación...">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-success" id="btn-confirm-pick" onclick="confirmPick()">
+          <i class="bi bi-check"></i> Confirmar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Reportar Incidencia -->
+<div class="modal fade" id="issueModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-exclamation-triangle text-warning"></i> Reportar Incidencia</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-3">SKU: <code id="issue-sku"></code></p>
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Unidades faltantes <span class="text-danger">*</span></label>
+          <input type="number" id="issue-qty-input" class="form-control" min="1" value="1">
+          <div class="form-text" id="issue-qty-help"></div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Motivo <span class="text-danger">*</span></label>
+          <select id="issue-reason-input" class="form-select">
+            {% for r in issue_reasons %}
+            <option value="{{ r }}">{{ r }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="mb-2">
+          <label class="form-label fw-semibold">Nota del operador</label>
+          <textarea id="issue-note-input" class="form-control" rows="2" placeholder="Describa el problema..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-warning text-dark" id="btn-confirm-issue" onclick="confirmIssue()">
+          <i class="bi bi-exclamation-triangle"></i> Registrar Incidencia
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let _activeTaskId = null;
+let _pickModal = null;
+let _issueModal = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+  _pickModal = new bootstrap.Modal(document.getElementById('pickModal'));
+  _issueModal = new bootstrap.Modal(document.getElementById('issueModal'));
+});
+
+function openPickModal(taskId, sku, requested, picked, shortQty) {
+  _activeTaskId = taskId;
+  const remaining = requested - picked - shortQty;
+  document.getElementById('pick-sku').textContent = sku;
+  document.getElementById('pick-qty-input').value = remaining;
+  document.getElementById('pick-qty-input').max = remaining;
+  document.getElementById('pick-qty-help').textContent = `Pendiente: ${remaining.toLocaleString()} uds (recogido: ${picked}, faltante: ${shortQty})`;
+  document.getElementById('pick-note-input').value = '';
+  _pickModal.show();
+}
+
+function openIssueModal(taskId, sku, requested, picked, shortQty) {
+  _activeTaskId = taskId;
+  const remaining = requested - picked - shortQty;
+  document.getElementById('issue-sku').textContent = sku;
+  document.getElementById('issue-qty-input').value = remaining;
+  document.getElementById('issue-qty-input').max = remaining;
+  document.getElementById('issue-qty-help').textContent = `Máximo reportable: ${remaining.toLocaleString()} uds`;
+  document.getElementById('issue-note-input').value = '';
+  _issueModal.show();
+}
+
+async function apiStartWave(waveId) {
+  if (!confirm('¿Iniciar el picking de esta wave?')) return;
+  const btn = document.getElementById('btn-start-wave');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+  try {
+    const r = await fetch(`/api/wms/waves/${waveId}/start`, {method:'POST', headers:{'Content-Type':'application/json'}});
+    const data = await r.json();
+    if (data.ok) { location.reload(); }
+    else { alert('Error: ' + (data.error || 'Sin respuesta')); btn.disabled = false; btn.innerHTML = '<i class="bi bi-play-circle"></i> Iniciar Picking'; }
+  } catch(e) { alert('Error de red'); btn.disabled = false; btn.innerHTML = '<i class="bi bi-play-circle"></i> Iniciar Picking'; }
+}
+
+async function confirmPick() {
+  const qty = parseInt(document.getElementById('pick-qty-input').value);
+  const note = document.getElementById('pick-note-input').value;
+  if (isNaN(qty) || qty < 0) { alert('Ingrese una cantidad válida'); return; }
+  const btn = document.getElementById('btn-confirm-pick');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+  try {
+    const r = await fetch(`/api/wms/tasks/${_activeTaskId}/pick`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({picked_qty: qty, note: note})
+    });
+    const data = await r.json();
+    if (data.ok) { _pickModal.hide(); location.reload(); }
+    else { alert('Error: ' + (data.error || 'Sin respuesta')); btn.disabled = false; btn.innerHTML = '<i class="bi bi-check"></i> Confirmar'; }
+  } catch(e) { alert('Error de red'); btn.disabled = false; btn.innerHTML = '<i class="bi bi-check"></i> Confirmar'; }
+}
+
+async function confirmIssue() {
+  const qty = parseInt(document.getElementById('issue-qty-input').value);
+  const reason = document.getElementById('issue-reason-input').value;
+  const note = document.getElementById('issue-note-input').value;
+  if (isNaN(qty) || qty <= 0) { alert('Ingrese una cantidad mayor a 0'); return; }
+  if (!reason) { alert('Seleccione un motivo'); return; }
+  const btn = document.getElementById('btn-confirm-issue');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+  try {
+    const r = await fetch(`/api/wms/tasks/${_activeTaskId}/report-issue`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({missing_qty: qty, reason_code: reason, operator_note: note})
+    });
+    const data = await r.json();
+    if (data.ok) { _issueModal.hide(); location.reload(); }
+    else { alert('Error: ' + (data.error || 'Sin respuesta')); btn.disabled = false; btn.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Registrar Incidencia'; }
+  } catch(e) { alert('Error de red'); btn.disabled = false; btn.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Registrar Incidencia'; }
+}
+
+async function apiFinishWave(waveId) {
+  if (!confirm('¿Finalizar la wave? Todas las tareas deben estar en estado DONE o SHORT.')) return;
+  const btn = document.getElementById('btn-finish-wave');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Finalizando...';
+  try {
+    const r = await fetch(`/api/wms/waves/${waveId}/finish`, {method:'POST', headers:{'Content-Type':'application/json'}});
+    const data = await r.json();
+    if (data.ok) { location.reload(); }
+    else {
+      let msg = data.error || 'Error';
+      if (data.incomplete_skus) msg += '\nSKUs pendientes: ' + data.incomplete_skus.join(', ');
+      alert(msg);
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-check2-all"></i> Finalizar Wave';
+    }
+  } catch(e) { alert('Error de red'); btn.disabled = false; btn.innerHTML = '<i class="bi bi-check2-all"></i> Finalizar Wave'; }
+}
+</script>
 {% endblock %}
