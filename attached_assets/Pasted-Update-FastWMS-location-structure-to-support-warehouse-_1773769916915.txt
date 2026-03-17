@@ -1,0 +1,107 @@
+Update FastWMS location structure to support warehouse layout as:
+- rack
+- level (rack height)
+- pallet_position
+
+Current WMS locations are too generic and must be normalized to match real warehouse layout.
+
+GOAL
+Refactor WmsLocation and all related WMS logic so that each location is defined by:
+1) rack
+2) level
+3) pallet_position
+
+Keep location_code as a derived/display field for compatibility.
+
+REQUIRED CHANGES
+
+1) MODEL CHANGES
+Update WmsLocation model/table:
+- add columns:
+  - rack (string, required)
+  - level (string or integer, required)
+  - pallet_position (string or integer, required)
+- keep:
+  - warehouse_id
+  - location_type
+  - max_pallets
+  - is_active
+- keep location_code but make it derived/normalized from:
+    rack-level-pallet_position
+  Example: A-02-03
+
+Add unique constraint:
+- (warehouse_id, rack, level, pallet_position)
+
+2) DATA MIGRATION / COMPATIBILITY
+- If old rows only have location_code:
+   try to parse location_code split by "-"
+   map:
+     first part -> rack
+     second part -> level
+     third part -> pallet_position
+- If parsing fails:
+   leave old location_code but mark rack/level/pallet_position as NULL-safe fallback
+   do not crash startup
+- For new inserts, rack/level/pallet_position must be used
+
+3) STOCK CD UPLOAD / WMS SEED
+Update Stock CD upload with WMS support:
+- accept columns:
+   rack
+   level
+   pallet_position
+- location_code becomes optional
+- if rack+level+pallet_position are provided:
+   build location_code automatically
+- if only location_code provided:
+   parse it into rack/level/pallet_position when possible
+- if neither valid structure exists:
+   return validation error
+
+4) WMS INVENTORY VIEW
+Update /wms/inventory:
+- show columns:
+   Warehouse | Rack | Level | Pallet | SKU | Product | Units | Allocated | Available | Pallets
+- optionally keep a small muted “location_code” text for compatibility
+- sorting:
+   rack asc, level asc, pallet_position asc, sku asc
+
+5) WMS MOVES
+Update move creation and display:
+- use location_id internally as before
+- but all selectors/dropdowns must display:
+   rack / level / pallet_position
+   Example: "Rack A | Nivel 02 | Pallet 03"
+- prefilled move actions from inventory must pass correct location_id
+
+6) PICKING WAVES / RESERVATIONS
+Wherever reservation logic sorts by location_code, update sorting to:
+- location_type priority
+- available_units ascending
+- rack asc
+- level asc
+- pallet_position asc
+
+7) UI LABELS
+All WMS pages should use Spanish labels:
+- Rack
+- Nivel
+- Pallet
+- Ubicación (optional combined field)
+
+8) SAFETY
+- Do not break existing WMS inventory or movement history
+- If location_code exists, preserve it
+- Build helper:
+   def build_location_code(rack, level, pallet_position): ...
+- Use it consistently
+
+DELIVERABLES
+- model update
+- startup-safe migration logic for sqlite
+- upload parser update
+- WMS inventory screen updated
+- moves screen updated
+- wave reservation sorting updated
+- no breaking change to existing FastDSO modules

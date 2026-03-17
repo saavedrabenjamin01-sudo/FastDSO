@@ -3,18 +3,18 @@
 
 <div class="query-wrap">
   <div class="query-header">
-    <h1 class="query-title">FastWMS - Moves</h1>
-    <p class="query-subtitle">Transferencias de inventario entre ubicaciones</p>
+    <h1 class="query-title">FastWMS — Movimientos</h1>
+    <p class="query-subtitle">Transferencias de inventario entre ubicaciones del CD</p>
   </div>
 
   <div class="row g-3">
     <div class="col-12 col-lg-5">
       <div class="query-card">
-        <h6 class="fw-semibold mb-3"><i class="bi bi-arrow-left-right me-2"></i>Create Move</h6>
+        <h6 class="fw-semibold mb-3"><i class="bi bi-arrow-left-right me-2"></i>Registrar movimiento</h6>
         <form method="post" action="{{ url_for('wms_moves_create') }}" enctype="multipart/form-data">
 
           <div class="mb-3">
-            <label class="query-label">From Location</label>
+            <label class="query-label">Origen <small class="text-muted">(Rack / Nivel / Pallet)</small></label>
             <select class="form-select" name="from_location_id" id="fromLoc">
               <option value="">— Seleccionar origen —</option>
               {% for loc in locations %}
@@ -24,7 +24,7 @@
           </div>
 
           <div class="mb-3">
-            <label class="query-label">To Location</label>
+            <label class="query-label">Destino <small class="text-muted">(Rack / Nivel / Pallet)</small></label>
             <select class="form-select" name="to_location_id" id="toLoc">
               <option value="">— Seleccionar destino —</option>
               {% for loc in locations %}
@@ -40,7 +40,7 @@
 
           <div class="row g-2 mb-3">
             <div class="col-6">
-              <label class="query-label">Units</label>
+              <label class="query-label">Unidades</label>
               <input type="number" class="form-control" name="units" min="1" placeholder="0">
             </div>
             <div class="col-6">
@@ -50,12 +50,12 @@
           </div>
 
           <div class="mb-3">
-            <label class="query-label">Reason <small class="text-muted">(opcional)</small></label>
+            <label class="query-label">Motivo <small class="text-muted">(opcional)</small></label>
             <input type="text" class="form-control" name="reason" placeholder="Motivo del movimiento">
           </div>
 
           <div class="mb-3">
-            <label class="query-label">Note <small class="text-muted">(header note)</small></label>
+            <label class="query-label">Nota <small class="text-muted">(nota de cabecera)</small></label>
             <input type="text" class="form-control" name="note" placeholder="Nota general del movimiento">
           </div>
 
@@ -69,7 +69,7 @@
           </div>
 
           <button type="submit" class="btn btn-primary w-100">
-            <i class="bi bi-check2-circle me-2"></i>Post Move
+            <i class="bi bi-check2-circle me-2"></i>Confirmar movimiento
           </button>
         </form>
       </div>
@@ -77,20 +77,20 @@
 
     <div class="col-12 col-lg-7">
       <div class="query-card">
-        <h6 class="fw-semibold mb-3"><i class="bi bi-clock-history me-2"></i>Recent Moves</h6>
+        <h6 class="fw-semibold mb-3"><i class="bi bi-clock-history me-2"></i>Movimientos recientes</h6>
 
         {% if recent_runs %}
         <div class="table-responsive">
           <table class="query-table">
             <thead>
               <tr>
-                <th>Date</th>
+                <th>Fecha</th>
                 <th>Move ID</th>
-                <th>User</th>
-                <th class="text-end">Lines</th>
-                <th class="text-end">Units</th>
-                <th>Note</th>
-                <th>Status</th>
+                <th>Usuario</th>
+                <th class="text-end">Líneas</th>
+                <th class="text-end">Unidades</th>
+                <th>Nota</th>
+                <th>Estado</th>
                 <th></th>
               </tr>
             </thead>

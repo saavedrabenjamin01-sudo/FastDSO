@@ -4,12 +4,13 @@
 {% set fq = filters.get('q','') %}
 {% set fwh = filters.get('wh','') %}
 {% set floc = filters.get('loc','') %}
+{% set frack = filters.get('rack','') %}
 {% set fstock = filters.get('stock','') %}
-{% set fsort = filters.get('sort','avail_desc') %}
+{% set fsort = filters.get('sort','rack_asc') %}
 {% set fmin_u = filters.get('min_units','') %}
 {% set fmin_p = filters.get('min_pallets','') %}
 
-{% macro qs_params(override={}) %}{% set ns = namespace(parts=[]) %}{% for k in ['q','wh','loc','stock','sort','min_units','min_pallets'] %}{% set v = override.get(k, filters.get(k,'')) %}{% if v %}{% set _ = ns.parts.append(k ~ '=' ~ v) %}{% endif %}{% endfor %}{{ ns.parts|join('&') }}{% endmacro %}
+{% macro qs_params(override={}) %}{% set ns = namespace(parts=[]) %}{% for k in ['q','wh','loc','rack','stock','sort','min_units','min_pallets'] %}{% set v = override.get(k, filters.get(k,'')) %}{% if v %}{% set _ = ns.parts.append(k ~ '=' ~ v) %}{% endif %}{% endfor %}{{ ns.parts|join('&') }}{% endmacro %}
 
 <div class="query-wrap" style="max-width:1400px;">
 
@@ -44,7 +45,16 @@
         </select>
       </div>
       <div class="query-field">
-        <label class="query-label">Ubicación</label>
+        <label class="query-label">Rack</label>
+        <select class="form-select form-select-sm" name="rack">
+          <option value="">Todos</option>
+          {% for r in racks %}
+          <option value="{{ r }}" {% if frack == r %}selected{% endif %}>{{ r }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="query-field">
+        <label class="query-label">Ubicación (cód.)</label>
         <select class="form-select form-select-sm" name="loc">
           <option value="">Todas</option>
           {% for l in locations %}
@@ -82,6 +92,7 @@
 
   <div class="wms-info-callout mb-3">
     <i class="bi bi-info-circle me-1"></i>
+    <strong>Rack / Nivel / Pallet</strong> = coordenadas físicas de la ubicación &nbsp;|&nbsp;
     <strong>Unidades</strong> = stock físico &nbsp;|&nbsp;
     <strong>Asignadas</strong> = comprometidas para picking &nbsp;|&nbsp;
     <strong>Disponibles</strong> = Unidades − Asignadas
@@ -141,7 +152,7 @@
     <span class="text-muted small">{{ total }} ítems en {{ loc_groups|length }} ubicaciones</span>
     <div class="d-flex gap-1 flex-wrap align-items-center">
       <span class="text-muted small me-1">Ordenar:</span>
-      {% set sort_opts = [('avail_desc','Disponibles ↓'),('avail_asc','Disponibles ↑'),('units_desc','Unidades ↓'),('sku_asc','Ubicación A-Z')] %}
+      {% set sort_opts = [('rack_asc','Rack A-Z'),('avail_desc','Disponibles ↓'),('avail_asc','Disponibles ↑'),('units_desc','Unidades ↓'),('sku_asc','Ubicación A-Z')] %}
       {% for val, label in sort_opts %}
       <a href="{{ url_for('wms_inventory') }}?{{ qs_params({'sort': val}) }}"
          class="btn btn-sm {% if fsort == val %}btn-primary{% else %}btn-outline-secondary{% endif %}" style="font-size:0.75rem;">
@@ -162,7 +173,18 @@
     <div class="wms-loc-header" data-target="wms-loc-body-{{ loop.index }}" role="button">
       <div class="wms-loc-header-left">
         <span class="badge bg-secondary wms-loc-wh-badge">{{ loc.warehouse }}</span>
-        <span class="wms-loc-title">{{ loc.location_code }}</span>
+        {% if loc.rack and loc.level and loc.pallet_position %}
+          <span class="wms-loc-title">
+            <span class="text-muted small me-1" style="font-weight:400;">Rack</span>{{ loc.rack }}
+            <span class="text-muted small mx-1">|</span>
+            <span class="text-muted small me-1" style="font-weight:400;">Nivel</span>{{ loc.level }}
+            <span class="text-muted small mx-1">|</span>
+            <span class="text-muted small me-1" style="font-weight:400;">Pallet</span>{{ loc.pallet_position }}
+          </span>
+          <span class="text-muted small ms-1" style="font-size:0.7rem;">({{ loc.location_code }})</span>
+        {% else %}
+          <span class="wms-loc-title">{{ loc.location_code }}</span>
+        {% endif %}
         {% if loc.location_type == 'PICK' %}
           <span class="badge wms-badge-pick">PICK</span>
         {% elif loc.location_type == 'BULK' %}
