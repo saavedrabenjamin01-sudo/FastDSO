@@ -89,13 +89,25 @@
           {% if waves_map.get(plan.id) %}
           {% set pw = waves_map[plan.id] %}
           <div class="kanban-card-wms mb-1">
-            {% set wsc = {'READY_TO_ASSIGN':'bg-secondary','ASSIGNED':'bg-info','IN_PROGRESS':'bg-primary','PICKED':'bg-success','CLOSED':'bg-dark','NEEDS_REVIEW':'bg-danger','RELEASED':'bg-info','DONE':'bg-success'} %}
+            {% set wsc = {'READY_TO_ASSIGN':'bg-secondary','ASSIGNED':'bg-purple','IN_PROGRESS':'bg-primary','PICKED':'bg-success','CLOSED':'bg-dark','NEEDS_REVIEW':'bg-danger','RELEASED':'bg-info','DONE':'bg-success'} %}
+            {% set wms_label = {'READY_TO_ASSIGN':'Sin asignar','ASSIGNED':'Asignado','IN_PROGRESS':'En picking','PICKED':'Pickeado','CLOSED':'Cerrado','NEEDS_REVIEW':'Revisión','RELEASED':'Liberada','DONE':'Listo'} %}
             <span class="badge {{ wsc.get(pw.status, 'bg-secondary') }}" style="font-size:0.65rem;">
-              WMS: {{ pw.status }}
+              <i class="bi bi-box-seam"></i> {{ wms_label.get(pw.status, pw.status) }}
             </span>
+            {% if pw.assigned_operator %}
+            <small class="text-muted" style="font-size:0.6rem;"><i class="bi bi-person-badge"></i> {{ pw.assigned_operator.username }}</small>
+            {% endif %}
             <a href="{{ url_for('wms_wave_detail', wave_id=pw.id) }}" class="btn btn-xs btn-outline-dark" style="font-size:0.6rem; padding:1px 5px;" title="Ver Pick Wave">
               <i class="bi bi-box-arrow-up-right"></i> Ver Picking
             </a>
+          </div>
+          {% elif can_manage and status == 'APPROVED' %}
+          <div class="kanban-card-wms mb-1">
+            <form method="post" action="{{ url_for('planner_ensure_wave', plan_id=plan.id) }}" style="display:inline;">
+              <button type="submit" class="btn btn-xs btn-outline-warning" style="font-size:0.6rem; padding:1px 5px;" title="Crear o recuperar pick wave">
+                <i class="bi bi-lightning"></i> Crear Wave
+              </button>
+            </form>
           </div>
           {% endif %}
           <div class="kanban-card-actions">

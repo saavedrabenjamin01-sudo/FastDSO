@@ -203,6 +203,97 @@
     </div>
     {% endif %}
 
+    <div class="card mb-4">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-semibold"><i class="bi bi-boxes"></i> Pick Wave WMS</span>
+        {% if latest_wave %}
+        {% set wsc = {'READY_TO_ASSIGN':'bg-secondary','ASSIGNED':'bg-info','IN_PROGRESS':'bg-primary','PICKED':'bg-success','CLOSED':'bg-dark','NEEDS_REVIEW':'bg-danger','RELEASED':'bg-info','DONE':'bg-success'} %}
+        {% set wms_label = {'READY_TO_ASSIGN':'Sin asignar','ASSIGNED':'Asignado','IN_PROGRESS':'En picking','PICKED':'Pickeado','CLOSED':'Cerrada','NEEDS_REVIEW':'Revisión','RELEASED':'Liberada','DONE':'Listo'} %}
+        <span class="badge {{ wsc.get(latest_wave.status, 'bg-secondary') }}">{{ wms_label.get(latest_wave.status, latest_wave.status) }}</span>
+        {% endif %}
+      </div>
+      <div class="card-body">
+        {% if latest_wave %}
+        <div class="mb-2">
+          <div class="d-flex justify-content-between small mb-1">
+            <span><i class="bi bi-box-seam"></i> Wave #{{ latest_wave.id }}</span>
+            <a href="{{ url_for('wms_wave_detail', wave_id=latest_wave.id) }}" class="btn btn-xs btn-outline-dark" style="font-size:0.7rem; padding:1px 8px;">
+              <i class="bi bi-box-arrow-up-right"></i> Abrir
+            </a>
+          </div>
+          {% if latest_wave.assigned_operator %}
+          <div class="small text-muted"><i class="bi bi-person-badge"></i> Picker: <strong>{{ latest_wave.assigned_operator.username }}</strong></div>
+          {% else %}
+          <div class="small text-warning"><i class="bi bi-person-x"></i> Sin picker asignado</div>
+          {% endif %}
+          {% if latest_wave.total_units %}
+          <div class="small text-muted mt-1">
+            Unidades: {{ latest_wave.picked_units or 0 }} / {{ latest_wave.total_units }}
+            {% if latest_wave.short_units %}
+            <span class="text-danger">({{ latest_wave.short_units }} faltantes)</span>
+            {% endif %}
+          </div>
+          {% if latest_wave.total_units %}
+          {% set pct = ((latest_wave.picked_units or 0) / latest_wave.total_units * 100)|int %}
+          <div class="progress mt-1" style="height:6px;" title="{{ pct }}% pickeado">
+            <div class="progress-bar bg-success" style="width:{{ pct }}%"></div>
+          </div>
+          {% endif %}
+          {% endif %}
+          {% if latest_wave.pick_started_at %}
+          <div class="small text-muted mt-1"><i class="bi bi-play-circle"></i> Inicio: {{ latest_wave.pick_started_at.strftime('%d/%m %H:%M') }}</div>
+          {% endif %}
+        </div>
+        {% if can_manage and latest_wave.status in ('READY_TO_ASSIGN', 'ASSIGNED') %}
+        <button type="button" class="btn btn-sm btn-outline-primary w-100 mt-1" data-bs-toggle="modal" data-bs-target="#modalAsignarPicker">
+          <i class="bi bi-person-plus"></i> Asignar Picker
+        </button>
+        {% endif %}
+        {% else %}
+        <div class="text-muted small text-center py-2">
+          <i class="bi bi-x-circle"></i> Sin pick wave vinculada
+        </div>
+        {% if can_manage and plan.status in ('APPROVED', 'IN_PROGRESS') %}
+        <form method="post" action="{{ url_for('planner_ensure_wave', plan_id=plan.id) }}" class="mt-2">
+          <button type="submit" class="btn btn-sm btn-outline-warning w-100">
+            <i class="bi bi-lightning"></i> Crear / Recuperar Wave
+          </button>
+        </form>
+        {% endif %}
+        {% endif %}
+      </div>
+    </div>
+
+    {% if planner_events %}
+    <div class="card mb-4">
+      <div class="card-header">
+        <span class="fw-semibold"><i class="bi bi-link-45deg"></i> Eventos WMS ↔ Planner</span>
+      </div>
+      <div class="card-body p-0">
+        <ul class="list-group list-group-flush" style="font-size:0.78rem; max-height:260px; overflow-y:auto;">
+          {% for ev in planner_events %}
+          {% set ec = {'WAVE_CREATED':'text-success','WAVE_CREATION_FAILED':'text-danger','PICKER_ASSIGNED':'text-primary','PICKER_REASSIGNED':'text-primary','PICKING_STARTED':'text-info','PICKING_COMPLETED':'text-success','PICKING_SHORTAGE_REPORTED':'text-warning','WAVE_CLOSED':'text-secondary','WMS_STATUS_UPDATED':'text-secondary','WAVE_STATUS_SYNCED':'text-secondary'} %}
+          {% set ei = {'WAVE_CREATED':'plus-circle','WAVE_CREATION_FAILED':'x-circle','PICKER_ASSIGNED':'person-check','PICKER_REASSIGNED':'arrow-repeat','PICKING_STARTED':'play-circle','PICKING_COMPLETED':'check-circle','PICKING_SHORTAGE_REPORTED':'exclamation-triangle','WAVE_CLOSED':'lock','WMS_STATUS_UPDATED':'arrow-left-right','WAVE_STATUS_SYNCED':'arrow-left-right'} %}
+          <li class="list-group-item py-1 px-2">
+            <span class="{{ ec.get(ev.event_type, '') }}">
+              <i class="bi bi-{{ ei.get(ev.event_type, 'dot') }}"></i>
+              <strong>{{ ev.event_type.replace('_', ' ') }}</strong>
+            </span>
+            {% if ev.new_status %}
+            <span class="badge bg-secondary" style="font-size:0.65rem;">→ {{ ev.new_status }}</span>
+            {% endif %}
+            <div class="text-muted" style="font-size:0.7rem;">
+              {{ ev.created_at.strftime('%d/%m %H:%M') }}
+              {% if ev.created_by %} · {{ ev.created_by.username }}{% endif %}
+              {% if ev.note %} · {{ ev.note }}{% endif %}
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+    {% endif %}
+
     <div class="card">
       <div class="card-header">
         <span class="fw-semibold"><i class="bi bi-clock-history"></i> Actividad</span>
@@ -249,4 +340,33 @@
     </div>
   </div>
 </div>
+
+{% if can_manage and latest_wave and latest_wave.status in ('READY_TO_ASSIGN', 'ASSIGNED') %}
+<div class="modal fade" id="modalAsignarPicker" tabindex="-1" aria-labelledby="modalAsignarPickerLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="modalAsignarPickerLabel"><i class="bi bi-person-plus"></i> Asignar Picker</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="post" action="{{ url_for('planner_assign_picker', plan_id=plan.id) }}">
+        <div class="modal-body">
+          <p class="text-muted small">Asigna un operador de almacén para ejecutar la Pick Wave <strong>#{{ latest_wave.id }}</strong> del folio <strong>{{ plan.folio }}</strong>.</p>
+          <label class="form-label fw-semibold">Operador</label>
+          <select name="picker_user_id" class="form-select" required>
+            <option value="">— Seleccionar operador —</option>
+            {% for op in operators %}
+            <option value="{{ op.id }}" {% if latest_wave.assigned_to == op.id %}selected{% endif %}>{{ op.username }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-primary"><i class="bi bi-person-check"></i> Asignar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
 {% endblock %}

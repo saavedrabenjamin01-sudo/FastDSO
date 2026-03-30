@@ -52,12 +52,12 @@ ROLE_PERMISSIONS = {
         'stock:query', 'distribution:generate', 'distribution:export',
         'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'runs:submit', 'runs:approve', 'admin:users', 'admin:reset', 'audit:view',
         'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view',
-        'planner:view', 'planner:operate', 'wms:view'
+        'planner:view', 'planner:operate', 'planner:manage', 'wms:view'
     ],
     'Management': [
         'dashboard:view', 'stock:query', 'distribution:export',
         'forecast_v2:view', 'runs:view', 'runs:approve', 'audit:view', 'rebalancing:view', 'slow_stock:view', 'store_health:view', 'alerts:view',
-        'planner:view', 'wms:view'
+        'planner:view', 'planner:manage', 'wms:view'
     ],
     'CategoryManager': [
         'dashboard:view', 'sales:upload', 'sales_macro:upload', 'distribution:generate', 'distribution:export',
@@ -682,6 +682,8 @@ class DistributionPlan(db.Model):
     closed_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     exceptions_file_name = db.Column(db.Text, nullable=True)
     exceptions_count = db.Column(db.Integer, nullable=False, default=0)
+    wms_wave_id = db.Column(db.Integer, nullable=True)
+    wms_status = db.Column(db.String(30), nullable=True)
 
     created_by = db.relationship('User', foreign_keys=[created_by_user_id])
     closed_by = db.relationship('User', foreign_keys=[closed_by_user_id])
@@ -725,6 +727,32 @@ class PlanActivityLog(db.Model):
     comment = db.Column(db.Text, nullable=True)
 
     user = db.relationship('User')
+
+
+class PlannerWmsEventLog(db.Model):
+    """Event log for Planner <-> WMS orchestration events."""
+    __tablename__ = 'planner_wms_event_log'
+    id = db.Column(db.Integer, primary_key=True)
+    plan_id = db.Column(db.Integer, db.ForeignKey('distribution_plan.id'), nullable=False, index=True)
+    wave_id = db.Column(db.Integer, nullable=True)
+    event_type = db.Column(db.String(50), nullable=False)
+    old_status = db.Column(db.String(30), nullable=True)
+    new_status = db.Column(db.String(30), nullable=True)
+    assigned_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    note = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    plan = db.relationship('DistributionPlan', foreign_keys=[plan_id])
+    assigned_user = db.relationship('User', foreign_keys=[assigned_user_id])
+    created_by = db.relationship('User', foreign_keys=[created_by_user_id])
+
+
+PLANNER_WMS_EVENT_TYPES = [
+    'WAVE_CREATED', 'WAVE_CREATION_FAILED', 'PICKER_ASSIGNED', 'PICKER_REASSIGNED',
+    'PICKING_STARTED', 'PICKING_COMPLETED', 'PICKING_SHORTAGE_REPORTED',
+    'WAVE_CLOSED', 'WMS_STATUS_SYNCED'
+]
 
 
 # ------------------ Inventory Ledger Models ------------------
@@ -1277,6 +1305,16 @@ def _ensure_wms_defaults(session=None):
                 conn.execute(text("ALTER TABLE distribution_plan ADD COLUMN exceptions_count INTEGER NOT NULL DEFAULT 0"))
                 conn.commit()
             print("[WMS] Added column distribution_plan.exceptions_count")
+        if 'wms_wave_id' not in plan_cols:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE distribution_plan ADD COLUMN wms_wave_id INTEGER"))
+                conn.commit()
+            print("[PLANNER-WMS] Added column distribution_plan.wms_wave_id")
+        if 'wms_status' not in plan_cols:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE distribution_plan ADD COLUMN wms_status VARCHAR(30)"))
+                conn.commit()
+            print("[PLANNER-WMS] Added column distribution_plan.wms_status")
     if 'wms_pick_wave' in inspector.get_table_names():
         wave_cols = [c['name'] for c in inspector.get_columns('wms_pick_wave')]
         _wave_migrations = {
@@ -10074,6 +10112,12 @@ def wms_wave_assign(wave_id):
     action_str = 'reasignada' if old_operator else 'asignada'
     log_audit(action='wms.wave.assign', entity_type='wms_pick_wave', entity_id=wave.id,
               status='success', message=f'Wave #{wave.id} {action_str} a {operator.username}')
+    try:
+        event_t = 'PICKER_REASSIGNED' if old_operator else 'PICKER_ASSIGNED'
+        sync_plan_from_wave(wave.id, event_type=event_t, actor_user_id=current_user.id,
+                            note=f'Asignado desde WMS a {operator.username}')
+    except Exception as _e:
+        print(f"[PLANNER-WMS] WARNING: sync on wave assign failed: {_e}")
     flash(f'Wave #{wave.id} {action_str} a {operator.username}', 'success')
     return redirect(url_for('wms_waves_list'))
 
@@ -10284,9 +10328,6 @@ def wms_wave_close(wave_id):
         return redirect(url_for('wms_wave_detail', wave_id=wave_id))
     wave.status = 'CLOSED'
     wave.closed_at = datetime.utcnow()
-    if wave.plan:
-        if wave.plan.status == 'APPROVED':
-            wave.plan.status = 'READY_TO_DISPATCH'
     db.session.commit()
 
     try:
@@ -10295,6 +10336,11 @@ def wms_wave_close(wave_id):
             db.session.commit()
     except Exception:
         db.session.rollback()
+
+    try:
+        sync_plan_from_wave(wave.id, event_type='WAVE_CLOSED', actor_user_id=current_user.id)
+    except Exception as _e:
+        print(f"[PLANNER-WMS] WARNING: sync on wave close failed: {_e}")
 
     log_audit(action='wms.wave.close', entity_type='wms_pick_wave', entity_id=wave.id,
               status='success', message=f'Wave #{wave.id} cerrada')
@@ -10341,6 +10387,10 @@ def api_wms_wave_start(wave_id):
     wave.pick_started_at = datetime.utcnow()
     db.session.commit()
     print(f"[WMS] wave {wave_id} iniciada por operador {current_user.username}")
+    try:
+        sync_plan_from_wave(wave_id, event_type='PICKING_STARTED', actor_user_id=current_user.id)
+    except Exception as _e:
+        print(f"[PLANNER-WMS] WARNING: sync on wave start failed: {_e}")
     return jsonify({'ok': True, 'status': wave.status})
 
 
@@ -10567,6 +10617,11 @@ def api_wms_task_report_issue(task_id):
     _wms_update_wave_counters(wave)
     db.session.commit()
     print(f"[WMS] issue sku={task.sku} missing={missing_qty} reason={reason_code}")
+    try:
+        sync_plan_from_wave(wave.id, event_type='PICKING_SHORTAGE_REPORTED', actor_user_id=current_user.id,
+                            note=f'SKU {task.sku}: {missing_qty} faltantes ({reason_code})')
+    except Exception as _e:
+        print(f"[PLANNER-WMS] WARNING: sync on issue report failed: {_e}")
     return jsonify({
         'ok': True,
         'task_status': task.status,
@@ -10610,6 +10665,10 @@ def api_wms_wave_finish(wave_id):
     print(f"[WMS] wave finished id={wave_id} status={wave.status}")
     log_audit(action='wms.wave.finish', entity_type='wms_pick_wave', entity_id=wave.id,
               status='success', message=f'Wave #{wave.id} finalizada via API')
+    try:
+        sync_plan_from_wave(wave_id, event_type='PICKING_COMPLETED', actor_user_id=current_user.id)
+    except Exception as _e:
+        print(f"[PLANNER-WMS] WARNING: sync on wave finish failed: {_e}")
     return jsonify({'ok': True, 'status': wave.status, 'picked_units': wave.picked_units, 'short_units': wave.short_units})
 
 
@@ -11052,11 +11111,21 @@ def distribution_manual():
                 warehouse_code='MAIN',
                 user=current_user
             )
+            plan.wms_wave_id = wave.id
+            plan.wms_status = wave.status
+            _planner_wms_log(plan.id, 'WAVE_CREATED', wave_id=wave.id,
+                             new_status=wave.status, created_by_user_id=current_user.id)
             db.session.commit()
             wave_msg = f' | Pick Wave #{wave.id} ({wave.status})'
         except Exception as e:
             db.session.rollback()
             print(f"[WMS] ERROR creating pick wave for manual plan {plan.id}: {e}")
+            _planner_wms_log(plan.id, 'WAVE_CREATION_FAILED', created_by_user_id=current_user.id,
+                             note=str(e)[:500])
+            try:
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
             wave_msg = f' | Pick Wave no creada: {str(e)[:100]}'
 
         log_audit(
@@ -12116,11 +12185,21 @@ def approve_and_send(run_id):
             warehouse_code='MAIN',
             user=current_user
         )
+        plan.wms_wave_id = wave.id
+        plan.wms_status = wave.status
+        _planner_wms_log(plan.id, 'WAVE_CREATED', wave_id=wave.id,
+                         new_status=wave.status, created_by_user_id=current_user.id)
         db.session.commit()
         wave_msg = f' | WMS Pick Wave #{wave.id} creada ({wave.status})'
     except Exception as e:
         db.session.rollback()
         print(f"[WMS] ERROR creating pick wave for plan {plan.id}: {e}")
+        _planner_wms_log(plan.id, 'WAVE_CREATION_FAILED', created_by_user_id=current_user.id,
+                         note=str(e)[:500])
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
         wave_msg = f' | WMS Pick Wave no creada: {str(e)}'
         flash(f'Plan creado pero la Pick Wave WMS no se pudo generar: {str(e)}', 'warning')
 
@@ -17875,6 +17954,161 @@ def alerts_page():
     )
 
 
+# ------------------ FastPlanner <-> WMS Orchestration Service ------------------
+
+def _planner_wms_log(plan_id, event_type, wave_id=None, old_status=None, new_status=None,
+                     assigned_user_id=None, created_by_user_id=None, note=None):
+    """Write a PlannerWmsEventLog entry. Does not commit."""
+    try:
+        entry = PlannerWmsEventLog(
+            plan_id=plan_id,
+            wave_id=wave_id,
+            event_type=event_type,
+            old_status=old_status,
+            new_status=new_status,
+            assigned_user_id=assigned_user_id,
+            created_by_user_id=created_by_user_id,
+            note=note,
+        )
+        db.session.add(entry)
+    except Exception as e:
+        print(f"[PLANNER-WMS] WARNING: could not write event log {event_type}: {e}")
+
+
+def ensure_wave_for_plan(plan_id, current_user_id=None):
+    """
+    Ensure the plan has an active WMS pick wave.
+    Returns the wave. Raises RuntimeError on unrecoverable failure.
+    """
+    plan = db.session.get(DistributionPlan, plan_id)
+    if not plan:
+        raise RuntimeError(f"Plan {plan_id} not found")
+
+    if plan.wms_wave_id:
+        wave = db.session.get(WmsPickWave, plan.wms_wave_id)
+        if wave and wave.status != 'CANCELLED':
+            print(f"[PLANNER-WMS] wave ensured plan={plan_id} wave={wave.id} (existing link)")
+            return wave
+
+    existing_wave = (
+        db.session.query(WmsPickWave)
+        .filter_by(plan_id=plan_id)
+        .filter(WmsPickWave.status != 'CANCELLED')
+        .order_by(WmsPickWave.created_at.desc())
+        .first()
+    )
+    if existing_wave:
+        plan.wms_wave_id = existing_wave.id
+        plan.wms_status = existing_wave.status
+        _planner_wms_log(plan_id, 'WAVE_CREATED', wave_id=existing_wave.id,
+                         new_status=existing_wave.status, created_by_user_id=current_user_id,
+                         note='Wave vinculada retroactivamente')
+        db.session.commit()
+        print(f"[PLANNER-WMS] wave ensured plan={plan_id} wave={existing_wave.id} (backlinked)")
+        return existing_wave
+
+    try:
+        wave, _total_req, _total_res = wms_create_pick_wave_for_plan(
+            plan_id,
+            priority=plan.urgency or 'MEDIUM',
+            warehouse_code='MAIN',
+            user=db.session.get(User, current_user_id) if current_user_id else None
+        )
+        plan.wms_wave_id = wave.id
+        plan.wms_status = wave.status
+        _planner_wms_log(plan_id, 'WAVE_CREATED', wave_id=wave.id,
+                         new_status=wave.status, created_by_user_id=current_user_id)
+        db.session.commit()
+        print(f"[PLANNER-WMS] wave ensured plan={plan_id} wave={wave.id} (newly created)")
+        return wave
+    except Exception as exc:
+        db.session.rollback()
+        _planner_wms_log(plan_id, 'WAVE_CREATION_FAILED', created_by_user_id=current_user_id,
+                         note=str(exc)[:500])
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        print(f"[PLANNER-WMS] wave creation FAILED plan={plan_id}: {exc}")
+        raise RuntimeError(f"No se pudo crear la pick wave: {exc}") from exc
+
+
+def assign_picker_to_plan_wave(plan_id, picker_user_id, manager_user_id=None):
+    """
+    Assign a picker operator to the plan's WMS wave.
+    Returns the wave.
+    """
+    wave = ensure_wave_for_plan(plan_id, current_user_id=manager_user_id)
+    plan = db.session.get(DistributionPlan, plan_id)
+    picker = db.session.get(User, picker_user_id)
+    if not picker:
+        raise ValueError(f"Usuario picker {picker_user_id} no encontrado")
+
+    old_assigned = wave.assigned_to
+    event_type = 'PICKER_REASSIGNED' if old_assigned and old_assigned != picker_user_id else 'PICKER_ASSIGNED'
+
+    wave.assigned_to = picker_user_id
+    wave.assigned_at = datetime.utcnow()
+    if wave.status in ('READY_TO_ASSIGN', 'RELEASED', 'NEEDS_REVIEW'):
+        wave.status = 'ASSIGNED'
+
+    old_wms_status = plan.wms_status
+    plan.assigned_to_user_id = picker_user_id
+    if not plan.started_at:
+        plan.started_at = datetime.utcnow()
+    plan.wms_status = wave.status
+
+    _planner_wms_log(plan_id, event_type, wave_id=wave.id,
+                     old_status=old_wms_status, new_status=wave.status,
+                     assigned_user_id=picker_user_id, created_by_user_id=manager_user_id,
+                     note=f'Picker: {picker.username}')
+    db.session.commit()
+    print(f"[PLANNER-WMS] picker assigned plan={plan_id} wave={wave.id} user={picker.username}")
+    return wave
+
+
+def sync_plan_from_wave(wave_id, event_type=None, note=None, actor_user_id=None):
+    """
+    Mirror WMS wave status into the linked DistributionPlan.
+    Writes a PlannerWmsEventLog entry. Commits.
+    """
+    wave = db.session.get(WmsPickWave, wave_id)
+    if not wave:
+        return
+    plan = db.session.get(DistributionPlan, wave.plan_id)
+    if not plan:
+        return
+
+    old_status = plan.wms_status
+    plan.wms_status = wave.status
+    if wave.assigned_to:
+        plan.assigned_to_user_id = wave.assigned_to
+    if not plan.wms_wave_id:
+        plan.wms_wave_id = wave.id
+
+    _planner_wms_log(plan.id, event_type or 'WMS_STATUS_SYNCED', wave_id=wave.id,
+                     old_status=old_status, new_status=wave.status,
+                     assigned_user_id=wave.assigned_to,
+                     created_by_user_id=actor_user_id, note=note)
+    db.session.commit()
+    print(f"[PLANNER-WMS] sync plan={plan.id} wave={wave_id} status={wave.status}")
+
+
+def close_wave_and_update_plan(wave_id, actor_user_id=None):
+    """
+    Close the wave and sync the plan status.
+    """
+    wave = db.session.get(WmsPickWave, wave_id)
+    if not wave:
+        raise RuntimeError(f"Wave {wave_id} not found")
+    if wave.status not in ('PICKED', 'DONE'):
+        raise ValueError(f"Solo se pueden cerrar waves en estado PICKED (actual: {wave.status})")
+    wave.status = 'CLOSED'
+    wave.closed_at = datetime.utcnow()
+    sync_plan_from_wave(wave_id, event_type='WAVE_CLOSED', actor_user_id=actor_user_id)
+    print(f"[PLANNER-WMS] wave closed plan={wave.plan_id} wave={wave_id}")
+
+
 # ------------------ FastPlanner Routes ------------------
 @app.route('/planner')
 @login_required
@@ -17895,7 +18129,8 @@ def planner():
         plans_by_status[status] = query.order_by(DistributionPlan.created_at.desc()).all()
 
     can_operate = current_user.has_permission('planner:operate')
-    
+    can_manage = current_user.has_permission('planner:manage') or current_user.has_permission('admin:users')
+
     blocking_statuses = ['APPROVED', 'IN_PROGRESS', 'PACKED']
     urgent_blockers = DistributionPlan.query.filter(
         DistributionPlan.urgency == 'URGENT',
@@ -17931,6 +18166,7 @@ def planner():
         urgency_filter=urgency_filter,
         folio_search=folio_search,
         can_operate=can_operate,
+        can_manage=can_manage,
         PLAN_URGENCIES=PLAN_URGENCIES,
         urgent_blockers=urgent_blockers,
         medium_blockers=medium_blockers,
@@ -17946,24 +18182,44 @@ def planner():
 def planner_detail(plan_id):
     """FastPlanner plan detail view."""
     plan = DistributionPlan.query.get_or_404(plan_id)
-    
+
     page = request.args.get('page', 1, type=int)
     per_page = 10
-    
+
     lines_query = plan.lines.join(Product).join(Store).order_by(Product.sku, Store.name)
     total_lines = lines_query.count()
     lines = lines_query.offset((page - 1) * per_page).limit(per_page).all()
     total_pages = max(1, (total_lines + per_page - 1) // per_page)
-    
+
     activities = plan.activity_logs.limit(50).all()
     can_operate = current_user.has_permission('planner:operate')
+    can_manage = current_user.has_permission('planner:manage') or current_user.has_permission('admin:users')
 
-    latest_wave = (
-        db.session.query(WmsPickWave)
-        .filter(WmsPickWave.plan_id == plan.id)
-        .order_by(WmsPickWave.created_at.desc())
-        .first()
+    latest_wave = None
+    if plan.wms_wave_id:
+        latest_wave = db.session.get(WmsPickWave, plan.wms_wave_id)
+    if not latest_wave:
+        latest_wave = (
+            db.session.query(WmsPickWave)
+            .filter(WmsPickWave.plan_id == plan.id)
+            .order_by(WmsPickWave.created_at.desc())
+            .first()
+        )
+
+    planner_events = (
+        db.session.query(PlannerWmsEventLog)
+        .filter_by(plan_id=plan.id)
+        .order_by(PlannerWmsEventLog.created_at.desc())
+        .limit(20)
+        .all()
     )
+
+    operators = (
+        db.session.query(User)
+        .filter(User.is_active.is_(True))
+        .order_by(User.username)
+        .all()
+    ) if can_manage else []
 
     return render_template(
         'planner_detail.html',
@@ -17974,7 +18230,10 @@ def planner_detail(plan_id):
         total_pages=total_pages,
         total_lines=total_lines,
         can_operate=can_operate,
-        latest_wave=latest_wave
+        can_manage=can_manage,
+        latest_wave=latest_wave,
+        planner_events=planner_events,
+        operators=operators,
     )
 
 
@@ -18017,7 +18276,7 @@ def planner_take(plan_id):
     plan.status = 'IN_PROGRESS'
     plan.assigned_to_user_id = current_user.id
     plan.started_at = datetime.utcnow()
-    
+
     log = PlanActivityLog(
         plan_id=plan.id,
         action='TAKEN',
@@ -18026,9 +18285,47 @@ def planner_take(plan_id):
     )
     db.session.add(log)
     db.session.commit()
-    
+
+    try:
+        assign_picker_to_plan_wave(plan.id, current_user.id, manager_user_id=current_user.id)
+    except Exception as e:
+        print(f"[PLANNER-WMS] WARNING: wave assign failed for plan {plan.id}: {e}")
+
     flash(f'Plan {plan.folio} tomado exitosamente', 'success')
     return redirect(url_for('planner'))
+
+
+@app.route('/planner/<int:plan_id>/assign-picker', methods=['POST'])
+@login_required
+@require_permission('planner:manage')
+def planner_assign_picker(plan_id):
+    """Manager assigns a picker operator to a plan's WMS wave."""
+    plan = DistributionPlan.query.get_or_404(plan_id)
+    picker_user_id = request.form.get('picker_user_id', type=int)
+    if not picker_user_id:
+        flash('Selecciona un operador', 'warning')
+        return redirect(url_for('planner_detail', plan_id=plan_id))
+    try:
+        wave = assign_picker_to_plan_wave(plan_id, picker_user_id, manager_user_id=current_user.id)
+        picker = db.session.get(User, picker_user_id)
+        flash(f'Picker {picker.username if picker else picker_user_id} asignado a la wave #{wave.id}', 'success')
+    except (ValueError, RuntimeError) as e:
+        flash(f'Error al asignar picker: {e}', 'danger')
+    return redirect(url_for('planner_detail', plan_id=plan_id))
+
+
+@app.route('/planner/<int:plan_id>/ensure-wave', methods=['POST'])
+@login_required
+@require_permission('planner:manage')
+def planner_ensure_wave(plan_id):
+    """Manager manually triggers wave creation/recovery for a plan."""
+    plan = DistributionPlan.query.get_or_404(plan_id)
+    try:
+        wave = ensure_wave_for_plan(plan_id, current_user_id=current_user.id)
+        flash(f'Pick Wave #{wave.id} ({wave.status}) vinculada al folio {plan.folio}', 'success')
+    except RuntimeError as e:
+        flash(f'No se pudo crear/recuperar la wave: {e}', 'danger')
+    return redirect(url_for('planner_detail', plan_id=plan_id))
 
 
 @app.route('/planner/<int:plan_id>/pack', methods=['POST'])
