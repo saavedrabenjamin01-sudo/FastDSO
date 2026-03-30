@@ -1,0 +1,197 @@
+{% extends 'base.html' %}
+{% block title %}Inicio - FastDSO{% endblock %}
+{% block page_title %}Inicio{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+
+  <!-- Welcome banner -->
+  <div class="row mb-4">
+    <div class="col-12">
+      <div class="card border-0" style="background:linear-gradient(135deg,#1d4ed8 0%,#3b82f6 60%,#60a5fa 100%);border-radius:16px;">
+        <div class="card-body py-4 px-4 d-flex align-items-center gap-4">
+          <img src="{{ url_for('static', filename='img/logo/fastdso_banner.jpg') }}"
+               alt="FastDSO" style="height:56px;border-radius:10px;box-shadow:0 2px 12px rgba(0,0,0,.25);"
+               onerror="this.style.display='none'">
+          <div>
+            <h3 class="mb-0 text-white fw-bold">Bienvenido a FastDSO</h3>
+            <p class="mb-1 text-white" style="opacity:.88;">
+              Hola, <strong>{{ current_user.username }}</strong>
+              {% if current_user.role_display %}&nbsp;&middot;&nbsp;{{ current_user.role_display }}{% endif %}
+            </p>
+            <small class="text-white" style="opacity:.72;">Selecciona un módulo para comenzar</small>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Module cards -->
+  {% set modules = [] %}
+
+  {% if can('dashboard:view') %}
+    {% set _ = modules.append({
+      'title': 'Dashboard',
+      'desc': 'KPIs de ventas, stock y predicciones en tiempo real.',
+      'icon': 'bi-speedometer2',
+      'color': '#1d4ed8',
+      'url': url_for('dashboard')
+    }) %}
+  {% endif %}
+
+  {% if can('forecast_v2:view') %}
+    {% set _ = modules.append({
+      'title': 'Forecast de compra',
+      'desc': 'Proyecciones de compra por SKU con análisis de ciclo de vida.',
+      'icon': 'bi-graph-up',
+      'color': '#0891b2',
+      'url': url_for('purchase_forecast_v2')
+    }) %}
+  {% endif %}
+
+  {% if can('stock:query') %}
+    {% set _ = modules.append({
+      'title': 'Consulta de stock',
+      'desc': 'Vista detallada de inventario por producto y tienda.',
+      'icon': 'bi-box-seam',
+      'color': '#059669',
+      'url': url_for('stock_query')
+    }) %}
+  {% endif %}
+
+  {% if can('distribution:view') %}
+    {% set _ = modules.append({
+      'title': 'Distribución',
+      'desc': 'Sugerencias de distribución y reposición automática.',
+      'icon': 'bi-truck',
+      'color': '#7c3aed',
+      'url': url_for('predict')
+    }) %}
+  {% endif %}
+
+  {% if can('distribution:manual') %}
+    {% set _ = modules.append({
+      'title': 'Distribución manual',
+      'desc': 'Carga tu propio plan de distribución desde un archivo.',
+      'icon': 'bi-upload',
+      'color': '#b45309',
+      'url': url_for('manual_distribution')
+    }) %}
+  {% endif %}
+
+  {% if can('planner:view') %}
+    {% set _ = modules.append({
+      'title': 'FastPlanner',
+      'desc': 'Kanban de ejecución de órdenes de distribución en CD.',
+      'icon': 'bi-kanban',
+      'color': '#0f766e',
+      'url': url_for('planner')
+    }) %}
+  {% endif %}
+
+  {% if can('wms:view') %}
+    {% set _ = modules.append({
+      'title': 'FastWMS',
+      'desc': 'Gestión de inventario por ubicación en el centro de distribución.',
+      'icon': 'bi-building',
+      'color': '#4338ca',
+      'url': url_for('wms_inventory')
+    }) %}
+  {% endif %}
+
+  {% if can('alerts:view') %}
+    {% set _ = modules.append({
+      'title': 'Alertas',
+      'desc': 'Notificaciones proactivas de quiebres, sobrestock y SKUs silenciosos.',
+      'icon': 'bi-bell',
+      'color': '#dc2626',
+      'url': url_for('alerts_view')
+    }) %}
+  {% endif %}
+
+  {% if can('store_health:view') %}
+    {% set _ = modules.append({
+      'title': 'Salud de tiendas',
+      'desc': 'Índice diagnóstico 0–100 por tienda con Fill Rate, Break Rate y más.',
+      'icon': 'bi-heart-pulse',
+      'color': '#be185d',
+      'url': url_for('store_health')
+    }) %}
+  {% endif %}
+
+  {% if can('admin:users') %}
+    {% set _ = modules.append({
+      'title': 'Gestión de usuarios',
+      'desc': 'Administra cuentas de acceso y roles del sistema.',
+      'icon': 'bi-people',
+      'color': '#374151',
+      'url': url_for('admin_users')
+    }) %}
+  {% endif %}
+
+  {% if can('roles:manage') %}
+    {% set _ = modules.append({
+      'title': 'Gestión de perfiles',
+      'desc': 'Configura los permisos de cada perfil de acceso.',
+      'icon': 'bi-shield-lock',
+      'color': '#374151',
+      'url': url_for('admin_roles')
+    }) %}
+  {% endif %}
+
+  {% if modules %}
+  <div class="row g-3">
+    {% for mod in modules %}
+    <div class="col-sm-6 col-md-4 col-xl-3">
+      <div class="card h-100 border-0 shadow-sm home-card" style="border-radius:14px;transition:transform .15s,box-shadow .15s;">
+        <div class="card-body d-flex flex-column gap-2 p-4">
+          <div class="d-flex align-items-center gap-3 mb-1">
+            <div class="home-card-icon" style="background:{{ mod.color }}1a;color:{{ mod.color }};">
+              <i class="bi {{ mod.icon }} fs-4"></i>
+            </div>
+            <h6 class="mb-0 fw-semibold">{{ mod.title }}</h6>
+          </div>
+          <p class="text-muted mb-0" style="font-size:.82rem;line-height:1.45;">{{ mod.desc }}</p>
+          <div class="mt-auto pt-2">
+            <a href="{{ mod.url }}" class="btn btn-sm w-100 fw-semibold"
+               style="background:{{ mod.color }};color:#fff;border-radius:8px;">
+              Abrir
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% else %}
+  <!-- Empty state -->
+  <div class="row">
+    <div class="col-12">
+      <div class="card border-0 shadow-sm text-center py-5" style="border-radius:16px;">
+        <div class="card-body">
+          <div style="width:72px;height:72px;border-radius:50%;background:#f1f5f9;display:flex;align-items:center;justify-content:center;margin:0 auto 1.2rem;">
+            <i class="bi bi-lock text-muted" style="font-size:2rem;"></i>
+          </div>
+          <h5 class="fw-semibold text-muted">Tu perfil no tiene módulos habilitados.</h5>
+          <p class="text-muted mb-0">Contacta al administrador para solicitar acceso.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+
+<style>
+.home-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(0,0,0,.1) !important;
+}
+.home-card-icon {
+  width: 44px; height: 44px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+</style>
+{% endblock %}

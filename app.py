@@ -3851,9 +3851,8 @@ def inject_sidebar_counts():
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    # si ya está logeado, directo al dashboard
     if current_user.is_authenticated:
-        return redirect(url_for('dashboard'))
+        return redirect(url_for('home'))
 
     if request.method == 'POST':
         username = (request.form.get('username') or "").strip().lower()
@@ -3865,7 +3864,10 @@ def login():
                 flash('Tu cuenta está desactivada. Contacta al administrador.', 'danger')
                 return render_template('login.html')
             login_user(user)
-            return redirect(url_for('dashboard'))
+            next_url = request.args.get('next') or request.form.get('next')
+            if next_url and next_url.startswith('/') and not next_url.startswith('//'):
+                return redirect(next_url)
+            return redirect(url_for('home'))
 
         flash('Credenciales inválidas.', 'danger')
 
@@ -3879,10 +3881,15 @@ def logout():
 
 @app.route('/')
 def index():
-    # raíz redirige al login o dashboard según estado
     if current_user.is_authenticated:
-        return redirect(url_for('dashboard'))
+        return redirect(url_for('home'))
     return redirect(url_for('login'))
+
+
+@app.route('/home')
+@login_required
+def home():
+    return render_template('home.html')
 
 from datetime import date, timedelta
 from sqlalchemy import func

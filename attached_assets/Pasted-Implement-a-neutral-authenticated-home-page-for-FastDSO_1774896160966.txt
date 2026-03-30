@@ -1,0 +1,81 @@
+Implement a neutral authenticated home page for FastDSO so users without Dashboard permission can log in safely.
+
+PROBLEM
+Currently the app redirects users to Dashboard after login, but some profiles do not have permission to view Dashboard. This causes crashes or broken access flow.
+
+GOAL
+Create a new authenticated main page/home page that becomes the default landing page after login for all users.
+
+REQUIREMENTS
+
+1) New route
+Create a new route:
+- /home
+- login required
+- no special module permission required (only authenticated user)
+
+2) New template
+Create:
+- templates/home.html
+
+It must:
+- extend base.html
+- show FastDSO main logo (reuse existing logo asset if available)
+- show welcome message in Spanish:
+  "Bienvenido a FastDSO"
+- show the current user's name:
+  "Hola, {{ current_user.username or current_user.name }}"
+- show a short helper text:
+  "Selecciona un módulo para comenzar"
+
+3) Quick access cards
+On the home page, render cards/buttons only for modules the user can access.
+Examples:
+- Dashboard
+- Consulta de stock
+- Distribución manual
+- Planner
+- FastWMS
+- Gestión de usuarios
+
+Use the existing permission helper if available:
+- can("dashboard:view")
+- can("stock:query")
+- etc.
+
+Each card should:
+- have title
+- small description
+- button “Abrir”
+- use FastDSO visual style (rounded cards, soft shadow, clean spacing)
+
+4) Empty state
+If user has no visible modules:
+Show a centered message:
+- "Tu perfil no tiene módulos habilitados."
+- "Contacta al administrador para solicitar acceso."
+
+5) Login redirect
+Update the login flow:
+- after successful login, redirect to /home instead of Dashboard
+- if there is a next parameter and it is valid, keep respecting it
+- otherwise default to /home
+
+6) Optional but recommended
+Add a small top-level sidebar item:
+- Inicio
+pointing to /home
+
+7) Access safety
+- Do not require dashboard:view for /home
+- Make sure users without Dashboard permission can log in and stay on /home without crashing
+
+8) Labels in Spanish
+Everything user-facing should be Spanish.
+
+DELIVERABLES
+- new /home route
+- new home.html template
+- login redirect changed to /home
+- optional sidebar link “Inicio”
+- no breaking changes to existing module permissions
