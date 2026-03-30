@@ -1,0 +1,221 @@
+Implement definitive FastPlanner <-> FastWMS orchestration so both modules stay synchronized almost autonomously.
+
+GOAL
+FastPlanner and FastWMS must behave as one operational flow:
+- When a plan/folio is approved, a WMS wave must exist and be linked to the plan.
+- When warehouse manager assigns a picker in Planner, that assignment must automatically assign the WMS wave to the same operator.
+- When the picker starts/finishes/shorts the wave in WMS, Planner must reflect the operational status automatically.
+- Every relevant transition must be logged in an event/audit table.
+
+BUSINESS RULES
+1) Planner is the control surface for assignment/visibility.
+2) WMS is the source of truth for picking execution status.
+3) Planner mirrors WMS status for operational visibility.
+4) One plan/folio can have at most one active wave in V1.
+5) Single warehouse only: MAIN.
+6) Picking is consolidated by SKU (store separation happens later in dispatch, not now).
+
+MODELS / DB CHANGES
+
+A) Extend the planner plan/folio model (use the actual existing model name: DistributionPlan, Run, Job, etc.)
+Add fields:
+- wms_wave_id (nullable FK or plain int reference)
+- wms_status (string nullable)   # mirror from WMS
+- assigned_picker_user_id (nullable FK user.id)
+- assigned_picker_at (datetime nullable)
+
+B) Ensure WmsPickWave has:
+- id
+- plan_id (required, unique in V1 for active waves)
+- warehouse_code
+- status (READY_TO_ASSIGN, ASSIGNED, IN_PROGRESS, PICKED, CLOSED, NEEDS_REVIEW, CANCELLED)
+- urgency_level
+- priority_rank
+- assigned_to (nullable FK user.id)
+- assigned_at
+- pick_started_at
+- pick_finished_at
+- closed_at
+- total_lines
+- total_units
+- picked_lines
+- picked_units
+- short_lines
+- short_units
+- created_at
+
+C) Create a new event log table:
+PlannerWmsEventLog
+- id
+- plan_id
+- wave_id nullable
+- event_type (string)
+- old_status nullable
+- new_status nullable
+- assigned_user_id nullable
+- created_by_user_id nullable
+- note nullable
+- created_at
+
+Event types to use:
+- WAVE_CREATED
+- WAVE_CREATION_FAILED
+- PICKER_ASSIGNED
+- PICKER_REASSIGNED
+- PICKING_STARTED
+- PICKING_COMPLETED
+- PICKING_SHORTAGE_REPORTED
+- WAVE_CLOSED
+- WMS_STATUS_SYNCED
+
+SERVICES / ORCHESTRATION LAYER
+Create a service layer (preferred: new file services/planner_wms.py, or app.py helper section if project is monolithic) with these functions:
+
+1) ensure_wave_for_plan(plan_id, current_user_id=None) -> wave
+Behavior:
+- If plan already has wms_wave_id and referenced wave exists and is not CANCELLED, return it.
+- Else create wave using existing reservation service:
+    create_pick_wave_from_plan(plan_id, warehouse_code="MAIN", created_by_user_id=current_user_id)
+- Link wave.id into plan.wms_wave_id
+- Mirror wave.status into plan.wms_status
+- Write PlannerWmsEventLog WAVE_CREATED
+- If creation fails, write WAVE_CREATION_FAILED and raise controlled error.
+
+2) assign_picker_to_plan_wave(plan_id, picker_user_id, manager_user_id) -> wave
+Behavior:
+- Ensure wave exists (call ensure_wave_for_plan)
+- Validate picker user exists and has warehouse operator role/permission
+- Enforce urgency rule:
+   if there is any URGENT wave in statuses READY_TO_ASSIGN, ASSIGNED, IN_PROGRESS and this plan’s wave is not urgent,
+   do NOT allow assignment. Return controlled business error.
+- Update:
+   wave.assigned_to = picker_user_id
+   wave.assigned_at = now()
+   if wave.status in (READY_TO_ASSIGN, NEEDS_REVIEW): wave.status = ASSIGNED
+- Mirror into plan:
+   plan.assigned_picker_user_id = picker_user_id
+   plan.assigned_picker_at = now()
+   plan.wms_status = wave.status
+- Log:
+   PICKER_ASSIGNED or PICKER_REASSIGNED
+- Commit transaction.
+
+3) sync_plan_from_wave(wave_id, event_type=None, note=None, actor_user_id=None)
+Behavior:
+- Find wave and related plan
+- Update plan.wms_status from wave.status
+- If wave.assigned_to exists, mirror to plan.assigned_picker_user_id
+- Map wave.status into planner operational status if such a field exists:
+   READY_TO_ASSIGN -> planner status remains APPROVED / READY_TO_PICK
+   ASSIGNED -> planner substatus “Asignado a picking”
+   IN_PROGRESS -> planner substatus “En picking”
+   PICKED -> planner substatus “Pickeado”
+   CLOSED -> planner status or substatus “Listo para despacho”
+   NEEDS_REVIEW -> planner substatus “Picking con revisión”
+- Log WMS_STATUS_SYNCED or provided event_type
+- Commit
+
+4) close_wave_and_update_plan(wave_id, actor_user_id=None)
+Behavior:
+- Set wave.status = CLOSED, closed_at = now()
+- Call sync_plan_from_wave(...)
+- Log WAVE_CLOSED
+
+INTEGRATION POINTS
+
+1) PLAN APPROVAL FLOW
+Find the exact endpoint/action where a plan/folio gets approved and sent to FastPlanner.
+After approval succeeds:
+- call ensure_wave_for_plan(plan_id, current_user_id=current_user.id)
+- if wave created successfully:
+   plan.wms_status = wave.status
+- if failed:
+   show a warning banner/flash in Planner but do not silently ignore it
+
+2) PICKER ASSIGNMENT IN PLANNER
+Find the exact place in FastPlanner where warehouse manager assigns a picker.
+Replace/update logic so it calls:
+- assign_picker_to_plan_wave(plan_id, picker_user_id, manager_user_id=current_user.id)
+
+3) WMS START PICKING
+When operator starts the assigned wave:
+- set wave.status = IN_PROGRESS
+- set pick_started_at if empty
+- call sync_plan_from_wave(wave.id, event_type="PICKING_STARTED", actor_user_id=current_user.id)
+
+4) WMS TASK ISSUES / SHORTAGES
+Whenever operator reports issue or a task becomes SHORT:
+- if wave status should become NEEDS_REVIEW, update it
+- call sync_plan_from_wave(wave.id, event_type="PICKING_SHORTAGE_REPORTED", actor_user_id=current_user.id)
+
+5) WMS FINISH PICKING
+When all tasks are DONE or SHORT and operator/manager finishes the wave:
+- set wave.status = PICKED
+- set pick_finished_at = now()
+- call sync_plan_from_wave(wave.id, event_type="PICKING_COMPLETED", actor_user_id=current_user.id)
+
+6) WMS CLOSE WAVE
+When manager closes the wave:
+- call close_wave_and_update_plan(wave.id, actor_user_id=current_user.id)
+
+UI CHANGES
+
+A) PLANNER CARDS / PLAN DETAIL
+Where planner cards/details are rendered:
+- show WMS badge:
+   READY_TO_ASSIGN (gray)
+   ASSIGNED (purple)
+   IN_PROGRESS (teal)
+   PICKED (green)
+   CLOSED (dark)
+   NEEDS_REVIEW (orange/red)
+- show assigned picker name if present
+- show button:
+   “Ver Picking” if wave exists
+- if no wave linked but plan approved:
+   show small action “Crear/Recuperar wave” (manager only)
+
+B) PLANNER ASSIGNMENT MODAL
+When manager assigns picker:
+- reuse the existing picker assignment UI if possible
+- after successful assignment, planner card should immediately show:
+   assigned picker
+   WMS status = ASSIGNED
+
+C) WMS WAVE DETAIL
+On wave detail page:
+- show linked plan/folio number
+- show assigned picker
+- show planner status mirror (optional small text)
+
+D) EVENT HISTORY (recommended)
+On planner detail or wave detail, add a compact section “Historial Planner/WMS”
+- latest 20 events from PlannerWmsEventLog
+Columns:
+  date | event_type | old_status -> new_status | assigned_user | note
+
+CONSISTENCY / SAFETY
+- Use transactions for ensure/create/assign sync operations.
+- Never allow plan to point to non-existent wave.
+- Never allow multiple active waves for same plan in V1.
+- If wave exists and is CLOSED, and plan is reopened manually, create a new wave only if explicitly requested (do not auto-reopen old closed waves).
+- Handle SQLite safely (create_all compatible, no Alembic required).
+- If a field/column is missing in existing DB, add guarded startup ALTER TABLE logic as done elsewhere in the app.
+
+LOGGING
+Add concise console logs:
+[PLANNER-WMS] wave ensured plan=... wave=...
+[PLANNER-WMS] picker assigned plan=... wave=... user=...
+[PLANNER-WMS] sync plan=... wave=... status=...
+[PLANNER-WMS] wave closed plan=... wave=...
+
+DELIVERABLES
+- model extensions
+- PlannerWmsEventLog table
+- orchestration service functions
+- integration into approval flow
+- integration into picker assignment flow
+- automatic status synchronization from WMS to Planner
+- UI badges/buttons/history
+- no breaking changes to existing FastDSO modules
+- labels/messages in Spanish in UI
