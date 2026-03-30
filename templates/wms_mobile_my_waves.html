@@ -1,79 +1,76 @@
-{% extends 'base.html' %}
+{% extends 'mobile_base.html' %}
+
+{% block title %}Mis Waves{% endblock %}
+
+{% block topbar_back %}
+<div class="m-topbar-logo"><i class="bi bi-list-task"></i></div>
+{% endblock %}
+
+{% block topbar_title %}
+Mis Waves
+<small>Picking asignado</small>
+{% endblock %}
+
+{% block topbar_right %}
+<a href="{{ url_for('wms_waves_list') }}" class="m-topbar-icon-btn" title="Vista escritorio">
+  <i class="bi bi-display"></i>
+</a>
+{% endblock %}
+
+{% block nav_waves_active %}active{% endblock %}
+
 {% block content %}
 <style>
-  .mobile-wrap { max-width: 540px; margin: 0 auto; padding: 0 12px 80px; }
-  .mobile-page-title { font-size: 1.25rem; font-weight: 700; color: #1e40af; margin: 16px 0 4px; }
-  .mobile-page-sub  { font-size: 0.82rem; color: #64748b; margin-bottom: 18px; }
-
   .wave-card {
-    background: #fff;
-    border-radius: 16px;
-    box-shadow: 0 2px 8px rgba(30,64,175,.10);
-    border-left: 5px solid #1e40af;
-    padding: 16px 16px 14px;
-    margin-bottom: 14px;
+    background: #fff; border-radius: 16px;
+    box-shadow: 0 2px 10px rgba(14,30,80,.10);
+    margin: 12px 12px 0;
+    border-left: 5px solid var(--m-blue);
+    overflow: hidden;
   }
-  .wave-card.urgency-URGENT { border-left-color: #dc2626; }
-  .wave-card.urgency-MEDIUM { border-left-color: #d97706; }
-  .wave-card.urgency-LOW    { border-left-color: #16a34a; }
+  .wave-card.urgency-URGENT { border-left-color: var(--m-red); }
+  .wave-card.urgency-MEDIUM { border-left-color: var(--m-orange); }
+  .wave-card.urgency-LOW    { border-left-color: var(--m-green); }
 
-  .wave-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
-  .wave-folio { font-size: 1rem; font-weight: 700; color: #1e293b; }
-  .wave-folio small { font-weight: 400; color: #64748b; font-size: 0.75rem; display: block; }
-
-  .badge-urgency-URGENT { background:#fee2e2; color:#b91c1c; }
-  .badge-urgency-MEDIUM { background:#fef3c7; color:#92400e; }
-  .badge-urgency-LOW    { background:#dcfce7; color:#166534; }
-  .badge-status-ASSIGNED     { background:#dbeafe; color:#1d4ed8; }
-  .badge-status-IN_PROGRESS  { background:#e0e7ff; color:#4338ca; }
-  .badge-status-NEEDS_REVIEW { background:#fee2e2; color:#b91c1c; }
-  .mobile-badge {
-    display: inline-block; padding: 3px 10px; border-radius: 99px;
-    font-size: 0.72rem; font-weight: 700; letter-spacing:.3px;
+  .wave-card-top {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: 14px 14px 10px;
+    border-bottom: 1px solid var(--m-border);
   }
+  .wave-folio { font-size: 1rem; font-weight: 700; color: var(--m-text); }
+  .wave-folio small { font-size: .72rem; font-weight: 400; color: var(--m-muted); display: block; margin-top: 1px; }
 
-  .wave-kpis { display: flex; gap: 10px; margin-bottom: 12px; }
-  .wave-kpi { flex:1; background: #f8fafc; border-radius: 10px; padding: 8px 6px; text-align: center; }
-  .wave-kpi-val { font-size: 1.1rem; font-weight: 700; color: #1e293b; }
-  .wave-kpi-lbl { font-size: 0.68rem; color: #64748b; text-transform: uppercase; letter-spacing:.4px; }
+  .wave-badges { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
 
-  .wave-progress { margin-bottom: 14px; }
-  .wave-progress-bar-wrap { background: #e2e8f0; border-radius: 99px; height: 8px; overflow: hidden; }
-  .wave-progress-bar-fill { background: linear-gradient(90deg,#1e40af,#3b82f6); height: 100%; border-radius: 99px; transition: width .4s; }
-  .wave-progress-label { font-size: 0.72rem; color:#64748b; text-align: right; margin-top: 3px; }
+  .wave-kpis { display: flex; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--m-border); }
+  .wave-kpi  { flex: 1; background: var(--m-bg); border-radius: 10px; padding: 8px 6px; text-align: center; }
+  .wave-kpi-val { font-size: 1.1rem; font-weight: 800; color: var(--m-text); line-height: 1.1; }
+  .wave-kpi-val.danger { color: var(--m-red); }
+  .wave-kpi-lbl { font-size: .64rem; color: var(--m-muted); text-transform: uppercase; letter-spacing: .4px; margin-top: 2px; }
 
-  .btn-wave-action {
-    display: block; width: 100%; padding: 13px; text-align: center;
-    font-size: 1rem; font-weight: 700; border-radius: 12px; border: none;
-    cursor: pointer; text-decoration: none; transition: background .15s, transform .1s;
-  }
-  .btn-wave-start   { background: linear-gradient(135deg,#1e40af,#3b82f6); color: #fff; }
-  .btn-wave-continue{ background: linear-gradient(135deg,#7c3aed,#6d28d9); color: #fff; }
-  .btn-wave-review  { background: linear-gradient(135deg,#dc2626,#ef4444); color: #fff; }
-  .btn-wave-action:active { transform: scale(.97); }
-
-  .empty-state { text-align: center; padding: 48px 16px; color: #94a3b8; }
-  .empty-state .empty-icon { font-size: 3rem; margin-bottom: 12px; }
-  .empty-state p { font-size: 0.9rem; }
+  .wave-progress { padding: 10px 14px 14px; }
+  .wave-actions  { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 8px; }
 </style>
 
-<div class="mobile-wrap">
-  <div class="mobile-page-title"><i class="bi bi-phone me-1"></i>Mis Waves</div>
-  <p class="mobile-page-sub">Waves asignadas a ti — lista de picking</p>
+<div class="m-page-wrap" style="padding-bottom: 8px;">
 
   {% if waves %}
     {% for w in waves %}
     <div class="wave-card urgency-{{ w.urgency_level }}">
-      <div class="wave-card-header">
-        <div>
-          <div class="wave-folio">
-            {{ w.folio }}
-            <small>Wave #{{ w.id }}</small>
-          </div>
+
+      <div class="wave-card-top">
+        <div class="wave-folio">
+          {{ w.folio }}
+          <small>Wave #{{ w.id }}</small>
         </div>
-        <div class="d-flex flex-column align-items-end gap-1">
-          <span class="mobile-badge badge-urgency-{{ w.urgency_level }}">{{ w.urgency_level }}</span>
-          <span class="mobile-badge badge-status-{{ w.status }}">{{ w.status.replace('_',' ') }}</span>
+        <div class="wave-badges">
+          <span class="m-badge {% if w.urgency_level == 'URGENT' %}m-badge-urgent{% elif w.urgency_level == 'MEDIUM' %}m-badge-medium{% else %}m-badge-low{% endif %}">
+            {% if w.urgency_level == 'URGENT' %}<i class="bi bi-lightning-fill"></i>{% endif %}
+            {{ w.urgency_level }}
+          </span>
+          <span class="m-badge {% if w.status == 'NEEDS_REVIEW' %}m-badge-red{% elif w.status == 'IN_PROGRESS' %}m-badge-purple{% else %}m-badge-blue{% endif %}">
+            {{ w.status.replace('_', ' ') }}
+          </span>
         </div>
       </div>
 
@@ -84,58 +81,67 @@
         </div>
         <div class="wave-kpi">
           <div class="wave-kpi-val">{{ w.total_units }}</div>
-          <div class="wave-kpi-lbl">Uds pedidas</div>
+          <div class="wave-kpi-lbl">Pedidas</div>
         </div>
         <div class="wave-kpi">
-          <div class="wave-kpi-val">{{ w.picked_units }}</div>
+          <div class="wave-kpi-val success">{{ w.picked_units }}</div>
           <div class="wave-kpi-lbl">Picadas</div>
         </div>
         {% if w.short_units > 0 %}
         <div class="wave-kpi">
-          <div class="wave-kpi-val" style="color:#dc2626;">{{ w.short_units }}</div>
+          <div class="wave-kpi-val danger">{{ w.short_units }}</div>
           <div class="wave-kpi-lbl">Faltantes</div>
         </div>
         {% endif %}
       </div>
 
       <div class="wave-progress">
-        <div class="wave-progress-bar-wrap">
-          <div class="wave-progress-bar-fill" style="width:{{ w.progress_pct }}%;"></div>
+        <div class="m-progress-wrap">
+          <div class="m-progress-fill" style="width:{{ w.progress_pct }}%;"></div>
         </div>
-        <div class="wave-progress-label">{{ w.progress_pct }}% completado</div>
+        <div class="m-progress-label">{{ w.progress_pct }}% completado</div>
       </div>
 
-      {% if w.status == 'ASSIGNED' %}
-      <button class="btn-wave-action btn-wave-start" onclick="startWave({{ w.id }}, this)">
-        <i class="bi bi-play-fill me-1"></i>Iniciar picking
-      </button>
-      {% elif w.status == 'NEEDS_REVIEW' %}
-      <a href="{{ url_for('wms_mobile_pick_wave', wave_id=w.id) }}" class="btn-wave-action btn-wave-review">
-        <i class="bi bi-exclamation-triangle-fill me-1"></i>Revisar incidencias
-      </a>
-      {% else %}
-      <a href="{{ url_for('wms_mobile_pick_wave', wave_id=w.id) }}" class="btn-wave-action btn-wave-continue">
-        <i class="bi bi-arrow-right-circle-fill me-1"></i>Continuar picking
-      </a>
-      {% endif %}
+      <div class="wave-actions">
+        {% if w.status == 'ASSIGNED' %}
+        <button class="m-btn m-btn-primary" onclick="startWave({{ w.id }}, this)">
+          <i class="bi bi-play-fill"></i>Iniciar picking
+        </button>
+        {% elif w.status == 'NEEDS_REVIEW' %}
+        <a href="{{ url_for('wms_mobile_pick_wave', wave_id=w.id) }}" class="m-btn m-btn-danger">
+          <i class="bi bi-exclamation-triangle-fill"></i>Revisar incidencias
+        </a>
+        {% else %}
+        <a href="{{ url_for('wms_mobile_pick_wave', wave_id=w.id) }}" class="m-btn m-btn-purple">
+          <i class="bi bi-arrow-right-circle-fill"></i>Continuar picking
+        </a>
+        {% endif %}
+      </div>
+
     </div>
     {% endfor %}
+
+    <div style="height: 12px;"></div>
+
   {% else %}
-  <div class="empty-state">
-    <div class="empty-icon"><i class="bi bi-inbox"></i></div>
-    <p>No tienes waves asignadas activas en este momento.</p>
-    <p class="mt-1" style="font-size:.78rem;">Solicita asignación al jefe de turno.</p>
+  <div class="m-empty" style="margin-top: 32px;">
+    <div class="m-empty-icon"><i class="bi bi-inbox"></i></div>
+    <p>No tienes waves asignadas activas.</p>
+    <p>Solicita asignación al jefe de turno.</p>
   </div>
   {% endif %}
-</div>
 
+</div>
+{% endblock %}
+
+{% block scripts %}
 <script>
 function startWave(waveId, btn) {
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Iniciando…';
-  fetch(`/api/wms/mobile/waves/${waveId}/start`, {
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>&nbsp;Iniciando…';
+  fetch('/api/wms/mobile/waves/' + waveId + '/start', {
     method: 'POST',
-    headers: {'Content-Type':'application/json', 'X-CSRFToken': '{{ csrf_token() if csrf_token is defined else "" }}'},
+    headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin'
   })
   .then(r => r.json())
@@ -145,13 +151,13 @@ function startWave(waveId, btn) {
     } else {
       alert(data.error || 'Error al iniciar wave');
       btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Iniciar picking';
+      btn.innerHTML = '<i class="bi bi-play-fill"></i>Iniciar picking';
     }
   })
   .catch(() => {
     alert('Error de conexión');
     btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Iniciar picking';
+    btn.innerHTML = '<i class="bi bi-play-fill"></i>Iniciar picking';
   });
 }
 </script>

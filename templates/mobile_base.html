@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0b2b7a">
+  <title>{% block title %}FastWMS{% endblock %} — FastDSO</title>
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons/font/bootstrap-icons.css" rel="stylesheet">
+
+  <style>
+    /* ─── Reset & base ─── */
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      --m-blue:      #1e40af;
+      --m-blue-lt:   #3b82f6;
+      --m-blue-deep: #0b2b7a;
+      --m-red:       #dc2626;
+      --m-orange:    #d97706;
+      --m-green:     #16a34a;
+      --m-purple:    #7c3aed;
+      --m-bg:        #f1f5fb;
+      --m-card:      #ffffff;
+      --m-text:      #0f172a;
+      --m-muted:     #64748b;
+      --m-border:    #e2e8f0;
+      --m-shadow:    0 2px 10px rgba(14,30,80,.10);
+      --topbar-h:    54px;
+      --bottomnav-h: 60px;
+      --font:        system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    }
+
+    html, body {
+      height: 100%; margin: 0; padding: 0;
+      background: var(--m-bg);
+      font-family: var(--font);
+      color: var(--m-text);
+      font-size: 15px;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ─── Top bar ─── */
+    .m-topbar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      height: var(--topbar-h);
+      display: flex; align-items: center; gap: 10px;
+      padding: 0 14px;
+      background: linear-gradient(135deg, var(--m-blue-deep) 0%, var(--m-blue) 60%, var(--m-blue-lt) 100%);
+      color: #fff;
+      box-shadow: 0 2px 10px rgba(0,0,0,.22);
+    }
+    .m-topbar-back {
+      display: flex; align-items: center; justify-content: center;
+      width: 38px; height: 38px; border-radius: 10px; flex-shrink: 0;
+      background: rgba(255,255,255,.15); border: none; color: #fff;
+      font-size: 1.15rem; cursor: pointer; text-decoration: none;
+      transition: background .15s;
+    }
+    .m-topbar-back:hover { background: rgba(255,255,255,.25); color: #fff; }
+    .m-topbar-logo {
+      width: 34px; height: 34px; flex-shrink: 0;
+      background: rgba(255,255,255,.18); border-radius: 9px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.1rem;
+    }
+    .m-topbar-title {
+      flex: 1; min-width: 0;
+      font-size: .95rem; font-weight: 700; letter-spacing: .2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .m-topbar-title small {
+      display: block; font-size: .65rem; font-weight: 400; opacity: .75; margin-top: 1px;
+    }
+    .m-topbar-right { display: flex; align-items: center; gap: 8px; }
+    .m-topbar-icon-btn {
+      display: flex; align-items: center; justify-content: center;
+      width: 36px; height: 36px; border-radius: 9px;
+      background: rgba(255,255,255,.15); border: none; color: #fff;
+      font-size: 1.05rem; cursor: pointer; text-decoration: none;
+    }
+
+    /* ─── Content area ─── */
+    .m-content {
+      margin-top: var(--topbar-h);
+      padding-bottom: calc(var(--bottomnav-h) + 8px);
+      min-height: calc(100vh - var(--topbar-h));
+    }
+    .m-content.no-bottom-pad {
+      padding-bottom: 0;
+    }
+
+    /* ─── Flash messages ─── */
+    .m-flash { padding: 10px 14px; margin: 8px 12px 0; border-radius: 12px; font-size: .85rem; font-weight: 600; }
+    .m-flash-success { background: #f0fdf4; color: #166534; border-left: 4px solid #16a34a; }
+    .m-flash-danger  { background: #fff1f2; color: #b91c1c; border-left: 4px solid #dc2626; }
+    .m-flash-warning { background: #fffbeb; color: #92400e; border-left: 4px solid #d97706; }
+    .m-flash-info    { background: #eff6ff; color: #1e40af; border-left: 4px solid #3b82f6; }
+
+    /* ─── Bottom navigation ─── */
+    .m-bottom-nav {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+      height: var(--bottomnav-h);
+      display: flex; align-items: stretch;
+      background: #fff;
+      border-top: 1px solid var(--m-border);
+      box-shadow: 0 -2px 12px rgba(0,0,0,.08);
+    }
+    .m-nav-item {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 3px;
+      text-decoration: none; color: var(--m-muted);
+      font-size: .65rem; font-weight: 600; letter-spacing: .3px;
+      text-transform: uppercase; padding: 6px 4px;
+      border: none; background: none; cursor: pointer;
+      transition: color .15s, background .15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .m-nav-item i { font-size: 1.25rem; line-height: 1; }
+    .m-nav-item.active { color: var(--m-blue); }
+    .m-nav-item:active { background: var(--m-bg); }
+    .m-nav-item.danger { color: var(--m-red); }
+
+    /* ─── Shared card styles ─── */
+    .m-card {
+      background: var(--m-card); border-radius: 16px;
+      box-shadow: var(--m-shadow); overflow: hidden;
+      margin: 12px 12px 0;
+    }
+    .m-card-header {
+      padding: 10px 14px 8px;
+      background: linear-gradient(135deg, #eff6ff, #dbeafe);
+      border-bottom: 1px solid #bfdbfe;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .m-card-title {
+      font-size: .75rem; font-weight: 700; color: var(--m-blue);
+      text-transform: uppercase; letter-spacing: .4px;
+    }
+    .m-card-body { padding: 12px 14px; }
+    .m-card-footer {
+      padding: 10px 14px; border-top: 1px solid var(--m-border);
+      background: #f8fafc;
+    }
+
+    /* ─── Badges ─── */
+    .m-badge {
+      display: inline-flex; align-items: center; gap: 3px;
+      padding: 3px 10px; border-radius: 99px;
+      font-size: .7rem; font-weight: 700; letter-spacing: .3px;
+      white-space: nowrap;
+    }
+    .m-badge-urgent { background: #fee2e2; color: #b91c1c; }
+    .m-badge-medium { background: #fef3c7; color: #92400e; }
+    .m-badge-low    { background: #dcfce7; color: #166534; }
+    .m-badge-blue   { background: #dbeafe; color: #1d4ed8; }
+    .m-badge-purple { background: #ede9fe; color: #6d28d9; }
+    .m-badge-red    { background: #fee2e2; color: #b91c1c; }
+    .m-badge-green  { background: #dcfce7; color: #166534; }
+    .m-badge-gray   { background: #f1f5f9; color: #475569; }
+    .m-badge-pick   { background: #dbeafe; color: #1d4ed8; }
+    .m-badge-bulk   { background: #f0fdf4; color: #166534; }
+
+    /* ─── Buttons ─── */
+    .m-btn {
+      display: flex; align-items: center; justify-content: center; gap: 7px;
+      width: 100%; min-height: 50px; padding: 12px 16px;
+      border: none; border-radius: 14px; cursor: pointer;
+      font-size: .97rem; font-weight: 700; letter-spacing: .15px;
+      text-decoration: none; text-align: center;
+      transition: opacity .15s, transform .1s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .m-btn:active { transform: scale(.97); opacity: .9; }
+    .m-btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+    .m-btn-primary  { background: linear-gradient(135deg, var(--m-blue), var(--m-blue-lt)); color: #fff; }
+    .m-btn-success  { background: linear-gradient(135deg, #16a34a, #15803d); color: #fff; }
+    .m-btn-warning  { background: linear-gradient(135deg, #d97706, #b45309); color: #fff; }
+    .m-btn-danger   { background: linear-gradient(135deg, #dc2626, #b91c1c); color: #fff; }
+    .m-btn-purple   { background: linear-gradient(135deg, #7c3aed, #6d28d9); color: #fff; }
+    .m-btn-ghost    { background: var(--m-bg); color: var(--m-blue); border: 1.5px solid var(--m-border); }
+
+    /* ─── Progress bar ─── */
+    .m-progress-wrap {
+      background: var(--m-border); border-radius: 99px; height: 8px; overflow: hidden;
+    }
+    .m-progress-fill {
+      background: linear-gradient(90deg, var(--m-blue), var(--m-blue-lt));
+      height: 100%; border-radius: 99px; transition: width .4s;
+    }
+    .m-progress-label { font-size: .7rem; color: var(--m-muted); text-align: right; margin-top: 3px; }
+
+    /* ─── KPI mini grid ─── */
+    .m-kpi-row { display: flex; gap: 8px; }
+    .m-kpi-box {
+      flex: 1; background: var(--m-bg); border-radius: 10px;
+      padding: 8px 6px; text-align: center;
+    }
+    .m-kpi-val { font-size: 1.1rem; font-weight: 800; color: var(--m-text); line-height: 1.1; }
+    .m-kpi-val.danger { color: var(--m-red); }
+    .m-kpi-val.success{ color: var(--m-green); }
+    .m-kpi-lbl { font-size: .65rem; color: var(--m-muted); text-transform: uppercase; letter-spacing: .4px; margin-top: 2px; }
+
+    /* ─── Empty state ─── */
+    .m-empty { text-align: center; padding: 52px 20px; color: var(--m-muted); }
+    .m-empty-icon { font-size: 3.2rem; margin-bottom: 12px; }
+    .m-empty p   { font-size: .9rem; margin: 0; }
+    .m-empty p + p { margin-top: 6px; font-size: .78rem; }
+
+    /* ─── Fixed action bottom bar (for pick screen) ─── */
+    .m-action-bar {
+      position: fixed; bottom: var(--bottomnav-h); left: 0; right: 0; z-index: 90;
+      padding: 10px 12px 10px;
+      background: #fff;
+      box-shadow: 0 -2px 14px rgba(0,0,0,.12);
+    }
+    .m-action-bar-inner { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
+    .m-action-row { display: flex; gap: 8px; }
+    .m-action-row .m-btn { min-height: 48px; }
+
+    /* ─── Utility ─── */
+    .m-sep { border-top: 1px solid var(--m-border); margin: 12px 0; }
+    .m-page-wrap { max-width: 560px; margin: 0 auto; padding: 10px 0 0; }
+    .m-section-label {
+      font-size: .7rem; font-weight: 700; color: var(--m-muted);
+      text-transform: uppercase; letter-spacing: .5px;
+      padding: 10px 14px 4px;
+    }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+
+<body>
+
+<!-- ─── Top bar ─── -->
+<header class="m-topbar">
+  {% block topbar_back %}
+  <a href="{{ url_for('wms_mobile_my_waves') }}" class="m-topbar-back" title="Volver">
+    <i class="bi bi-arrow-left"></i>
+  </a>
+  {% endblock %}
+
+  {% block topbar_logo %}
+  <div class="m-topbar-logo">
+    <i class="bi bi-boxes"></i>
+  </div>
+  {% endblock %}
+
+  <div class="m-topbar-title">
+    {% block topbar_title %}FastWMS{% endblock %}
+  </div>
+
+  <div class="m-topbar-right">
+    {% block topbar_right %}{% endblock %}
+  </div>
+</header>
+
+<!-- ─── Flash messages ─── -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}
+<div style="margin-top: var(--topbar-h);">
+  {% for cat, msg in messages %}
+  <div class="m-flash m-flash-{{ 'danger' if cat == 'error' else cat }}">
+    <i class="bi bi-{% if cat == 'success' %}check-circle{% elif cat == 'danger' or cat == 'error' %}exclamation-circle{% elif cat == 'warning' %}exclamation-triangle{% else %}info-circle{% endif %} me-1"></i>
+    {{ msg }}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endwith %}
+
+<!-- ─── Page content ─── -->
+<main class="m-content {% block content_class %}{% endblock %}">
+  {% block content %}{% endblock %}
+</main>
+
+<!-- ─── Bottom navigation ─── -->
+<nav class="m-bottom-nav">
+  <a href="{{ url_for('wms_mobile_my_waves') }}"
+     class="m-nav-item {% block nav_waves_active %}{% endblock %}">
+    <i class="bi bi-list-task"></i>
+    Mis Waves
+  </a>
+  <a href="{{ url_for('wms_mobile_my_waves') }}"
+     class="m-nav-item {% block nav_pick_active %}{% endblock %}">
+    <i class="bi bi-hand-index-thumb"></i>
+    Picking
+  </a>
+  <a href="{{ url_for('wms_waves_list') }}"
+     class="m-nav-item {% block nav_issues_active %}{% endblock %}">
+    <i class="bi bi-exclamation-triangle"></i>
+    Incidencias
+  </a>
+  <a href="{{ url_for('logout') }}" class="m-nav-item danger">
+    <i class="bi bi-box-arrow-right"></i>
+    Salir
+  </a>
+</nav>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+{% block scripts %}{% endblock %}
+
+</body>
+</html>

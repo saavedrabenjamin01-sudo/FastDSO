@@ -1,0 +1,102 @@
+Create a coherent mobile-first UI layer for FastWMS operator workflows.
+
+GOAL
+FastDSO/FastWMS currently renders poorly on mobile because desktop templates are being reused.
+We need a dedicated mobile UI for warehouse operators, visually consistent with FastDSO but optimized for phone screens.
+
+APPROACH
+- Keep desktop UI unchanged
+- Create dedicated mobile templates for operator flows
+- Use responsive CSS and mobile-first layout
+- No wide tables for mobile picking workflows
+
+REQUIRED CHANGES
+
+1) Create a new mobile base template
+Create:
+- templates/mobile_base.html
+
+This template should:
+- include viewport meta properly
+- use a simplified top header
+- no left sidebar
+- mobile-friendly spacing
+- stacked card layout
+- sticky bottom action area support
+- use same FastDSO palette and typography style
+
+2) Add a lightweight mobile navigation
+Inside mobile_base.html include:
+- top bar with app title/logo
+- hamburger or simple back button
+- optional bottom nav:
+   - Mis Waves
+   - Picking
+   - Incidencias
+   - Salir
+
+3) Build dedicated mobile pages
+Create or update:
+- templates/wms_mobile_my_waves.html
+- templates/wms_mobile_pick_wave.html
+
+Design rules:
+- use cards instead of tables
+- one wave card per block
+- one active picking task per screen
+- large buttons (full width)
+- high contrast badges for urgency and status
+- no horizontal scrolling
+
+4) Mobile "My Waves" page
+Each assigned wave should render as a card showing:
+- Folio
+- urgency badge
+- status
+- total units
+- progress bar
+- button “Iniciar / Continuar”
+
+5) Mobile picking screen
+Show one task/reservation at a time:
+- SKU
+- product name
+- location
+- box number
+- qty required
+- qty picked / remaining
+- location scan section
+- buttons:
+   - Pick completo
+   - Pick parcial
+   - Reportar incidencia
+
+6) Styling
+- minimum button height 48px
+- font sizes slightly larger than desktop
+- cards with rounded corners and subtle shadows
+- sticky action buttons at bottom
+- use FastDSO colors:
+   urgent red
+   medium orange
+   low blue
+   success green
+   issue red/orange
+
+7) Responsive helpers
+Add CSS rules so desktop tables/cards do not break mobile:
+- hide non-essential columns on small screens
+- stack content vertically
+- avoid overflow-x whenever possible
+
+8) Route-level template usage
+For WMS operator routes (/wms/mobile/*), render mobile_base.html-based templates only.
+Do not reuse desktop base.html there.
+
+9) Keep labels in Spanish
+
+DELIVERABLES
+- mobile_base.html
+- improved mobile operator pages
+- coherent visual style
+- no broken desktop UI

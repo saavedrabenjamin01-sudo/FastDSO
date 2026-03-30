@@ -1,160 +1,173 @@
-{% extends 'base.html' %}
-{% block content %}
+{% extends 'mobile_base.html' %}
+
+{% block title %}Picking — {{ plan.folio if plan else 'Wave #' ~ wave.id }}{% endblock %}
+
+{% block topbar_back %}
+<a href="{{ url_for('wms_mobile_my_waves') }}" class="m-topbar-back" title="Mis Waves">
+  <i class="bi bi-arrow-left"></i>
+</a>
+{% endblock %}
+
+{% block topbar_title %}
+{{ plan.folio if plan else 'Wave' }}
+<small>Wave #{{ wave.id }}</small>
+{% endblock %}
+
+{% block topbar_right %}
+<span class="m-badge {% if wave.urgency_level == 'URGENT' %}m-badge-urgent{% elif wave.urgency_level == 'MEDIUM' %}m-badge-medium{% else %}m-badge-low{% endif %}">
+  {% if wave.urgency_level == 'URGENT' %}<i class="bi bi-lightning-fill"></i>{% endif %}
+  {{ wave.urgency_level or 'MEDIUM' }}
+</span>
+{% endblock %}
+
+{% block nav_pick_active %}active{% endblock %}
+
+{% block content_class %}no-bottom-pad{% endblock %}
+
+{% block head %}
 <style>
   /* ── Layout ── */
-  .mpick-wrap { max-width: 560px; margin: 0 auto; padding: 0 0 120px; }
+  .mpick-wrap { max-width: 560px; margin: 0 auto; padding: 0 0 185px; }
 
-  /* ── Sticky header ── */
-  .mpick-header {
+  /* ── Progress subheader ── */
+  .mpick-subheader {
     position: sticky; top: 0; z-index: 50;
-    background: #1e40af; color: #fff;
-    padding: 12px 16px 10px;
+    background: var(--m-blue); color: #fff;
+    padding: 9px 16px 8px;
     box-shadow: 0 2px 8px rgba(0,0,0,.18);
   }
-  .mpick-header-row1 { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-  .mpick-folio { font-size: 1rem; font-weight: 700; }
-  .mpick-folio small { font-size: .7rem; font-weight: 400; opacity: .8; display: block; }
-  .mpick-urgency-URGENT { background:#dc2626; }
-  .mpick-urgency-MEDIUM { background:#d97706; }
-  .mpick-urgency-LOW    { background:#16a34a; }
-  .mpick-urgency-badge  { display:inline-block; padding:3px 10px; border-radius:99px; font-size:.7rem; font-weight:700; }
-
-  .mpick-progress-bar-wrap { background: rgba(255,255,255,.25); border-radius: 99px; height: 7px; overflow: hidden; margin-bottom: 6px; }
-  .mpick-progress-bar-fill { background:#60a5fa; height: 100%; border-radius: 99px; transition: width .4s; }
-
-  .mpick-counters { display: flex; gap: 14px; font-size: .73rem; }
+  .mpick-progress-bar-wrap { background: rgba(255,255,255,.25); border-radius: 99px; height: 6px; overflow: hidden; margin-bottom: 6px; }
+  .mpick-progress-bar-fill { background: #60a5fa; height: 100%; border-radius: 99px; transition: width .4s; }
+  .mpick-counters { display: flex; gap: 16px; font-size: .73rem; }
   .mpick-counter  { opacity: .9; }
   .mpick-counter strong { font-weight: 700; }
   .mpick-counter.danger strong { color: #fca5a5; }
 
   /* ── Cards ── */
   .mpick-card {
-    background: #fff; border-radius: 16px; margin: 14px 12px 0;
-    box-shadow: 0 2px 8px rgba(30,64,175,.10);
-    overflow: hidden;
+    background: #fff; border-radius: 16px; margin: 12px 12px 0;
+    box-shadow: var(--m-shadow); overflow: hidden;
   }
   .mpick-card-header {
     padding: 10px 14px 8px;
-    background: linear-gradient(135deg,#eff6ff,#dbeafe);
+    background: linear-gradient(135deg, #eff6ff, #dbeafe);
     border-bottom: 1px solid #bfdbfe;
     display: flex; justify-content: space-between; align-items: center;
   }
-  .mpick-card-title { font-size: .78rem; font-weight: 700; color: #1e40af; text-transform: uppercase; letter-spacing:.4px; }
-  .badge-type-PICK { background:#dbeafe; color:#1d4ed8; border-radius:6px; font-size:.7rem; font-weight:700; padding:2px 8px; }
-  .badge-type-BULK { background:#f0fdf4; color:#166534; border-radius:6px; font-size:.7rem; font-weight:700; padding:2px 8px; }
+  .mpick-card-title { font-size: .78rem; font-weight: 700; color: var(--m-blue); text-transform: uppercase; letter-spacing: .4px; }
 
   /* Location block */
-  .mpick-loc-block { padding: 12px 14px 10px; border-bottom: 1px solid #e2e8f0; }
-  .mpick-loc-main  { font-size: 1.5rem; font-weight: 800; color: #1e293b; letter-spacing:.5px; }
-  .mpick-loc-sub   { font-size: .85rem; color: #475569; margin-top: 1px; }
-  .mpick-loc-code  { font-size: .72rem; color:#94a3b8; font-family: monospace; margin-top:3px; }
+  .mpick-loc-block { padding: 12px 14px 10px; border-bottom: 1px solid var(--m-border); }
+  .mpick-loc-main  { font-size: 1.5rem; font-weight: 800; color: var(--m-text); letter-spacing: .5px; line-height: 1.1; }
+  .mpick-loc-label { font-size: .67rem; color: var(--m-muted); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 1px; }
+  .mpick-loc-code  { font-size: .72rem; color: #94a3b8; font-family: monospace; margin-top: 4px; }
 
   /* Product block */
-  .mpick-prod-block { padding: 10px 14px 8px; border-bottom: 1px solid #e2e8f0; }
-  .mpick-sku  { font-size: .8rem; font-weight: 700; color: #64748b; font-family: monospace; }
-  .mpick-name { font-size: .95rem; font-weight: 600; color: #1e293b; margin-top: 1px; }
+  .mpick-prod-block { padding: 10px 14px 8px; border-bottom: 1px solid var(--m-border); }
+  .mpick-sku  { font-size: .8rem; font-weight: 700; color: var(--m-muted); font-family: monospace; }
+  .mpick-name { font-size: .95rem; font-weight: 600; color: var(--m-text); margin-top: 2px; }
 
   /* Quantity block */
   .mpick-qty-block { padding: 10px 14px 12px; display: flex; gap: 10px; }
-  .mpick-qty { flex:1; text-align: center; }
-  .mpick-qty-val { font-size: 1.6rem; font-weight: 800; color: #1e293b; line-height: 1; }
-  .mpick-qty-val.pending { color: #1e40af; }
-  .mpick-qty-val.picked  { color: #16a34a; }
-  .mpick-qty-val.short   { color: #dc2626; }
-  .mpick-qty-lbl { font-size: .67rem; color: #94a3b8; text-transform: uppercase; letter-spacing:.4px; margin-top: 3px; }
+  .mpick-qty { flex: 1; text-align: center; }
+  .mpick-qty-val { font-size: 1.65rem; font-weight: 800; color: var(--m-text); line-height: 1; }
+  .mpick-qty-val.pending { color: var(--m-blue); }
+  .mpick-qty-val.picked  { color: var(--m-green); }
+  .mpick-qty-val.short   { color: var(--m-red); }
+  .mpick-qty-lbl { font-size: .67rem; color: #94a3b8; text-transform: uppercase; letter-spacing: .4px; margin-top: 3px; }
 
   /* ── Scan section ── */
-  .mpick-scan-card { background:#fff; border-radius:16px; margin:12px 12px 0; box-shadow:0 2px 8px rgba(30,64,175,.10); overflow:hidden; }
-  .mpick-scan-header { padding:10px 14px 8px; background:linear-gradient(135deg,#f0fdf4,#dcfce7); border-bottom:1px solid #bbf7d0; }
-  .mpick-scan-header.validated { background:linear-gradient(135deg,#f0fdf4,#dcfce7); }
-  .mpick-scan-header.invalid   { background:linear-gradient(135deg,#fff1f2,#fee2e2); border-color:#fca5a5; }
-  .mpick-scan-title { font-size:.78rem; font-weight:700; color:#166534; text-transform:uppercase; letter-spacing:.4px; }
-  .mpick-scan-title.invalid { color:#b91c1c; }
-  .mpick-scan-body { padding:12px 14px; }
+  .mpick-scan-card { background: #fff; border-radius: 16px; margin: 12px 12px 0; box-shadow: var(--m-shadow); overflow: hidden; }
+  .mpick-scan-header { padding: 10px 14px 8px; background: linear-gradient(135deg, #f0fdf4, #dcfce7); border-bottom: 1px solid #bbf7d0; }
+  .mpick-scan-header.validated { background: linear-gradient(135deg, #f0fdf4, #dcfce7); }
+  .mpick-scan-header.invalid   { background: linear-gradient(135deg, #fff1f2, #fee2e2); border-color: #fca5a5; }
+  .mpick-scan-title { font-size: .78rem; font-weight: 700; color: #166534; text-transform: uppercase; letter-spacing: .4px; }
+  .mpick-scan-title.invalid { color: #b91c1c; }
+  .mpick-scan-body { padding: 12px 14px; }
 
   .mpick-scan-status {
-    display:flex; align-items:center; gap:8px; padding:8px 12px;
-    border-radius:10px; font-size:.85rem; font-weight:600; margin-bottom:10px;
-    background:#f1f5f9; color:#64748b;
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 12px; border-radius: 10px;
+    font-size: .85rem; font-weight: 600; margin-bottom: 10px;
+    background: #f1f5f9; color: #64748b;
   }
-  .mpick-scan-status.ok  { background:#f0fdf4; color:#16a34a; }
-  .mpick-scan-status.err { background:#fff1f2; color:#dc2626; }
-  .mpick-scan-status .scan-icon { font-size:1.1rem; }
+  .mpick-scan-status.ok  { background: #f0fdf4; color: #16a34a; }
+  .mpick-scan-status.err { background: #fff1f2; color: #dc2626; }
+  .mpick-scan-status .scan-icon { font-size: 1.1rem; }
 
-  #qr-reader { border-radius:10px; overflow:hidden; margin-bottom:8px; }
-  #qr-reader video { border-radius:10px; }
+  #qr-reader { border-radius: 10px; overflow: hidden; margin-bottom: 8px; }
+  #qr-reader video { border-radius: 10px; }
 
-  .mpick-scan-input-row { display:flex; gap:8px; margin-top:8px; }
-  .mpick-scan-input { flex:1; padding:10px 12px; border-radius:10px; border:1.5px solid #cbd5e1; font-size:.9rem; font-family:monospace; }
-  .mpick-scan-input:focus { outline:none; border-color:#3b82f6; }
-  .btn-scan-confirm { padding:10px 14px; border-radius:10px; background:#1e40af; color:#fff; border:none; font-size:.85rem; font-weight:700; cursor:pointer; }
+  .mpick-scan-input-row { display: flex; gap: 8px; margin-top: 8px; }
+  .mpick-scan-input { flex: 1; padding: 11px 12px; border-radius: 10px; border: 1.5px solid #cbd5e1; font-size: .9rem; font-family: monospace; }
+  .mpick-scan-input:focus { outline: none; border-color: #3b82f6; }
+  .btn-scan-confirm { padding: 11px 14px; border-radius: 10px; background: var(--m-blue); color: #fff; border: none; font-size: .9rem; font-weight: 700; cursor: pointer; }
 
-  .btn-cam { width:100%; padding:11px; border-radius:10px; background:#f8fafc; border:1.5px solid #cbd5e1; font-size:.85rem; font-weight:600; color:#374151; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; }
-  .btn-cam.active { background:#eff6ff; border-color:#93c5fd; color:#1d4ed8; }
+  .btn-cam { width: 100%; min-height: 44px; padding: 11px; border-radius: 10px; background: #f8fafc; border: 1.5px solid #cbd5e1; font-size: .85rem; font-weight: 600; color: #374151; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; }
+  .btn-cam.active { background: #eff6ff; border-color: #93c5fd; color: #1d4ed8; }
 
-  /* ── Action buttons ── */
-  .mpick-actions { position:fixed; bottom:0; left:0; right:0; z-index:60; padding:10px 12px 14px; background:#fff; box-shadow:0 -2px 12px rgba(0,0,0,.12); }
-  .mpick-actions-inner { max-width:560px; margin:0 auto; display:flex; flex-direction:column; gap:8px; }
+  /* ── Action bar ── */
+  .mpick-actions {
+    position: fixed; bottom: var(--bottomnav-h); left: 0; right: 0; z-index: 80;
+    padding: 10px 12px 10px;
+    background: #fff;
+    box-shadow: 0 -2px 14px rgba(0,0,0,.13);
+  }
+  .mpick-actions-inner { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
   .btn-pick-main {
-    display:block; width:100%; padding:15px; text-align:center; border:none;
-    border-radius:14px; font-size:1rem; font-weight:700; cursor:pointer;
-    transition: background .15s, transform .1s; letter-spacing:.2px;
+    display: flex; align-items: center; justify-content: center; gap: 7px;
+    width: 100%; min-height: 50px; padding: 12px 16px;
+    text-align: center; border: none; border-radius: 14px;
+    font-size: .97rem; font-weight: 700; cursor: pointer;
+    transition: transform .1s, opacity .15s; letter-spacing: .15px;
+    -webkit-tap-highlight-color: transparent;
   }
-  .btn-pick-main:active { transform:scale(.97); }
-  .btn-pick-complete { background:linear-gradient(135deg,#16a34a,#15803d); color:#fff; }
-  .btn-pick-complete:disabled { background:#e2e8f0; color:#94a3b8; cursor:not-allowed; }
-  .btn-pick-row { display:flex; gap:8px; }
-  .btn-pick-partial { flex:1; background:linear-gradient(135deg,#d97706,#b45309); color:#fff; }
-  .btn-pick-partial:disabled { background:#e2e8f0; color:#94a3b8; cursor:not-allowed; }
-  .btn-pick-issue  { flex:1; background:linear-gradient(135deg,#dc2626,#b91c1c); color:#fff; }
-  .btn-pick-issue:disabled  { background:#e2e8f0; color:#94a3b8; cursor:not-allowed; }
+  .btn-pick-main:active { transform: scale(.97); }
+  .btn-pick-complete { background: linear-gradient(135deg, #16a34a, #15803d); color: #fff; }
+  .btn-pick-complete:disabled { background: #e2e8f0; color: #94a3b8; cursor: not-allowed; transform: none; }
+  .btn-pick-row { display: flex; gap: 8px; }
+  .btn-pick-partial { flex: 1; background: linear-gradient(135deg, #d97706, #b45309); color: #fff; }
+  .btn-pick-partial:disabled { background: #e2e8f0; color: #94a3b8; cursor: not-allowed; transform: none; }
+  .btn-pick-issue  { flex: 1; background: linear-gradient(135deg, #dc2626, #b91c1c); color: #fff; }
+  .btn-pick-issue:disabled  { background: #e2e8f0; color: #94a3b8; cursor: not-allowed; transform: none; }
 
   /* ── Modals ── */
-  .mpick-modal-bg { display:none; position:fixed; inset:0; z-index:200; background:rgba(15,23,42,.6); align-items:flex-end; }
-  .mpick-modal-bg.open { display:flex; }
-  .mpick-modal { background:#fff; border-radius:20px 20px 0 0; padding:20px 16px 32px; width:100%; max-width:560px; margin:0 auto; max-height:88vh; overflow-y:auto; }
-  .mpick-modal-title { font-size:1.05rem; font-weight:700; color:#1e293b; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; }
-  .btn-modal-close { background:none; border:none; font-size:1.4rem; color:#94a3b8; cursor:pointer; padding:0 4px; }
-  .mpick-field { margin-bottom:14px; }
-  .mpick-field label { display:block; font-size:.82rem; font-weight:600; color:#374151; margin-bottom:5px; }
-  .mpick-qty-input { width:100%; padding:14px; font-size:1.5rem; font-weight:700; text-align:center; border-radius:12px; border:2px solid #cbd5e1; }
-  .mpick-qty-input:focus { outline:none; border-color:#1e40af; }
-  .mpick-select { width:100%; padding:12px; border-radius:10px; border:1.5px solid #cbd5e1; font-size:.9rem; }
-  .mpick-textarea { width:100%; padding:10px 12px; border-radius:10px; border:1.5px solid #cbd5e1; font-size:.9rem; resize:vertical; min-height:72px; }
-  .btn-modal-submit { width:100%; padding:14px; border-radius:12px; border:none; font-size:1rem; font-weight:700; cursor:pointer; margin-top:4px; }
-  .btn-modal-submit-pick  { background:linear-gradient(135deg,#16a34a,#15803d); color:#fff; }
-  .btn-modal-submit-issue { background:linear-gradient(135deg,#dc2626,#b91c1c); color:#fff; }
+  .mpick-modal-bg { display: none; position: fixed; inset: 0; z-index: 200; background: rgba(15,23,42,.6); align-items: flex-end; }
+  .mpick-modal-bg.open { display: flex; }
+  .mpick-modal { background: #fff; border-radius: 20px 20px 0 0; padding: 20px 16px 32px; width: 100%; max-width: 560px; margin: 0 auto; max-height: 88vh; overflow-y: auto; }
+  .mpick-modal-title { font-size: 1.05rem; font-weight: 700; color: var(--m-text); margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
+  .btn-modal-close { background: none; border: none; font-size: 1.4rem; color: #94a3b8; cursor: pointer; padding: 0 4px; }
+  .mpick-field { margin-bottom: 14px; }
+  .mpick-field label { display: block; font-size: .82rem; font-weight: 600; color: #374151; margin-bottom: 5px; }
+  .mpick-qty-input { width: 100%; padding: 14px; font-size: 1.5rem; font-weight: 700; text-align: center; border-radius: 12px; border: 2px solid #cbd5e1; }
+  .mpick-qty-input:focus { outline: none; border-color: var(--m-blue); }
+  .mpick-select { width: 100%; padding: 12px; border-radius: 10px; border: 1.5px solid #cbd5e1; font-size: .9rem; }
+  .mpick-textarea { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1.5px solid #cbd5e1; font-size: .9rem; resize: vertical; min-height: 72px; }
+  .btn-modal-submit { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; min-height: 50px; padding: 14px; border-radius: 12px; border: none; font-size: 1rem; font-weight: 700; cursor: pointer; margin-top: 4px; }
+  .btn-modal-submit-pick  { background: linear-gradient(135deg, #16a34a, #15803d); color: #fff; }
+  .btn-modal-submit-issue { background: linear-gradient(135deg, #dc2626, #b91c1c); color: #fff; }
 
-  /* ── Completion screen ── */
-  .mpick-complete-card { background:#fff; border-radius:16px; margin:14px 12px 0; box-shadow:0 2px 8px rgba(16,185,129,.15); border-left:5px solid #16a34a; padding:20px 16px 18px; }
-  .mpick-complete-icon { font-size:3rem; text-align:center; margin-bottom:8px; }
-  .mpick-complete-title { font-size:1.15rem; font-weight:700; color:#15803d; text-align:center; margin-bottom:14px; }
-  .mpick-summary-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:18px; }
-  .mpick-summary-item { background:#f8fafc; border-radius:10px; padding:10px 8px; text-align:center; }
-  .mpick-summary-val { font-size:1.4rem; font-weight:800; color:#1e293b; }
-  .mpick-summary-val.danger { color:#dc2626; }
-  .mpick-summary-lbl { font-size:.67rem; color:#64748b; text-transform:uppercase; letter-spacing:.4px; margin-top:2px; }
-  .btn-finish-wave { display:block; width:100%; padding:15px; text-align:center; border:none; border-radius:14px; font-size:1rem; font-weight:700; background:linear-gradient(135deg,#1e40af,#3b82f6); color:#fff; cursor:pointer; }
+  /* ── Completion & done screens ── */
+  .mpick-complete-card { background: #fff; border-radius: 16px; margin: 12px 12px 0; box-shadow: 0 2px 8px rgba(16,185,129,.15); border-left: 5px solid var(--m-green); padding: 20px 16px 18px; }
+  .mpick-complete-icon { font-size: 3rem; text-align: center; margin-bottom: 8px; }
+  .mpick-complete-title { font-size: 1.15rem; font-weight: 700; color: #15803d; text-align: center; margin-bottom: 14px; }
+  .mpick-summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
+  .mpick-summary-item { background: #f8fafc; border-radius: 10px; padding: 10px 8px; text-align: center; }
+  .mpick-summary-val { font-size: 1.4rem; font-weight: 800; color: var(--m-text); }
+  .mpick-summary-val.danger { color: var(--m-red); }
+  .mpick-summary-lbl { font-size: .67rem; color: #64748b; text-transform: uppercase; letter-spacing: .4px; margin-top: 2px; }
 
-  /* ── Done state ── */
-  .mpick-done-card { background:#fff; border-radius:16px; margin:14px 12px 0; box-shadow:0 2px 8px rgba(16,185,129,.15); border-left:5px solid #16a34a; padding:20px 16px; text-align:center; }
-  .mpick-done-card .done-icon { font-size:2.8rem; margin-bottom:8px; }
-  .mpick-done-card p { font-size:.9rem; color:#64748b; }
+  .mpick-done-card { background: #fff; border-radius: 16px; margin: 12px 12px 0; box-shadow: 0 2px 8px rgba(16,185,129,.15); border-left: 5px solid var(--m-green); padding: 20px 16px; text-align: center; }
+  .mpick-done-card .done-icon { font-size: 2.8rem; margin-bottom: 8px; }
+  .mpick-done-card p { font-size: .9rem; color: var(--m-muted); }
 </style>
+{% endblock %}
 
+{% block content %}
 <div class="mpick-wrap">
 
-  <!-- Sticky header -->
-  <div class="mpick-header">
-    <div class="mpick-header-row1">
-      <div class="mpick-folio">
-        {{ plan.folio if plan else 'Wave' }}
-        <small>Wave #{{ wave.id }}</small>
-      </div>
-      <span class="mpick-urgency-badge mpick-urgency-{{ wave.urgency_level or 'MEDIUM' }}">
-        {{ wave.urgency_level or 'MEDIUM' }}
-      </span>
-    </div>
+  <!-- Progress subheader (sticky, sits right below fixed topbar) -->
+  <div class="mpick-subheader">
     {% set total_l = wave.total_lines or 0 %}
     {% set done_l  = (wave.picked_lines or 0) + (wave.short_lines or 0) %}
     {% set pct = ((done_l / total_l * 100)|round|int) if total_l > 0 else 0 %}
@@ -173,6 +186,9 @@
         <strong>{{ wave.short_units }}</strong> faltantes
       </div>
       {% endif %}
+      <div class="mpick-counter" style="margin-left:auto; opacity:.75;">
+        {{ pct }}%
+      </div>
     </div>
   </div>
 
@@ -182,19 +198,21 @@
     <div class="done-icon">✅</div>
     <div class="mpick-complete-title">Wave finalizada</div>
     <p>Esta wave ya fue marcada como completada.</p>
-    <a href="{{ url_for('wms_mobile_my_waves') }}" class="btn-finish-wave mt-3 d-block" style="text-decoration:none;">
-      ← Volver a mis waves
+    <a href="{{ url_for('wms_mobile_my_waves') }}" class="m-btn m-btn-primary mt-3" style="text-decoration:none;">
+      <i class="bi bi-arrow-left"></i>Volver a mis waves
     </a>
   </div>
 
   {% elif wave.status == 'ASSIGNED' %}
   <!-- ── START STATE ── -->
   <div class="mpick-card">
-    <div class="mpick-card-header"><span class="mpick-card-title">Wave lista para iniciar</span></div>
-    <div style="padding:20px 14px; text-align:center;">
-      <p style="color:#64748b; font-size:.9rem; margin-bottom:16px;">Toca "Iniciar picking" para comenzar esta wave.</p>
-      <button class="btn-pick-main btn-pick-complete" onclick="mobileStartWave({{ wave.id }}, this)" style="max-width:300px; margin:0 auto;">
-        <i class="bi bi-play-fill me-1"></i>Iniciar picking
+    <div class="mpick-card-header"><span class="mpick-card-title"><i class="bi bi-play-circle me-1"></i>Wave lista para iniciar</span></div>
+    <div style="padding: 24px 16px; text-align: center;">
+      <p style="color: var(--m-muted); font-size: .9rem; margin-bottom: 20px;">
+        Toca el botón para comenzar esta wave y acceder al picking.
+      </p>
+      <button class="m-btn m-btn-primary" onclick="mobileStartWave({{ wave.id }}, this)" style="max-width: 300px; margin: 0 auto;">
+        <i class="bi bi-play-fill"></i>Iniciar picking
       </button>
     </div>
   </div>
@@ -203,21 +221,23 @@
   <!-- ── ACTIVE PICKING ── -->
   <div class="mpick-card" id="pick-card">
     <div class="mpick-card-header">
-      <span class="mpick-card-title">Siguiente reservación</span>
-      <span class="badge-type-{{ next_res.location_type }}">{{ next_res.location_type }}</span>
+      <span class="mpick-card-title"><i class="bi bi-hand-index-thumb me-1"></i>Siguiente reservación</span>
+      <span class="m-badge {% if next_res.location_type == 'PICK' %}m-badge-pick{% else %}m-badge-bulk{% endif %}">
+        {{ next_res.location_type }}
+      </span>
     </div>
 
     <!-- Location block -->
     <div class="mpick-loc-block">
-      <div class="d-flex align-items-baseline gap-2">
+      <div style="display:flex; align-items:flex-start; gap:16px;">
         <div>
-          <div style="font-size:.67rem; color:#94a3b8; text-transform:uppercase; letter-spacing:.4px;">Ubicación</div>
+          <div class="mpick-loc-label">Ubicación</div>
           <div class="mpick-loc-main">{{ next_res.location or '—' }}</div>
         </div>
         {% if next_res.box_number %}
-        <div style="color:#94a3b8; font-size:1.1rem;">|</div>
+        <div style="color:#cbd5e1; font-size:1.4rem; padding-top:14px;">|</div>
         <div>
-          <div style="font-size:.67rem; color:#94a3b8; text-transform:uppercase; letter-spacing:.4px;">Caja</div>
+          <div class="mpick-loc-label">Caja</div>
           <div class="mpick-loc-main">{{ next_res.box_number }}</div>
         </div>
         {% endif %}
@@ -251,7 +271,7 @@
   <!-- Scan section -->
   <div class="mpick-scan-card" id="scan-section">
     <div class="mpick-scan-header" id="scan-header">
-      <span class="mpick-scan-title" id="scan-title">Escanear ubicación (obligatorio)</span>
+      <span class="mpick-scan-title" id="scan-title"><i class="bi bi-qr-code-scan me-1"></i>Escanear ubicación (obligatorio)</span>
     </div>
     <div class="mpick-scan-body">
       <div class="mpick-scan-status" id="scan-status">
@@ -267,7 +287,7 @@
 
       <div class="mpick-scan-input-row">
         <input type="text" id="manual-loc-input" class="mpick-scan-input"
-               placeholder="Código manual, p.ej. A-02-01"
+               placeholder="p. ej. A-02-01"
                autocomplete="off" autocapitalize="characters" spellcheck="false" />
         <button class="btn-scan-confirm" onclick="validateLocation(document.getElementById('manual-loc-input').value)">OK</button>
       </div>
@@ -277,31 +297,31 @@
     </div>
   </div>
 
-  <!-- Action buttons (fixed bottom bar) -->
+  <!-- Fixed action bar -->
   <div class="mpick-actions" id="action-bar">
     <div class="mpick-actions-inner">
       <button class="btn-pick-main btn-pick-complete action-gated" disabled
               id="btn-complete"
               onclick="doPick({{ next_res.reservation_id }}, {{ next_res.remaining }}, false)">
-        <i class="bi bi-check-circle-fill me-1"></i>Pick completo ({{ next_res.remaining }} uds)
+        <i class="bi bi-check-circle-fill"></i>Pick completo ({{ next_res.remaining }} uds)
       </button>
       <div class="btn-pick-row">
         <button class="btn-pick-main btn-pick-partial action-gated" disabled
                 id="btn-partial"
                 onclick="openPartialModal()">
-          <i class="bi bi-dash-circle me-1"></i>Parcial
+          <i class="bi bi-dash-circle"></i>Parcial
         </button>
         <button class="btn-pick-main btn-pick-issue action-gated" disabled
                 id="btn-issue"
                 onclick="openIssueModal()">
-          <i class="bi bi-exclamation-circle me-1"></i>Incidencia
+          <i class="bi bi-exclamation-circle"></i>Incidencia
         </button>
       </div>
     </div>
   </div>
 
   {% else %}
-  <!-- ── ALL DONE, READY TO FINISH ── -->
+  <!-- ── ALL DONE — READY TO FINISH ── -->
   <div class="mpick-complete-card">
     <div class="mpick-complete-icon">🎉</div>
     <div class="mpick-complete-title">Wave completada</div>
@@ -323,8 +343,8 @@
         <div class="mpick-summary-lbl">Tareas cortas</div>
       </div>
     </div>
-    <button class="btn-finish-wave" id="btn-finish-wave" onclick="finishWave({{ wave.id }}, this)">
-      <i class="bi bi-check2-all me-1"></i>Finalizar wave
+    <button class="m-btn m-btn-primary" id="btn-finish-wave" onclick="finishWave({{ wave.id }}, this)">
+      <i class="bi bi-check2-all"></i>Finalizar wave
     </button>
   </div>
   {% endif %}
@@ -335,7 +355,7 @@
 <div class="mpick-modal-bg" id="modal-partial">
   <div class="mpick-modal">
     <div class="mpick-modal-title">
-      Pick parcial
+      <span><i class="bi bi-dash-circle me-1"></i>Pick parcial</span>
       <button class="btn-modal-close" onclick="closeModal('modal-partial')">✕</button>
     </div>
     <div class="mpick-field">
@@ -351,7 +371,7 @@
     </div>
     <button class="btn-modal-submit btn-modal-submit-pick" id="btn-partial-submit"
             onclick="submitPartial()">
-      <i class="bi bi-check-circle me-1"></i>Confirmar pick parcial
+      <i class="bi bi-check-circle"></i> Confirmar pick parcial
     </button>
   </div>
 </div>
@@ -360,7 +380,7 @@
 <div class="mpick-modal-bg" id="modal-issue">
   <div class="mpick-modal">
     <div class="mpick-modal-title">
-      Reportar incidencia
+      <span><i class="bi bi-exclamation-triangle me-1"></i>Reportar incidencia</span>
       <button class="btn-modal-close" onclick="closeModal('modal-issue')">✕</button>
     </div>
     <div class="mpick-field">
@@ -382,14 +402,14 @@
     </div>
     <button class="btn-modal-submit btn-modal-submit-issue" id="btn-issue-submit"
             onclick="submitIssue()">
-      <i class="bi bi-exclamation-triangle-fill me-1"></i>Confirmar incidencia
+      <i class="bi bi-exclamation-triangle-fill"></i> Confirmar incidencia
     </button>
   </div>
 </div>
+{% endblock %}
 
-<!-- html5-qrcode -->
+{% block scripts %}
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-
 <script>
 /* ── constants ── */
 var WAVE_ID = {{ wave.id }};
@@ -403,7 +423,6 @@ var cameraActive = false;
 
 /* ── location scan utils ── */
 function parseScanToken(val) {
-  // Accept "LOC|MAIN|<LOCATION>|<BOX_NUMBER>" format
   if (val.startsWith('LOC|')) {
     var parts = val.split('|');
     if (parts.length >= 4) return (parts[2] + '-' + parts[3]).toUpperCase();
@@ -421,7 +440,6 @@ function validateLocation(raw) {
   locationValidated = isMatch;
 
   var statusEl   = document.getElementById('scan-status');
-  var statusText = document.getElementById('scan-status-text');
   var scanHeader = document.getElementById('scan-header');
   var scanTitle  = document.getElementById('scan-title');
 
@@ -429,15 +447,15 @@ function validateLocation(raw) {
     statusEl.className   = 'mpick-scan-status ok';
     statusEl.innerHTML   = '<span class="scan-icon">✅</span><span>Ubicación verificada: <strong>' + scanned + '</strong></span>';
     scanHeader.className = 'mpick-scan-header validated';
+    scanTitle.innerHTML  = '<i class="bi bi-check-circle-fill me-1"></i>Ubicación verificada';
     scanTitle.className  = 'mpick-scan-title';
-    scanTitle.textContent = 'Ubicación verificada';
     document.querySelectorAll('.action-gated').forEach(b => b.disabled = false);
   } else {
     statusEl.className   = 'mpick-scan-status err';
     statusEl.innerHTML   = '<span class="scan-icon">❌</span><span>No coincide. Escaneado: <strong>' + scanned + '</strong> — esperado: <strong>' + EXPECTED_LOC + '</strong></span>';
     scanHeader.className = 'mpick-scan-header invalid';
+    scanTitle.innerHTML  = '<i class="bi bi-x-circle-fill me-1"></i>Ubicación no coincide';
     scanTitle.className  = 'mpick-scan-title invalid';
-    scanTitle.textContent = 'Ubicación no coincide';
     document.querySelectorAll('.action-gated').forEach(b => b.disabled = true);
   }
   stopCamera();
@@ -540,7 +558,6 @@ function submitPartial() {
   if (qty >= MAX_QTY) { alert('Para pick completo, usa el botón "Pick completo".'); return; }
   closeModal('modal-partial');
   doPick(RES_ID, qty, true, note);
-  // After partial, prompt for issue
   setTimeout(function() {
     if (confirm('¿Deseas reportar el faltante ahora?')) {
       var defaultMissing = MAX_QTY - qty;
@@ -600,7 +617,11 @@ function mobileStartWave(waveId, btn) {
   .then(r => r.json())
   .then(function(data) {
     if (data.ok) { window.location.reload(); }
-    else { alert(data.error || 'Error'); btn.disabled = false; btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Iniciar picking'; }
+    else {
+      alert(data.error || 'Error');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-play-fill"></i>Iniciar picking';
+    }
   })
   .catch(function() { alert('Error de conexión'); btn.disabled = false; });
 }
@@ -623,7 +644,7 @@ function finishWave(waveId, btn) {
       if (data.incomplete_skus) msg += '\nSKUs pendientes: ' + data.incomplete_skus.join(', ');
       alert(msg);
       btn.disabled = false;
-      btn.innerHTML = '<i class="bi bi-check2-all me-1"></i>Finalizar wave';
+      btn.innerHTML = '<i class="bi bi-check2-all"></i>Finalizar wave';
     }
   })
   .catch(function() { alert('Error de conexión'); btn.disabled = false; });
@@ -640,7 +661,6 @@ function setActionButtonsLoading(loading) {
 function openModal(id)  { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
-// Enter key on manual input
 document.addEventListener('DOMContentLoaded', function() {
   var inp = document.getElementById('manual-loc-input');
   if (inp) {
