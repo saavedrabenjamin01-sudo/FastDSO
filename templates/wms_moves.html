@@ -14,7 +14,7 @@
         <form method="post" action="{{ url_for('wms_moves_create') }}" enctype="multipart/form-data">
 
           <div class="mb-3">
-            <label class="query-label">Origen <small class="text-muted">(Rack / Nivel / Pallet)</small></label>
+            <label class="query-label">Origen <small class="text-muted">(Ubicación | Caja)</small></label>
             <select class="form-select" name="from_location_id" id="fromLoc">
               <option value="">— Seleccionar origen —</option>
               {% for loc in locations %}
@@ -24,7 +24,7 @@
           </div>
 
           <div class="mb-3">
-            <label class="query-label">Destino <small class="text-muted">(Rack / Nivel / Pallet)</small></label>
+            <label class="query-label">Destino <small class="text-muted">(Ubicación | Caja)</small></label>
             <select class="form-select" name="to_location_id" id="toLoc">
               <option value="">— Seleccionar destino —</option>
               {% for loc in locations %}

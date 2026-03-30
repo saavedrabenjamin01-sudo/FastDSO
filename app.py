@@ -841,6 +841,8 @@ class WmsLocation(db.Model):
     location_type = db.Column(db.String(50), nullable=True)
     max_pallets = db.Column(db.Integer, nullable=True)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
+    location = db.Column(db.String(100), nullable=True)
+    box_number = db.Column(db.String(50), nullable=True)
     rack = db.Column(db.String(50), nullable=True)
     level = db.Column(db.String(50), nullable=True)
     pallet_position = db.Column(db.String(50), nullable=True)
@@ -1247,18 +1249,32 @@ def get_cd_total_stock_units(session=None):
     return sum(cd_map.values()) if cd_map else 0
 
 
-def build_location_code(rack, level, pallet_position):
-    """Derive location_code from rack / level / pallet_position components."""
-    r = str(rack or '').strip()
-    lv = str(level or '').strip()
-    pp = str(pallet_position or '').strip()
-    if r and lv and pp:
-        return f"{r}-{lv}-{pp}".upper()
+def build_location_code(location, box_number):
+    """Derive location_code from location (rack+level, e.g. 'A-02') and box_number (e.g. '01').
+    Returns 'A-02-01' or None if either part is missing."""
+    loc = str(location or '').strip().upper()
+    box = str(box_number or '').strip()
+    if loc and box:
+        return f"{loc}-{box}"
     return None
 
 
+def parse_location_code(code):
+    """Parse location_code into (location, box_number).
+    location = all segments except last joined by '-'.
+    box_number = last segment.
+    E.g. 'A-02-01' -> ('A-02', '01').  Returns (None, None) on failure."""
+    if not code:
+        return None, None
+    parts = str(code).strip().split('-')
+    if len(parts) < 2:
+        return str(code).strip() or None, None
+    return '-'.join(parts[:-1]), parts[-1]
+
+
 def _parse_location_code(code):
-    """Try to parse 'A-02-03' format into (rack, level, pallet_position). Returns (None,None,None) on failure."""
+    """Legacy: try to parse 'A-02-03' format into (rack, level, pallet_position).
+    Returns (None, None, None) on failure. Kept for backward-compat startup migration."""
     if not code:
         return None, None, None
     parts = str(code).strip().split('-')
@@ -1402,6 +1418,38 @@ def _ensure_wms_defaults(session=None):
                     print(f"[WMS] Data migration: parsed location_code into rack/level/pallet for {migrated} rows")
             except Exception as e:
                 print(f"[WMS] Data migration warning (non-fatal): {e}")
+        _loc_new_migrations = {
+            'location': "ALTER TABLE wms_location ADD COLUMN location VARCHAR(100)",
+            'box_number': "ALTER TABLE wms_location ADD COLUMN box_number VARCHAR(50)",
+        }
+        loc_new_added = []
+        for col_name, sql_stmt in _loc_new_migrations.items():
+            if col_name not in loc_cols:
+                with db.engine.connect() as conn:
+                    conn.execute(text(sql_stmt))
+                    conn.commit()
+                loc_new_added.append(col_name)
+                print(f"[WMS] Added column wms_location.{col_name}")
+        if loc_new_added:
+            try:
+                with db.engine.connect() as conn:
+                    rows = conn.execute(text("SELECT id, location_code FROM wms_location WHERE location IS NULL")).fetchall()
+                    migrated = 0
+                    for row in rows:
+                        parts = (row[1] or '').split('-')
+                        if len(parts) >= 2:
+                            loc_val = '-'.join(parts[:-1])
+                            box_val = parts[-1]
+                            conn.execute(
+                                text("UPDATE wms_location SET location=:loc, box_number=:box WHERE id=:id"),
+                                {'loc': loc_val, 'box': box_val, 'id': row[0]}
+                            )
+                            migrated += 1
+                    conn.commit()
+                if migrated:
+                    print(f"[WMS] Data migration: parsed location_code into location/box_number for {migrated} rows")
+            except Exception as e:
+                print(f"[WMS] Data migration location/box warning (non-fatal): {e}")
     wh = s.query(WmsWarehouse).filter_by(code='MAIN').first()
     if not wh:
         wh = WmsWarehouse(code='MAIN', name='Main Warehouse')
@@ -1468,6 +1516,8 @@ def wms_create_pick_wave_for_plan(plan_id, priority='MEDIUM', warehouse_code='MA
     loc_type_map = {loc.id: loc.location_type or 'BULK' for loc in all_locs}
     loc_code_map = {loc.id: loc.location_code for loc in all_locs}
     loc_active_map = {loc.id: loc.is_active for loc in all_locs}
+    loc_location_map = {loc.id: (loc.location or loc.rack or '') for loc in all_locs}
+    loc_box_map = {loc.id: (loc.box_number or loc.pallet_position or '') for loc in all_locs}
     loc_rack_map = {loc.id: (loc.rack or '') for loc in all_locs}
     loc_level_map = {loc.id: (loc.level or '') for loc in all_locs}
     loc_pallet_map = {loc.id: (loc.pallet_position or '') for loc in all_locs}
@@ -1494,9 +1544,8 @@ def wms_create_pick_wave_for_plan(plan_id, priority='MEDIUM', warehouse_code='MA
         inv_by_product[pid].sort(key=lambda i: (
             LOCATION_TYPE_PRIORITY.get(loc_type_map.get(i.location_id, 'BULK'), 9),
             max(0, (i.on_hand_units or 0) - (i.allocated_units or 0)),
-            loc_rack_map.get(i.location_id, ''),
-            loc_level_map.get(i.location_id, ''),
-            loc_pallet_map.get(i.location_id, ''),
+            loc_location_map.get(i.location_id, ''),
+            loc_box_map.get(i.location_id, ''),
             loc_code_map.get(i.location_id, '')
         ))
 
@@ -8940,6 +8989,8 @@ def process_stock_cd_upload(job_id, payload):
             df['max_pallets'] = pd.to_numeric(df['max_pallets'], errors='coerce')
 
         has_location = 'location_code' in df.columns
+        has_location_field = 'location' in df.columns
+        has_box_number = 'box_number' in df.columns
         has_warehouse = 'warehouse' in df.columns
         has_location_type = 'location_type' in df.columns
         has_note = 'note' in df.columns
@@ -9048,19 +9099,39 @@ def process_stock_cd_upload(job_id, payload):
             wh_cache[code] = wh
             return wh
 
-        def _resolve_location(wh, loc_code_str, loc_type_str=None, rack_str=None, level_str=None, pallet_pos_str=None):
+        def _resolve_location(wh, loc_code_str, loc_type_str=None, rack_str=None, level_str=None,
+                             pallet_pos_str=None, location_str=None, box_number_str=None):
+            loc_field = _safe_str(location_str).upper()
+            box_field = _safe_str(box_number_str)
             r = _safe_str(rack_str)
             lv = _safe_str(level_str)
             pp = _safe_str(pallet_pos_str)
-            derived = build_location_code(r, lv, pp) if (r and lv and pp) else None
+
+            if loc_field and box_field:
+                derived = build_location_code(loc_field, box_field)
+            elif r and lv and pp:
+                derived = f"{r}-{lv}-{pp}".upper()
+                loc_field = f"{r}-{lv}"
+                box_field = pp
+            else:
+                derived = None
+
             if derived:
                 lc = derived
             else:
                 lc = _safe_str(loc_code_str).upper() or 'BULK-DEFAULT'
-                if not derived and lc and lc != 'BULK-DEFAULT':
-                    pr, plv, ppp = _parse_location_code(lc)
-                    if pr:
-                        r, lv, pp = pr, plv, ppp
+                if lc and lc != 'BULK-DEFAULT':
+                    loc_field_parsed, box_field_parsed = parse_location_code(lc)
+                    loc_field = loc_field_parsed or loc_field
+                    box_field = box_field_parsed or box_field
+
+            incoming_code_str = _safe_str(loc_code_str).upper()
+            if loc_field and box_field and incoming_code_str and incoming_code_str != 'BULK-DEFAULT':
+                expected = build_location_code(loc_field, box_field)
+                if expected and expected != incoming_code_str:
+                    wms_warnings.append(f"Inconsistencia LOCATION_CODE: file={incoming_code_str}, derived={expected}. Usando {expected}.")
+                    lc = expected
+
             key = (wh.id, lc)
             if key in loc_cache:
                 return loc_cache[key]
@@ -9069,11 +9140,15 @@ def process_stock_cd_upload(job_id, payload):
                 lt = _safe_str(loc_type_str).upper() or ('BULK' if lc == 'BULK-DEFAULT' else None)
                 loc = WmsLocation(
                     warehouse_id=wh.id, location_code=lc, location_type=lt, is_active=True,
+                    location=loc_field or None, box_number=box_field or None,
                     rack=r or None, level=lv or None, pallet_position=pp or None
                 )
                 session.add(loc)
                 session.flush()
             else:
+                if loc_field and not loc.location:
+                    loc.location = loc_field
+                    loc.box_number = box_field or loc.box_number
                 if r and not loc.rack:
                     loc.rack = r
                     loc.level = lv or loc.level
@@ -9154,7 +9229,10 @@ def process_stock_cd_upload(job_id, payload):
                 rack_val = row.get('rack') if has_rack else None
                 level_val = row.get('level') if has_level else None
                 pp_val = row.get('pallet_position') if has_pallet_position else None
-                loc = _resolve_location(wh, loc_code, loc_type, rack_val, level_val, pp_val)
+                loc_field_val = row.get('location') if has_location_field else None
+                box_num_val = row.get('box_number') if has_box_number else None
+                loc = _resolve_location(wh, loc_code, loc_type, rack_val, level_val, pp_val,
+                                        location_str=loc_field_val, box_number_str=box_num_val)
 
                 if has_max_pallets and pd.notna(row.get('max_pallets')):
                     mp = int(float(row['max_pallets']))
@@ -9234,7 +9312,10 @@ def process_stock_cd_upload(job_id, payload):
                 rack_val = row.get('rack') if has_rack else None
                 level_val = row.get('level') if has_level else None
                 pp_val = row.get('pallet_position') if has_pallet_position else None
-                loc = _resolve_location(wh, loc_code, loc_type, rack_val, level_val, pp_val)
+                loc_field_val = row.get('location') if has_location_field else None
+                box_num_val = row.get('box_number') if has_box_number else None
+                loc = _resolve_location(wh, loc_code, loc_type, rack_val, level_val, pp_val,
+                                        location_str=loc_field_val, box_number_str=box_num_val)
 
                 if has_max_pallets and pd.notna(row.get('max_pallets')):
                     mp = int(float(row['max_pallets']))
@@ -9349,6 +9430,8 @@ def _wms_inventory_query(args):
             WmsLocation.location_code,
             WmsLocation.location_type,
             WmsLocation.max_pallets,
+            WmsLocation.location,
+            WmsLocation.box_number,
             WmsLocation.rack,
             WmsLocation.level,
             WmsLocation.pallet_position,
@@ -9367,7 +9450,7 @@ def _wms_inventory_query(args):
     f_search = (args.get('q') or '').strip()
     f_warehouse = (args.get('wh') or '').strip()
     f_location = (args.get('loc') or '').strip()
-    f_rack = (args.get('rack') or '').strip()
+    f_box = (args.get('box') or '').strip()
     f_stock = (args.get('stock') or '').strip()
     f_min_units = args.get('min_units', type=int)
     f_min_pallets = args.get('min_pallets', type=float)
@@ -9378,15 +9461,14 @@ def _wms_inventory_query(args):
     if f_warehouse:
         q = q.filter(WmsWarehouse.code == f_warehouse.upper())
     if f_location:
-        q = q.filter(WmsLocation.location_code == f_location)
-    if f_rack:
-        q = q.filter(WmsLocation.rack == f_rack.upper())
+        q = q.filter(WmsLocation.location == f_location.upper())
+    if f_box:
+        q = q.filter(WmsLocation.box_number == f_box)
 
     rows = q.order_by(
         WmsWarehouse.code,
-        WmsLocation.rack,
-        WmsLocation.level,
-        WmsLocation.pallet_position,
+        WmsLocation.location,
+        WmsLocation.box_number,
         WmsLocation.location_code,
         Product.sku
     ).all()
@@ -9419,6 +9501,8 @@ def _wms_inventory_query(args):
         inventory.append({
             'warehouse': r.warehouse,
             'location_code': r.location_code,
+            'location': r.location,
+            'box_number': r.box_number,
             'location_type': r.location_type,
             'max_pallets': r.max_pallets,
             'rack': r.rack,
@@ -9455,6 +9539,8 @@ def _group_inventory_by_location(inventory, sort_key='rack_asc'):
             groups[key] = {
                 'warehouse': item['warehouse'],
                 'location_code': item['location_code'],
+                'location': item.get('location'),
+                'box_number': item.get('box_number'),
                 'location_type': item['location_type'],
                 'max_pallets': item.get('max_pallets'),
                 'rack': item.get('rack'),
@@ -9482,7 +9568,7 @@ def _group_inventory_by_location(inventory, sort_key='rack_asc'):
 
     loc_list = list(groups.values())
     if sort_key == 'rack_asc':
-        loc_list.sort(key=lambda x: (x['rack'] or 'ZZZ', x['level'] or 'ZZZ', x['pallet_position'] or 'ZZZ'))
+        loc_list.sort(key=lambda x: (x['location'] or x['rack'] or 'ZZZ', x['box_number'] or x['pallet_position'] or 'ZZZ'))
     elif sort_key == 'avail_desc':
         loc_list.sort(key=lambda x: x['total_available'], reverse=True)
     elif sort_key == 'avail_asc':
@@ -9501,8 +9587,8 @@ def wms_inventory():
     inventory, kpis = _wms_inventory_query(request.args)
 
     warehouses = [r[0] for r in db.session.query(WmsWarehouse.code).order_by(WmsWarehouse.code).all()]
-    locations = [r[0] for r in db.session.query(WmsLocation.location_code).order_by(WmsLocation.location_code).distinct().all()]
-    racks = [r[0] for r in db.session.query(WmsLocation.rack).filter(WmsLocation.rack.isnot(None)).order_by(WmsLocation.rack).distinct().all()]
+    loc_values = sorted({r[0] for r in db.session.query(WmsLocation.location).filter(WmsLocation.location.isnot(None)).all()})
+    box_values = sorted({r[0] for r in db.session.query(WmsLocation.box_number).filter(WmsLocation.box_number.isnot(None)).all()})
 
     sort_key = (request.args.get('sort') or 'rack_asc').strip()
     loc_groups = _group_inventory_by_location(inventory, sort_key)
@@ -9515,8 +9601,8 @@ def wms_inventory():
         kpis=kpis,
         total=len(inventory),
         warehouses=warehouses,
-        locations=locations,
-        racks=racks,
+        loc_values=loc_values,
+        box_values=box_values,
         filters=request.args,
         has_any_data=has_any_data,
     )
@@ -9534,7 +9620,7 @@ def wms_inventory_export():
     ws = wb.active
     ws.title = 'Inventario WMS'
 
-    headers = ['Warehouse', 'Rack', 'Nivel', 'Pallet', 'Ubicación', 'Tipo', 'SKU', 'Producto', 'Unidades', 'Asignadas', 'Disponibles', 'Pallets']
+    headers = ['Warehouse', 'Ubicación', 'Caja', 'Código ubicación', 'Tipo', 'SKU', 'Producto', 'Unidades', 'Asignadas', 'Disponibles', 'Pallets']
     header_font = Font(bold=True, color='FFFFFF')
     header_fill = PatternFill(start_color='1e40af', end_color='1e40af', fill_type='solid')
     for col, h in enumerate(headers, 1):
@@ -9545,23 +9631,22 @@ def wms_inventory_export():
 
     for idx, item in enumerate(inventory, 2):
         ws.cell(row=idx, column=1, value=item['warehouse'])
-        ws.cell(row=idx, column=2, value=item.get('rack') or '')
-        ws.cell(row=idx, column=3, value=item.get('level') or '')
-        ws.cell(row=idx, column=4, value=item.get('pallet_position') or '')
-        ws.cell(row=idx, column=5, value=item['location_code'])
-        ws.cell(row=idx, column=6, value=item.get('location_type') or '')
-        ws.cell(row=idx, column=7, value=item['sku'])
-        ws.cell(row=idx, column=8, value=item['product_name'])
-        ws.cell(row=idx, column=9, value=item['on_hand_units'])
-        ws.cell(row=idx, column=10, value=item['allocated_units'])
-        ws.cell(row=idx, column=11, value=item['available_units'])
-        ws.cell(row=idx, column=12, value=item.get('on_hand_pallets') or 0)
+        ws.cell(row=idx, column=2, value=item.get('location') or item.get('rack') or '')
+        ws.cell(row=idx, column=3, value=item.get('box_number') or item.get('pallet_position') or '')
+        ws.cell(row=idx, column=4, value=item['location_code'])
+        ws.cell(row=idx, column=5, value=item.get('location_type') or '')
+        ws.cell(row=idx, column=6, value=item['sku'])
+        ws.cell(row=idx, column=7, value=item['product_name'])
+        ws.cell(row=idx, column=8, value=item['on_hand_units'])
+        ws.cell(row=idx, column=9, value=item['allocated_units'])
+        ws.cell(row=idx, column=10, value=item['available_units'])
+        ws.cell(row=idx, column=11, value=item.get('on_hand_pallets') or 0)
 
-    for col in [1, 2, 3, 4, 5, 6]:
-        ws.column_dimensions[chr(64 + col)].width = 13
-    ws.column_dimensions['G'].width = 12
-    ws.column_dimensions['H'].width = 30
-    for col in [9, 10, 11, 12]:
+    for col in [1, 2, 3, 4, 5]:
+        ws.column_dimensions[chr(64 + col)].width = 15
+    ws.column_dimensions['F'].width = 12
+    ws.column_dimensions['G'].width = 30
+    for col in [8, 9, 10, 11]:
         ws.column_dimensions[chr(64 + col)].width = 13
 
     wh_code = (request.args.get('wh') or 'ALL').upper()
@@ -9596,17 +9681,20 @@ def wms_moves():
     locations = (
         db.session.query(
             WmsLocation.id, WmsLocation.location_code, WmsLocation.location_type,
+            WmsLocation.location, WmsLocation.box_number,
             WmsLocation.rack, WmsLocation.level, WmsLocation.pallet_position,
             WmsWarehouse.code.label('warehouse_code')
         )
         .join(WmsWarehouse, WmsLocation.warehouse_id == WmsWarehouse.id)
         .filter(WmsLocation.is_active == True)
-        .order_by(WmsWarehouse.code, WmsLocation.rack, WmsLocation.level, WmsLocation.pallet_position, WmsLocation.location_code)
+        .order_by(WmsWarehouse.code, WmsLocation.location, WmsLocation.box_number, WmsLocation.location_code)
         .all()
     )
     def _loc_label(loc):
-        if loc.rack and loc.level and loc.pallet_position:
-            return f"Rack {loc.rack} | Nivel {loc.level} | Pallet {loc.pallet_position} ({loc.location_type or '—'})"
+        loc_part = loc.location or (f"{loc.rack}-{loc.level}" if loc.rack and loc.level else None)
+        box_part = loc.box_number or loc.pallet_position
+        if loc_part and box_part:
+            return f"{loc_part} | Caja {box_part} ({loc.location_type or '—'})"
         return f"{loc.warehouse_code} / {loc.location_code} ({loc.location_type or '—'})"
     location_options = [
         {'id': loc.id, 'label': _loc_label(loc)}

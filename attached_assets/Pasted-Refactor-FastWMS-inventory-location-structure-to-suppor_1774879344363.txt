@@ -1,0 +1,133 @@
+Refactor FastWMS inventory location structure to support the new warehouse layout file format.
+
+NEW INPUT FILE COLUMNS
+The final stock/WMS seed file now uses:
+- SKU
+- PRODUCT_NAME
+- QUANTITY
+- CATEGORY
+- WAREHOUSE
+- LOCATION_CODE
+- LOCATION_TYPE
+- LOCATION
+- BOX_NUMBER
+- NOTE
+
+BUSINESS MEANING
+- LOCATION = physical picking location (Rack + Level), e.g. "A-02"
+- BOX_NUMBER = box/container number inside that location, e.g. "01"
+- LOCATION_CODE = full derived identifier, e.g. "A-02-01"
+So:
+  LOCATION_CODE = LOCATION + "-" + BOX_NUMBER
+
+GOAL
+Refactor WMS location handling so the system uses:
+- LOCATION as the main location reference
+- BOX_NUMBER as the sub-location/container reference
+- keep LOCATION_CODE as a derived/compatibility field
+
+REQUIRED CHANGES
+
+1) MODEL UPDATE
+Update WmsLocation model/table:
+- add/use fields:
+  - location (string, required)         # Rack + Level
+  - box_number (string, required)       # Box inside location
+  - location_code (string, keep for compatibility)
+  - location_type
+  - warehouse_id
+  - is_active
+- if old rack/level/pallet_position fields exist, keep them temporarily for backward compatibility but stop using them as primary logic
+- add unique constraint:
+  (warehouse_id, location, box_number)
+
+2) LOCATION CODE HELPER
+Create helper:
+  build_location_code(location, box_number) -> string
+Returns:
+  f"{location}-{box_number}"
+
+Also create parser helper:
+  parse_location_code(location_code) -> (location, box_number)
+Rules:
+- split by "-"
+- location = all segments except last joined by "-"
+- box_number = last segment
+- if parsing fails, return controlled error
+
+3) STOCK CD / WMS SEED UPLOAD
+Update the stock upload parser so it accepts the new structure:
+- preferred fields:
+   LOCATION
+   BOX_NUMBER
+- LOCATION_CODE optional but supported
+Behavior:
+- if LOCATION + BOX_NUMBER are present:
+   build LOCATION_CODE automatically
+- if LOCATION_CODE present too:
+   validate consistency; warn if mismatch and prefer derived value from LOCATION + BOX_NUMBER
+- if only LOCATION_CODE is provided:
+   parse LOCATION and BOX_NUMBER from it
+- if neither valid structure exists:
+   return validation error
+
+4) WMS INVENTORY STORAGE
+When creating/updating WmsLocation:
+- use warehouse + location + box_number as unique identity
+- store location_code as derived string
+- keep location_type and note as before
+
+5) WMS INVENTORY VIEW
+Update /wms/inventory:
+- columns should become:
+   Warehouse | Location | Box | Location Code | SKU | Product | Units | Allocated | Available | Actions
+- sort by:
+   warehouse
+   location asc
+   box_number asc
+   sku asc
+- filters:
+   location filter should use LOCATION field
+   add optional box filter if simple to implement
+
+6) WMS MOVES
+Update move creation/display:
+- selectors and dropdown labels should display:
+   "LOCATION | Box XX"
+Example:
+   "A-02 | Box 01"
+- keep location_id internally
+
+7) WAVE / RESERVATION SORTING
+Wherever pick wave reservation logic sorts by location_code, update sort order to:
+- location_type priority (PICK first, BULK second)
+- available_units ascending
+- location ascending
+- box_number ascending
+
+8) UI LABELS IN SPANISH
+Use:
+- Ubicación
+- Caja
+- Código ubicación
+
+9) BACKWARD COMPATIBILITY
+- Do not break existing rows that only have location_code
+- On startup, if old rows exist:
+   try to populate location + box_number from location_code
+- If impossible, keep row usable with location_code only, but mark for review if needed
+- Do not delete historical movements or reservations
+
+10) VALIDATION
+- QUANTITY must be positive
+- SKU must exist or be created as stub if your current flow allows it
+- WAREHOUSE defaults to MAIN if blank
+- LOCATION_TYPE defaults to BULK if blank
+
+DELIVERABLES
+- model changes
+- parser changes
+- inventory view update
+- moves update
+- wave sorting update
+- no breaking changes to existing FastDSO modules
