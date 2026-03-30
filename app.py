@@ -10625,15 +10625,18 @@ def api_wms_task_report_issue(task_id):
         ))
 
     _wms_update_wave_counters(wave)
+    wave_transitioned_needs_review = False
     if wave.status == 'IN_PROGRESS' and wave.short_units and wave.short_units > 0:
         wave.status = 'NEEDS_REVIEW'
+        wave_transitioned_needs_review = True
     db.session.commit()
     print(f"[WMS] issue sku={task.sku} missing={missing_qty} reason={reason_code} wave_status={wave.status}")
-    try:
-        sync_plan_from_wave(wave.id, event_type='PICKING_SHORTAGE_REPORTED', actor_user_id=current_user.id,
-                            note=f'SKU {task.sku}: {missing_qty} faltantes ({reason_code})')
-    except Exception as _e:
-        print(f"[PLANNER-WMS] WARNING: sync on issue report failed: {_e}")
+    if wave_transitioned_needs_review:
+        try:
+            sync_plan_from_wave(wave.id, event_type='PICKING_SHORTAGE_REPORTED', actor_user_id=current_user.id,
+                                note=f'SKU {task.sku}: {missing_qty} faltantes ({reason_code})')
+        except Exception as _e:
+            print(f"[PLANNER-WMS] WARNING: sync on issue report failed: {_e}")
     return jsonify({
         'ok': True,
         'task_status': task.status,
@@ -10693,7 +10696,7 @@ def api_wms_wave_close(wave_id):
     if not wave:
         return jsonify({'error': 'Wave no encontrada'}), 404
     if wave.status not in ('PICKED', 'DONE'):
-        return jsonify({'error': f'Solo se pueden cerrar waves en estado PICKED (actual: {wave.status})'}), 400
+        return jsonify({'error': f'Solo se pueden cerrar waves en estado PICKED o DONE (actual: {wave.status})'}), 400
     try:
         close_wave_and_update_plan(wave_id, actor_user_id=current_user.id)
     except Exception as _e:

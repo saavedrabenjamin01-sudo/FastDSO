@@ -269,12 +269,14 @@
       </div>
     </div>
 
-    {% if planner_events %}
     <div class="card mb-4">
       <div class="card-header">
         <span class="fw-semibold"><i class="bi bi-link-45deg"></i> Eventos WMS ↔ Planner</span>
       </div>
       <div class="card-body p-0" style="max-height:260px; overflow-y:auto;">
+        {% if not planner_events %}
+        <div class="text-muted text-center small py-3"><i class="bi bi-inbox"></i> Sin eventos registrados</div>
+        {% else %}
         {% set ec = {'WAVE_CREATED':'text-success','WAVE_CREATION_FAILED':'text-danger','PICKER_ASSIGNED':'text-primary','PICKER_REASSIGNED':'text-primary','PICKING_STARTED':'text-info','PICKING_COMPLETED':'text-success','PICKING_SHORTAGE_REPORTED':'text-warning','WAVE_CLOSED':'text-secondary','WMS_STATUS_UPDATED':'text-muted','WAVE_STATUS_SYNCED':'text-muted','WMS_STATUS_SYNCED':'text-muted'} %}
         {% set ei = {'WAVE_CREATED':'plus-circle','WAVE_CREATION_FAILED':'x-circle','PICKER_ASSIGNED':'person-check','PICKER_REASSIGNED':'arrow-repeat','PICKING_STARTED':'play-circle','PICKING_COMPLETED':'check-circle','PICKING_SHORTAGE_REPORTED':'exclamation-triangle','WAVE_CLOSED':'lock','WMS_STATUS_UPDATED':'arrow-left-right','WAVE_STATUS_SYNCED':'arrow-left-right','WMS_STATUS_SYNCED':'arrow-left-right'} %}
         <table class="table table-sm table-striped mb-0" style="font-size:0.75rem;">
@@ -308,9 +310,9 @@
             {% endfor %}
           </tbody>
         </table>
+        {% endif %}
       </div>
     </div>
-    {% endif %}
 
     <div class="card">
       <div class="card-header">
