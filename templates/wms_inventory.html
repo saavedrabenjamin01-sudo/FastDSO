@@ -37,7 +37,7 @@
       </div>
       <div class="query-field">
         <label class="query-label">Warehouse</label>
-        <select class="form-select form-select-sm" name="wh">
+        <select class="form-select form-select-sm" name="wh" id="filter-wh">
           <option value="">Todos</option>
           {% for w in warehouses %}
           <option value="{{ w }}" {% if fwh == w %}selected{% endif %}>{{ w }}</option>
@@ -46,7 +46,7 @@
       </div>
       <div class="query-field">
         <label class="query-label">Ubicación</label>
-        <select class="form-select form-select-sm" name="loc">
+        <select class="form-select form-select-sm" name="loc" id="filter-loc">
           <option value="">Todas</option>
           {% for l in loc_values %}
           <option value="{{ l }}" {% if floc == l %}selected{% endif %}>{{ l }}</option>
@@ -55,11 +55,16 @@
       </div>
       <div class="query-field">
         <label class="query-label">Caja</label>
-        <select class="form-select form-select-sm" name="box">
+        <select class="form-select form-select-sm" name="box" id="filter-box"
+                {% if not floc %}disabled{% endif %}>
+          {% if floc %}
           <option value="">Todas</option>
           {% for b in box_values %}
           <option value="{{ b }}" {% if fbox == b %}selected{% endif %}>{{ b }}</option>
           {% endfor %}
+          {% else %}
+          <option value="">Seleccione una ubicación primero</option>
+          {% endif %}
         </select>
       </div>
       <div class="query-field">
@@ -369,5 +374,73 @@ if(expandBtn){
     this.querySelector('i').className = expanded ? 'bi bi-arrows-collapse' : 'bi bi-arrows-expand';
   });
 }
+
+/* ── Dependent box filter ── */
+(function() {
+  var locSel = document.getElementById('filter-loc');
+  var boxSel = document.getElementById('filter-box');
+  var whSel  = document.getElementById('filter-wh');
+  if (!locSel || !boxSel) return;
+
+  function setBoxLoading() {
+    boxSel.disabled = true;
+    boxSel.innerHTML = '<option value="">Cargando…</option>';
+  }
+
+  function setBoxEmpty(msg) {
+    boxSel.disabled = true;
+    boxSel.innerHTML = '<option value="">' + (msg || 'Sin cajas en esta ubicación') + '</option>';
+  }
+
+  function setBoxReady(boxes, currentBox) {
+    boxSel.innerHTML = '<option value="">Todas</option>';
+    boxes.forEach(function(b) {
+      var opt = document.createElement('option');
+      opt.value = b;
+      opt.textContent = b;
+      if (b === currentBox) opt.selected = true;
+      boxSel.appendChild(opt);
+    });
+    boxSel.disabled = false;
+  }
+
+  function loadBoxes(locationVal, currentBox) {
+    if (!locationVal) {
+      setBoxEmpty('Seleccione una ubicación primero');
+      return;
+    }
+    var wh = whSel ? whSel.value : '';
+    var url = '/wms/api/boxes-by-location?location=' + encodeURIComponent(locationVal);
+    if (wh) url += '&warehouse=' + encodeURIComponent(wh);
+    setBoxLoading();
+    fetch(url, { credentials: 'same-origin' })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.ok && data.boxes && data.boxes.length > 0) {
+          setBoxReady(data.boxes, currentBox || '');
+        } else {
+          setBoxEmpty('Sin cajas en esta ubicación');
+        }
+      })
+      .catch(function() {
+        setBoxEmpty('Error al cargar cajas');
+      });
+  }
+
+  locSel.addEventListener('change', function() {
+    loadBoxes(locSel.value, '');
+  });
+
+  if (whSel) {
+    whSel.addEventListener('change', function() {
+      locSel.value = '';
+      setBoxEmpty('Seleccione una ubicación primero');
+    });
+  }
+
+  /* On initial page load: if a location is already selected, the template
+     already renders the correct box options server-side, so nothing to do.
+     If no location is selected, the select is already disabled server-side. */
+})();
 </script>
 {% endblock %}

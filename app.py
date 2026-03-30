@@ -9624,6 +9624,28 @@ def wms_inventory():
     )
 
 
+@app.route('/wms/api/boxes-by-location')
+@login_required
+@require_permission('wms:view')
+def api_wms_boxes_by_location():
+    wh_code = (request.args.get('warehouse') or 'MAIN').upper()
+    loc_val = (request.args.get('location') or '').strip()
+    if not loc_val:
+        return jsonify({'ok': False, 'error': 'location requerido'}), 400
+    q = (
+        db.session.query(WmsLocation.box_number)
+        .join(WmsWarehouse, WmsLocation.warehouse_id == WmsWarehouse.id)
+        .filter(WmsLocation.is_active == True)
+        .filter(WmsLocation.location == loc_val)
+        .filter(WmsLocation.box_number.isnot(None))
+    )
+    if wh_code and wh_code != 'ALL':
+        q = q.filter(WmsWarehouse.code == wh_code)
+    rows = q.distinct().order_by(WmsLocation.box_number).all()
+    boxes = [r[0] for r in rows if r[0]]
+    return jsonify({'ok': True, 'boxes': boxes})
+
+
 @app.route('/wms/inventory/export')
 @login_required
 @require_permission('wms:view')
