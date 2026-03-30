@@ -18144,12 +18144,11 @@ def planner():
     can_operate = current_user.has_permission('planner:operate')
     can_manage = current_user.has_permission('planner:manage') or current_user.has_permission('admin:users')
 
-    operators = (
-        db.session.query(User)
-        .filter(User.is_active.is_(True))
-        .order_by(User.username)
-        .all()
-    ) if can_manage else []
+    if can_manage:
+        all_active = db.session.query(User).filter(User.is_active.is_(True)).order_by(User.username).all()
+        operators = [u for u in all_active if u.has_permission('wms:view')]
+    else:
+        operators = []
 
     blocking_statuses = ['APPROVED', 'IN_PROGRESS', 'PACKED']
     urgent_blockers = DistributionPlan.query.filter(
@@ -18235,12 +18234,11 @@ def planner_detail(plan_id):
         .all()
     )
 
-    operators = (
-        db.session.query(User)
-        .filter(User.is_active.is_(True))
-        .order_by(User.username)
-        .all()
-    ) if can_manage else []
+    if can_manage:
+        all_active = db.session.query(User).filter(User.is_active.is_(True)).order_by(User.username).all()
+        operators = [u for u in all_active if u.has_permission('wms:view')]
+    else:
+        operators = []
 
     return render_template(
         'planner_detail.html',
