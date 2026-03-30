@@ -10672,6 +10672,34 @@ def api_wms_wave_finish(wave_id):
     return jsonify({'ok': True, 'status': wave.status, 'picked_units': wave.picked_units, 'short_units': wave.short_units})
 
 
+@app.route('/api/wms/waves/<int:wave_id>/close', methods=['POST'])
+@login_required
+@require_permission('planner:manage')
+def api_wms_wave_close(wave_id):
+    """Manager closes a PICKED wave via JSON API; syncs Planner status."""
+    wave = db.session.get(WmsPickWave, wave_id)
+    if not wave:
+        return jsonify({'error': 'Wave no encontrada'}), 404
+    if wave.status not in ('PICKED', 'DONE'):
+        return jsonify({'error': f'Solo se pueden cerrar waves en estado PICKED (actual: {wave.status})'}), 400
+    wave.status = 'CLOSED'
+    wave.closed_at = datetime.utcnow()
+    db.session.commit()
+    try:
+        if wave.assigned_to and wave.pick_finished_at:
+            _wms_rollup_operator_kpi(wave.assigned_to, wave.pick_finished_at.date())
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+    try:
+        sync_plan_from_wave(wave.id, event_type='WAVE_CLOSED', actor_user_id=current_user.id)
+    except Exception as _e:
+        print(f"[PLANNER-WMS] WARNING: sync on API wave close failed: {_e}")
+    log_audit(action='wms.wave.close_api', entity_type='wms_pick_wave', entity_id=wave.id,
+              status='success', message=f'Wave #{wave.id} cerrada via API por {current_user.username}')
+    return jsonify({'ok': True, 'status': wave.status, 'wave_id': wave.id})
+
+
 @app.route('/wms/kpis')
 @login_required
 @require_permission('wms:view')
@@ -18131,6 +18159,13 @@ def planner():
     can_operate = current_user.has_permission('planner:operate')
     can_manage = current_user.has_permission('planner:manage') or current_user.has_permission('admin:users')
 
+    operators = (
+        db.session.query(User)
+        .filter(User.is_active.is_(True))
+        .order_by(User.username)
+        .all()
+    ) if can_manage else []
+
     blocking_statuses = ['APPROVED', 'IN_PROGRESS', 'PACKED']
     urgent_blockers = DistributionPlan.query.filter(
         DistributionPlan.urgency == 'URGENT',
@@ -18167,6 +18202,7 @@ def planner():
         folio_search=folio_search,
         can_operate=can_operate,
         can_manage=can_manage,
+        operators=operators,
         PLAN_URGENCIES=PLAN_URGENCIES,
         urgent_blockers=urgent_blockers,
         medium_blockers=medium_blockers,

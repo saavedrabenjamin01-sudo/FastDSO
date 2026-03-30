@@ -130,6 +130,12 @@
             {% if can_operate and status == 'DISPATCHED' %}
             <button type="button" class="btn btn-xs btn-secondary" onclick="openCloseModal({{ plan.id }}, '{{ plan.folio }}')"><i class="bi bi-check-circle"></i> Cerrar</button>
             {% endif %}
+            {% if can_manage and waves_map.get(plan.id) and waves_map[plan.id].status in ('READY_TO_ASSIGN', 'ASSIGNED') %}
+            <button type="button" class="btn btn-xs btn-outline-primary"
+              onclick="openPickerModal({{ plan.id }}, '{{ plan.folio }}', {{ waves_map[plan.id].id }})">
+              <i class="bi bi-person-plus"></i> Picker
+            </button>
+            {% endif %}
             <a href="{{ url_for('planner_detail', plan_id=plan.id) }}" class="btn btn-xs btn-outline-primary"><i class="bi bi-eye"></i> Ver</a>
             <a href="{{ url_for('planner_export_picking', plan_id=plan.id) }}" class="btn btn-xs btn-outline-success"><i class="bi bi-download"></i> Picking</a>
           </div>
@@ -187,6 +193,35 @@
   </div>
 </div>
 
+{% if can_manage %}
+<div class="modal fade" id="kanbanPickerModal" tabindex="-1" aria-labelledby="kanbanPickerModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="kanbanPickerModalLabel"><i class="bi bi-person-plus"></i> Asignar Picker</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="kanbanPickerForm" method="post">
+        <div class="modal-body">
+          <p class="text-muted small">Folio: <strong id="kanbanPickerFolio"></strong></p>
+          <label class="form-label fw-semibold">Operador</label>
+          <select name="picker_user_id" class="form-select" required>
+            <option value="">— Seleccionar operador —</option>
+            {% for op in operators %}
+            <option value="{{ op.id }}">{{ op.username }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-primary"><i class="bi bi-person-check"></i> Asignar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <script>
 function openCloseModal(planId, folio) {
   document.getElementById('closeModalFolio').textContent = folio;
@@ -204,6 +239,13 @@ function toggleExceptionsFile() {
   if (noExceptions) {
     document.getElementById('exceptionsFile').value = '';
   }
+}
+
+function openPickerModal(planId, folio, waveId) {
+  document.getElementById('kanbanPickerFolio').textContent = folio + ' — Wave #' + waveId;
+  document.getElementById('kanbanPickerForm').action = '/planner/' + planId + '/assign-picker';
+  var modal = new bootstrap.Modal(document.getElementById('kanbanPickerModal'));
+  modal.show();
 }
 </script>
 {% endblock %}

@@ -249,6 +249,11 @@
           <i class="bi bi-person-plus"></i> Asignar Picker
         </button>
         {% endif %}
+        {% if can_manage and latest_wave.status in ('PICKED', 'DONE') %}
+        <button type="button" class="btn btn-sm btn-outline-dark w-100 mt-1" id="btnCerrarWave" data-wave-id="{{ latest_wave.id }}">
+          <i class="bi bi-lock"></i> Cerrar Wave
+        </button>
+        {% endif %}
         {% else %}
         <div class="text-muted small text-center py-2">
           <i class="bi bi-x-circle"></i> Sin pick wave vinculada
@@ -341,7 +346,7 @@
   </div>
 </div>
 
-{% if can_manage and latest_wave and latest_wave.status in ('READY_TO_ASSIGN', 'ASSIGNED') %}
+{% if can_manage and latest_wave %}
 <div class="modal fade" id="modalAsignarPicker" tabindex="-1" aria-labelledby="modalAsignarPickerLabel" aria-hidden="true">
   <div class="modal-dialog">
     <div class="modal-content">
@@ -369,4 +374,38 @@
   </div>
 </div>
 {% endif %}
+
+{% block extra_js %}
+<script>
+(function() {
+  var btnCerrar = document.getElementById('btnCerrarWave');
+  if (!btnCerrar) return;
+  btnCerrar.addEventListener('click', function() {
+    var waveId = btnCerrar.dataset.waveId;
+    if (!confirm('¿Cerrar la Pick Wave #' + waveId + '? Esta acción es irreversible.')) return;
+    btnCerrar.disabled = true;
+    btnCerrar.textContent = 'Cerrando...';
+    fetch('/api/wms/waves/' + waveId + '/close', {
+      method: 'POST',
+      headers: {'X-CSRFToken': '{{ csrf_token() if csrf_token is defined else "" }}'}
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        location.reload();
+      } else {
+        alert('Error: ' + (data.error || 'No se pudo cerrar la wave'));
+        btnCerrar.disabled = false;
+        btnCerrar.innerHTML = '<i class="bi bi-lock"></i> Cerrar Wave';
+      }
+    })
+    .catch(function() {
+      alert('Error de conexión al intentar cerrar la wave.');
+      btnCerrar.disabled = false;
+      btnCerrar.innerHTML = '<i class="bi bi-lock"></i> Cerrar Wave';
+    });
+  });
+})();
+</script>
+{% endblock %}
 {% endblock %}
