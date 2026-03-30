@@ -244,7 +244,7 @@
           <div class="small text-muted mt-1"><i class="bi bi-play-circle"></i> Inicio: {{ latest_wave.pick_started_at.strftime('%d/%m %H:%M') }}</div>
           {% endif %}
         </div>
-        {% if can_manage and latest_wave.status in ('READY_TO_ASSIGN', 'ASSIGNED') %}
+        {% if can_manage and latest_wave.status in ('READY_TO_ASSIGN', 'ASSIGNED', 'NEEDS_REVIEW') %}
         <button type="button" class="btn btn-sm btn-outline-primary w-100 mt-1" data-bs-toggle="modal" data-bs-target="#modalAsignarPicker">
           <i class="bi bi-person-plus"></i> Asignar Picker
         </button>

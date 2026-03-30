@@ -89,7 +89,7 @@
           {% if waves_map.get(plan.id) %}
           {% set pw = waves_map[plan.id] %}
           <div class="kanban-card-wms mb-1">
-            {% set wsc = {'READY_TO_ASSIGN':'bg-secondary','ASSIGNED':'bg-purple','IN_PROGRESS':'bg-primary','PICKED':'bg-success','CLOSED':'bg-dark','NEEDS_REVIEW':'bg-danger','RELEASED':'bg-info','DONE':'bg-success'} %}
+            {% set wsc = {'READY_TO_ASSIGN':'bg-secondary','ASSIGNED':'bg-info','IN_PROGRESS':'bg-primary','PICKED':'bg-success','CLOSED':'bg-dark','NEEDS_REVIEW':'bg-danger','RELEASED':'bg-info','DONE':'bg-success'} %}
             {% set wms_label = {'READY_TO_ASSIGN':'Sin asignar','ASSIGNED':'Asignado','IN_PROGRESS':'En picking','PICKED':'Pickeado','CLOSED':'Cerrado','NEEDS_REVIEW':'Revisión','RELEASED':'Liberada','DONE':'Listo'} %}
             <span class="badge {{ wsc.get(pw.status, 'bg-secondary') }}" style="font-size:0.65rem;">
               <i class="bi bi-box-seam"></i> {{ wms_label.get(pw.status, pw.status) }}
@@ -130,7 +130,7 @@
             {% if can_operate and status == 'DISPATCHED' %}
             <button type="button" class="btn btn-xs btn-secondary" onclick="openCloseModal({{ plan.id }}, '{{ plan.folio }}')"><i class="bi bi-check-circle"></i> Cerrar</button>
             {% endif %}
-            {% if can_manage and waves_map.get(plan.id) and waves_map[plan.id].status in ('READY_TO_ASSIGN', 'ASSIGNED') %}
+            {% if can_manage and waves_map.get(plan.id) and waves_map[plan.id].status in ('READY_TO_ASSIGN', 'ASSIGNED', 'NEEDS_REVIEW') %}
             <button type="button" class="btn btn-xs btn-outline-primary"
               onclick="openPickerModal({{ plan.id }}, '{{ plan.folio }}', {{ waves_map[plan.id].id }})">
               <i class="bi bi-person-plus"></i> Asignar picker
