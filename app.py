@@ -18058,8 +18058,9 @@ def assign_picker_to_plan_wave(plan_id, picker_user_id, manager_user_id=None):
 
     wave.assigned_to = picker_user_id
     wave.assigned_at = datetime.utcnow()
-    if wave.status in ('READY_TO_ASSIGN', 'RELEASED', 'NEEDS_REVIEW'):
+    if wave.status in ('READY_TO_ASSIGN', 'RELEASED'):
         wave.status = 'ASSIGNED'
+    # Do NOT clear NEEDS_REVIEW — shortage signal must be resolved by manager, not by picker assignment
 
     old_wms_status = plan.wms_status
     plan.assigned_to_user_id = picker_user_id
