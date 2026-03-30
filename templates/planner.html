@@ -133,7 +133,7 @@
             {% if can_manage and waves_map.get(plan.id) and waves_map[plan.id].status in ('READY_TO_ASSIGN', 'ASSIGNED') %}
             <button type="button" class="btn btn-xs btn-outline-primary"
               onclick="openPickerModal({{ plan.id }}, '{{ plan.folio }}', {{ waves_map[plan.id].id }})">
-              <i class="bi bi-person-plus"></i> Picker
+              <i class="bi bi-person-plus"></i> Asignar picker
             </button>
             {% endif %}
             <a href="{{ url_for('planner_detail', plan_id=plan.id) }}" class="btn btn-xs btn-outline-primary"><i class="bi bi-eye"></i> Ver</a>
@@ -202,6 +202,7 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <form id="kanbanPickerForm" method="post">
+        <input type="hidden" name="next" value="planner">
         <div class="modal-body">
           <p class="text-muted small">Folio: <strong id="kanbanPickerFolio"></strong></p>
           <label class="form-label fw-semibold">Operador</label>

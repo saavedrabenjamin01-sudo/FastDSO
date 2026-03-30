@@ -18324,12 +18324,15 @@ def planner_assign_picker(plan_id):
     if not picker_user_id:
         flash('Selecciona un operador', 'warning')
         return redirect(url_for('planner_detail', plan_id=plan_id))
+    next_dest = request.form.get('next', '')
     try:
         wave = assign_picker_to_plan_wave(plan_id, picker_user_id, manager_user_id=current_user.id)
         picker = db.session.get(User, picker_user_id)
         flash(f'Picker {picker.username if picker else picker_user_id} asignado a la wave #{wave.id}', 'success')
     except (ValueError, RuntimeError) as e:
         flash(f'Error al asignar picker: {e}', 'danger')
+    if next_dest == 'planner':
+        return redirect(url_for('planner'))
     return redirect(url_for('planner_detail', plan_id=plan_id))
 
 
