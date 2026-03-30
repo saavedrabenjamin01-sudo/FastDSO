@@ -10403,8 +10403,8 @@ def api_wms_task_pick(task_id):
         return jsonify({'error': 'Tarea no encontrada'}), 404
 
     wave = db.session.get(WmsPickWave, task.wave_id)
-    if not wave or wave.status != 'IN_PROGRESS':
-        return jsonify({'error': 'La wave no está en progreso'}), 400
+    if not wave or wave.status not in ('IN_PROGRESS', 'NEEDS_REVIEW'):
+        return jsonify({'error': 'La wave no está activa (IN_PROGRESS / NEEDS_REVIEW)'}), 400
     if wave.assigned_to != current_user.id and not current_user.has_permission('admin:users'):
         return jsonify({'error': 'No autorizado'}), 403
 
@@ -10513,8 +10513,8 @@ def api_wms_task_report_issue(task_id):
         return jsonify({'error': 'Tarea no encontrada'}), 404
 
     wave = db.session.get(WmsPickWave, task.wave_id)
-    if not wave or wave.status != 'IN_PROGRESS':
-        return jsonify({'error': 'La wave no está en progreso'}), 400
+    if not wave or wave.status not in ('IN_PROGRESS', 'NEEDS_REVIEW'):
+        return jsonify({'error': 'La wave no está activa (IN_PROGRESS / NEEDS_REVIEW)'}), 400
     if wave.assigned_to != current_user.id and not current_user.has_permission('admin:users'):
         return jsonify({'error': 'No autorizado'}), 403
 
@@ -10653,8 +10653,8 @@ def api_wms_wave_finish(wave_id):
     wave = db.session.get(WmsPickWave, wave_id)
     if not wave:
         return jsonify({'error': 'Wave no encontrada'}), 404
-    if wave.status != 'IN_PROGRESS':
-        return jsonify({'error': f'Solo se puede finalizar en estado IN_PROGRESS (actual: {wave.status})'}), 400
+    if wave.status not in ('IN_PROGRESS', 'NEEDS_REVIEW'):
+        return jsonify({'error': f'Solo se puede finalizar en estado IN_PROGRESS o NEEDS_REVIEW (actual: {wave.status})'}), 400
     if wave.assigned_to != current_user.id and not current_user.has_permission('admin:users'):
         return jsonify({'error': 'No autorizado'}), 403
 
