@@ -59,13 +59,23 @@
     }) %}
   {% endif %}
 
-  {% if can('distribution:view') %}
+  {% if can('sales:upload') %}
     {% set _ = modules.append({
-      'title': 'Distribución',
-      'desc': 'Sugerencias de distribución y reposición automática.',
+      'title': 'Generador de distribución',
+      'desc': 'Carga ventas y genera sugerencias de distribución automáticas.',
       'icon': 'bi-truck',
       'color': '#7c3aed',
-      'url': url_for('predict')
+      'url': url_for('upload')
+    }) %}
+  {% endif %}
+
+  {% if can('runs:view') %}
+    {% set _ = modules.append({
+      'title': 'Centro de corridas',
+      'desc': 'Gestiona, activa y compara corridas de distribución.',
+      'icon': 'bi-clock-history',
+      'color': '#0369a1',
+      'url': url_for('runs')
     }) %}
   {% endif %}
 
@@ -75,7 +85,7 @@
       'desc': 'Carga tu propio plan de distribución desde un archivo.',
       'icon': 'bi-upload',
       'color': '#b45309',
-      'url': url_for('manual_distribution')
+      'url': url_for('distribution_manual')
     }) %}
   {% endif %}
 
@@ -105,7 +115,7 @@
       'desc': 'Notificaciones proactivas de quiebres, sobrestock y SKUs silenciosos.',
       'icon': 'bi-bell',
       'color': '#dc2626',
-      'url': url_for('alerts_view')
+      'url': url_for('alerts_page')
     }) %}
   {% endif %}
 

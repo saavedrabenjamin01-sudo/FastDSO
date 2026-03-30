@@ -1942,8 +1942,8 @@ def require_permission(permission):
             if not current_user.is_authenticated:
                 return redirect(url_for('login'))
             if not current_user.has_permission(permission):
-                flash(f'No tienes permiso para acceder a esta sección.', 'warning')
-                return redirect(url_for('dashboard'))
+                flash('No tienes permiso para acceder a esta sección.', 'warning')
+                return redirect(url_for('home'))
             return f(*args, **kwargs)
         return decorated_function
     return decorator
