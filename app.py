@@ -10483,8 +10483,18 @@ def api_wms_task_pick(task_id):
         task.status = 'IN_PROGRESS'
     task.updated_at = datetime.utcnow()
     _wms_update_wave_counters(wave)
+    wave_became_needs_review = False
+    if task.status == 'SHORT' and wave.status == 'IN_PROGRESS' and wave.short_units and wave.short_units > 0:
+        wave.status = 'NEEDS_REVIEW'
+        wave_became_needs_review = True
     db.session.commit()
     print(f"[WMS] pick sku={task.sku} picked={picked_qty} remaining={task.qty_requested - task.qty_picked - (task.short_qty or 0)}")
+    if wave_became_needs_review:
+        try:
+            sync_plan_from_wave(wave.id, event_type='PICKING_SHORTAGE_REPORTED', actor_user_id=current_user.id,
+                                note=f'SKU {task.sku}: tarea marcada SHORT via pick')
+        except Exception as _e:
+            print(f"[PLANNER-WMS] WARNING: sync NEEDS_REVIEW on task_pick failed: {_e}")
     return jsonify({
         'ok': True,
         'task_status': task.status,
@@ -10615,8 +10625,10 @@ def api_wms_task_report_issue(task_id):
         ))
 
     _wms_update_wave_counters(wave)
+    if wave.status == 'IN_PROGRESS' and wave.short_units and wave.short_units > 0:
+        wave.status = 'NEEDS_REVIEW'
     db.session.commit()
-    print(f"[WMS] issue sku={task.sku} missing={missing_qty} reason={reason_code}")
+    print(f"[WMS] issue sku={task.sku} missing={missing_qty} reason={reason_code} wave_status={wave.status}")
     try:
         sync_plan_from_wave(wave.id, event_type='PICKING_SHORTAGE_REPORTED', actor_user_id=current_user.id,
                             note=f'SKU {task.sku}: {missing_qty} faltantes ({reason_code})')
@@ -11133,23 +11145,10 @@ def distribution_manual():
 
         wave_msg = ''
         try:
-            wave, total_req, total_res = wms_create_pick_wave_for_plan(
-                plan.id,
-                priority=plan.urgency or 'MEDIUM',
-                warehouse_code='MAIN',
-                user=current_user
-            )
-            plan.wms_wave_id = wave.id
-            plan.wms_status = wave.status
-            _planner_wms_log(plan.id, 'WAVE_CREATED', wave_id=wave.id,
-                             new_status=wave.status, created_by_user_id=current_user.id)
-            db.session.commit()
+            wave = ensure_wave_for_plan(plan.id, current_user_id=current_user.id)
             wave_msg = f' | Pick Wave #{wave.id} ({wave.status})'
         except Exception as e:
-            db.session.rollback()
             print(f"[WMS] ERROR creating pick wave for manual plan {plan.id}: {e}")
-            _planner_wms_log(plan.id, 'WAVE_CREATION_FAILED', created_by_user_id=current_user.id,
-                             note=str(e)[:500])
             try:
                 db.session.commit()
             except Exception:
@@ -12207,23 +12206,10 @@ def approve_and_send(run_id):
 
     wave_msg = ''
     try:
-        wave, total_req, total_res = wms_create_pick_wave_for_plan(
-            plan.id,
-            priority=plan.urgency or 'MEDIUM',
-            warehouse_code='MAIN',
-            user=current_user
-        )
-        plan.wms_wave_id = wave.id
-        plan.wms_status = wave.status
-        _planner_wms_log(plan.id, 'WAVE_CREATED', wave_id=wave.id,
-                         new_status=wave.status, created_by_user_id=current_user.id)
-        db.session.commit()
+        wave = ensure_wave_for_plan(plan.id, current_user_id=current_user.id)
         wave_msg = f' | WMS Pick Wave #{wave.id} creada ({wave.status})'
     except Exception as e:
-        db.session.rollback()
         print(f"[WMS] ERROR creating pick wave for plan {plan.id}: {e}")
-        _planner_wms_log(plan.id, 'WAVE_CREATION_FAILED', created_by_user_id=current_user.id,
-                         note=str(e)[:500])
         try:
             db.session.commit()
         except Exception:
