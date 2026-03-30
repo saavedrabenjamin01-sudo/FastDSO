@@ -13223,10 +13223,7 @@ def admin_role_save_permissions(role_id):
             db.session.add(RolePermission(role_id=role.id, permission_id=perm.id))
 
     db.session.commit()
-
-    db.session.query(User).filter(User.role_id == role.id).update(
-        {}, synchronize_session=False
-    )
+    print(f"[RBAC] role save: no user field updates required for role_id={role.id}")
 
     flash(f'Permisos del perfil "{role.name}" actualizados ({len(submitted_codes)} permisos).', 'success')
     return redirect(url_for('admin_role_edit', role_id=role_id))
