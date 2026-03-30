@@ -44,35 +44,58 @@ def normalize_sku(value):
     return s
 
 # ------------------ RBAC Configuration ------------------
-ROLES = ['Admin', 'Management', 'CategoryManager', 'WarehouseOps', 'Viewer']
+ROLES = ['Admin', 'Management', 'CategoryManager', 'WarehouseOps', 'WarehouseManager', 'WarehouseOperator', 'Viewer']
 
 ROLE_PERMISSIONS = {
     'Admin': [
         'dashboard:view', 'sales:upload', 'sales_macro:upload', 'stock_store:upload', 'stock_cd:upload',
-        'stock:query', 'distribution:generate', 'distribution:export',
+        'stock:query', 'stock:upload', 'stock:export', 'distribution:generate', 'distribution:export', 'distribution:manual',
         'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'runs:submit', 'runs:approve', 'admin:users', 'admin:reset', 'audit:view',
         'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view',
-        'planner:view', 'planner:operate', 'planner:manage', 'wms:view'
+        'planner:view', 'planner:operate', 'planner:manage', 'planner:approve', 'planner:assign_picker',
+        'wms:view', 'wms:moves', 'wms:pick', 'wms:kpis', 'users:manage', 'roles:manage'
     ],
     'Management': [
-        'dashboard:view', 'stock:query', 'distribution:export',
+        'dashboard:view', 'stock:query', 'stock:export', 'distribution:export',
         'forecast_v2:view', 'runs:view', 'runs:approve', 'audit:view', 'rebalancing:view', 'slow_stock:view', 'store_health:view', 'alerts:view',
-        'planner:view', 'planner:manage', 'wms:view'
+        'planner:view', 'planner:manage', 'planner:approve', 'wms:view', 'wms:kpis'
     ],
     'CategoryManager': [
-        'dashboard:view', 'sales:upload', 'sales_macro:upload', 'distribution:generate', 'distribution:export',
+        'dashboard:view', 'sales:upload', 'sales_macro:upload', 'distribution:generate', 'distribution:export', 'distribution:manual',
         'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'runs:submit', 'rebalancing:view', 'rebalancing:run',
         'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view',
         'planner:view'
     ],
     'WarehouseOps': [
-        'dashboard:view', 'stock_store:upload', 'stock_cd:upload', 'stock:query',
+        'dashboard:view', 'stock_store:upload', 'stock_cd:upload', 'stock:query', 'stock:upload',
         'distribution:export', 'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view',
-        'planner:view', 'planner:operate', 'wms:view'
+        'planner:view', 'planner:operate', 'planner:assign_picker', 'wms:view', 'wms:moves', 'wms:kpis'
+    ],
+    'WarehouseManager': [
+        'dashboard:view', 'stock:query', 'stock_store:upload', 'stock_cd:upload', 'stock:upload',
+        'planner:view', 'planner:operate', 'planner:assign_picker', 'planner:approve',
+        'wms:view', 'wms:moves', 'wms:kpis', 'alerts:view', 'store_health:view'
+    ],
+    'WarehouseOperator': [
+        'wms:view', 'wms:pick'
     ],
     'Viewer': [
         'dashboard:view', 'stock:query', 'alerts:view'
     ]
+}
+
+PERMISSION_MODULES = {
+    'Dashboard': ['dashboard:view'],
+    'Ventas': ['sales:upload', 'sales_macro:upload'],
+    'Stock': ['stock_store:upload', 'stock_cd:upload', 'stock:upload', 'stock:query', 'stock:export'],
+    'Distribución': ['distribution:generate', 'distribution:export', 'distribution:manual'],
+    'Forecast': ['forecast_v2:view', 'forecast_v2:run'],
+    'Corridas': ['runs:view', 'runs:submit', 'runs:approve'],
+    'Rebalanceo': ['rebalancing:view', 'rebalancing:run'],
+    'Inventario lento': ['slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view'],
+    'Planner': ['planner:view', 'planner:operate', 'planner:manage', 'planner:approve', 'planner:assign_picker'],
+    'WMS': ['wms:view', 'wms:moves', 'wms:pick', 'wms:kpis'],
+    'Administración': ['admin:users', 'admin:reset', 'audit:view', 'users:manage', 'roles:manage'],
 }
 MIN_WEEKS = 3  # mínimo de semanas de historia requeridas por SKU–Tienda
 
@@ -190,6 +213,7 @@ class User(db.Model, UserMixin):
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(256), nullable=False)
     role = db.Column(db.String(50), nullable=False, default='Viewer')
+    role_id = db.Column(db.Integer, db.ForeignKey('role.id'), nullable=True, index=True)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -200,17 +224,82 @@ class User(db.Model, UserMixin):
         return check_password_hash(self.password_hash, password)
 
     def has_permission(self, permission):
-        # Admin role bypasses all permission checks
         if self.role == 'Admin':
             return True
-        permissions = ROLE_PERMISSIONS.get(self.role, [])
-        return permission in permissions
+        if self.role_id:
+            role_obj = db.session.get(Role, self.role_id)
+            if role_obj:
+                if role_obj.name == 'Admin':
+                    return True
+                exists_q = db.session.query(
+                    db.exists()
+                    .where(RolePermission.role_id == self.role_id)
+                    .where(RolePermission.permission_id == Permission.id)
+                    .where(Permission.code == permission)
+                ).scalar()
+                return bool(exists_q)
+        return permission in ROLE_PERMISSIONS.get(self.role, [])
 
     def get_permissions(self):
-        # Admin gets all permissions
         if self.role == 'Admin':
             return list(set(p for perms in ROLE_PERMISSIONS.values() for p in perms))
+        if self.role_id:
+            role_obj = db.session.get(Role, self.role_id)
+            if role_obj:
+                if role_obj.name == 'Admin':
+                    return list(set(p for perms in ROLE_PERMISSIONS.values() for p in perms))
+                return [
+                    rp.permission.code
+                    for rp in RolePermission.query.filter_by(role_id=self.role_id)
+                    .join(Permission).all()
+                ]
         return ROLE_PERMISSIONS.get(self.role, [])
+
+    @property
+    def role_display(self):
+        if self.role_id:
+            role_obj = db.session.get(Role, self.role_id)
+            if role_obj:
+                return role_obj.name
+        return self.role
+
+
+class Role(db.Model):
+    __tablename__ = 'role'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(80), unique=True, nullable=False)
+    description = db.Column(db.String(255), nullable=True)
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    role_permissions = db.relationship('RolePermission', backref='role_obj', lazy='select', cascade='all, delete-orphan')
+    users = db.relationship('User', foreign_keys='User.role_id', backref='role_obj', lazy='dynamic')
+
+    def get_permission_codes(self):
+        return {rp.permission.code for rp in self.role_permissions if rp.permission}
+
+    def user_count(self):
+        return self.users.count()
+
+
+class Permission(db.Model):
+    __tablename__ = 'permission'
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(100), unique=True, nullable=False)
+    module = db.Column(db.String(80), nullable=True)
+    description = db.Column(db.String(255), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    role_permissions = db.relationship('RolePermission', backref='permission', lazy='select')
+
+
+class RolePermission(db.Model):
+    __tablename__ = 'role_permission'
+    id = db.Column(db.Integer, primary_key=True)
+    role_id = db.Column(db.Integer, db.ForeignKey('role.id'), nullable=False, index=True)
+    permission_id = db.Column(db.Integer, db.ForeignKey('permission.id'), nullable=False, index=True)
+
+    __table_args__ = (db.UniqueConstraint('role_id', 'permission_id', name='uq_role_permission'),)
 
 
 class Product(db.Model):
@@ -1831,10 +1920,17 @@ def inject_globals():
     """
     Variables globales disponibles en todos los templates Jinja.
     """
+    def can(permission_code):
+        if current_user and current_user.is_authenticated:
+            return current_user.has_permission(permission_code)
+        return False
+
     return {
         'date': date,
         'ROLES': ROLES,
-        'ROLE_PERMISSIONS': ROLE_PERMISSIONS
+        'ROLE_PERMISSIONS': ROLE_PERMISSIONS,
+        'PERMISSION_MODULES': PERMISSION_MODULES,
+        'can': can,
     }
 
 
@@ -12969,29 +13065,31 @@ def admin_create_user():
     username = (request.form.get('username') or '').strip().lower()
     password = request.form.get('password') or ''
     role = request.form.get('role') or 'Viewer'
-    
+
     if not username or not password:
         flash('Usuario y contraseña son requeridos.', 'danger')
         return redirect(url_for('admin_users'))
-    
+
     if role not in ROLES:
         flash('Rol inválido.', 'danger')
         return redirect(url_for('admin_users'))
-    
+
     existing = User.query.filter_by(username=username).first()
     if existing:
         flash(f'El usuario "{username}" ya existe.', 'danger')
         return redirect(url_for('admin_users'))
-    
+
+    role_obj = Role.query.filter_by(name=role).first()
     new_user = User(
         username=username,
         password_hash=generate_password_hash(password),
         role=role,
+        role_id=role_obj.id if role_obj else None,
         is_active=True
     )
     db.session.add(new_user)
     db.session.commit()
-    
+
     flash(f'Usuario "{username}" creado con rol {role}.', 'success')
     return redirect(url_for('admin_users'))
 
@@ -13004,20 +13102,22 @@ def admin_update_user(user_id):
     user = db.session.get(User, user_id)
     if not user:
         abort(404)
-    
+
     if user.username == 'admin' and current_user.id != user.id:
         flash('No puedes modificar al usuario admin.', 'danger')
         return redirect(url_for('admin_users'))
-    
+
     role = request.form.get('role')
     is_active = request.form.get('is_active') == 'on'
-    
+
     if role and role in ROLES:
         user.role = role
-    
+        role_obj = Role.query.filter_by(name=role).first()
+        user.role_id = role_obj.id if role_obj else None
+
     if user.username != 'admin':
         user.is_active = is_active
-    
+
     db.session.commit()
     flash(f'Usuario "{user.username}" actualizado.', 'success')
     return redirect(url_for('admin_users'))
@@ -13042,6 +13142,120 @@ def admin_reset_password(user_id):
     
     flash(f'Contraseña de "{user.username}" actualizada.', 'success')
     return redirect(url_for('admin_users'))
+
+
+@app.route('/admin/roles')
+@login_required
+@require_permission('roles:manage')
+def admin_roles():
+    """List all roles with user counts."""
+    roles = Role.query.order_by(Role.name.asc()).all()
+    all_perms = Permission.query.order_by(Permission.module, Permission.code).all()
+    return render_template(
+        'admin_roles.html',
+        roles=roles,
+        all_perms=all_perms,
+        permission_modules=PERMISSION_MODULES,
+    )
+
+
+@app.route('/admin/roles/create', methods=['POST'])
+@login_required
+@require_permission('roles:manage')
+def admin_create_role():
+    """Create a new role."""
+    name = (request.form.get('name') or '').strip()
+    description = (request.form.get('description') or '').strip()
+    if not name:
+        flash('El nombre del perfil es requerido.', 'danger')
+        return redirect(url_for('admin_roles'))
+    if Role.query.filter_by(name=name).first():
+        flash(f'El perfil "{name}" ya existe.', 'danger')
+        return redirect(url_for('admin_roles'))
+    role = Role(name=name, description=description, is_active=True)
+    db.session.add(role)
+    db.session.commit()
+    flash(f'Perfil "{name}" creado.', 'success')
+    return redirect(url_for('admin_role_edit', role_id=role.id))
+
+
+@app.route('/admin/roles/<int:role_id>', methods=['GET'])
+@login_required
+@require_permission('roles:manage')
+def admin_role_edit(role_id):
+    """Show role permissions matrix."""
+    role = db.session.get(Role, role_id)
+    if not role:
+        abort(404)
+    all_perms = Permission.query.order_by(Permission.module, Permission.code).all()
+    role_perm_codes = role.get_permission_codes()
+    users = User.query.filter_by(role_id=role_id).order_by(User.username).all()
+    return render_template(
+        'admin_roles.html',
+        roles=Role.query.order_by(Role.name.asc()).all(),
+        selected_role=role,
+        all_perms=all_perms,
+        role_perm_codes=role_perm_codes,
+        permission_modules=PERMISSION_MODULES,
+        role_users=users,
+    )
+
+
+@app.route('/admin/roles/<int:role_id>/permissions', methods=['POST'])
+@login_required
+@require_permission('roles:manage')
+def admin_role_save_permissions(role_id):
+    """Save the permission matrix for a role."""
+    role = db.session.get(Role, role_id)
+    if not role:
+        abort(404)
+    if role.name == 'Admin':
+        flash('El perfil Admin siempre tiene todos los permisos.', 'warning')
+        return redirect(url_for('admin_role_edit', role_id=role_id))
+
+    submitted_codes = set(request.form.getlist('permissions'))
+
+    RolePermission.query.filter_by(role_id=role.id).delete()
+
+    for code in submitted_codes:
+        perm = Permission.query.filter_by(code=code).first()
+        if perm:
+            db.session.add(RolePermission(role_id=role.id, permission_id=perm.id))
+
+    db.session.commit()
+
+    db.session.query(User).filter(User.role_id == role.id).update(
+        {}, synchronize_session=False
+    )
+
+    flash(f'Permisos del perfil "{role.name}" actualizados ({len(submitted_codes)} permisos).', 'success')
+    return redirect(url_for('admin_role_edit', role_id=role_id))
+
+
+@app.route('/admin/roles/<int:role_id>/update', methods=['POST'])
+@login_required
+@require_permission('roles:manage')
+def admin_role_update(role_id):
+    """Update role name / description / active status."""
+    role = db.session.get(Role, role_id)
+    if not role:
+        abort(404)
+    if role.name == 'Admin':
+        flash('El perfil Admin no se puede editar.', 'warning')
+        return redirect(url_for('admin_roles'))
+    name = (request.form.get('name') or '').strip()
+    description = (request.form.get('description') or '').strip()
+    is_active = request.form.get('is_active') == 'on'
+    if name and name != role.name:
+        if Role.query.filter_by(name=name).first():
+            flash(f'El nombre "{name}" ya está en uso.', 'danger')
+            return redirect(url_for('admin_role_edit', role_id=role_id))
+        role.name = name
+    role.description = description
+    role.is_active = is_active
+    db.session.commit()
+    flash('Perfil actualizado.', 'success')
+    return redirect(url_for('admin_role_edit', role_id=role_id))
 
 
 @app.route('/admin/sku_dedup', methods=['GET', 'POST'])
@@ -20047,6 +20261,55 @@ def ensure_inventory_schema():
         print(f"[INVENTORY] Created store baseline: {bl_date}")
 
 
+def seed_rbac():
+    """Seed Role, Permission, RolePermission tables from ROLE_PERMISSIONS dict. Idempotent."""
+    try:
+        all_codes = set()
+        for codes in ROLE_PERMISSIONS.values():
+            all_codes.update(codes)
+
+        for code in sorted(all_codes):
+            if not Permission.query.filter_by(code=code).first():
+                module = code.split(':')[0] if ':' in code else code
+                perm = Permission(code=code, module=module, description=code)
+                db.session.add(perm)
+        db.session.flush()
+
+        for role_name in ROLES:
+            if not Role.query.filter_by(name=role_name).first():
+                role = Role(name=role_name, description=role_name, is_active=True)
+                db.session.add(role)
+        db.session.flush()
+
+        for role_name, codes in ROLE_PERMISSIONS.items():
+            role = Role.query.filter_by(name=role_name).first()
+            if not role:
+                continue
+            existing_perm_ids = {
+                rp.permission_id
+                for rp in RolePermission.query.filter_by(role_id=role.id).all()
+            }
+            for code in codes:
+                perm = Permission.query.filter_by(code=code).first()
+                if perm and perm.id not in existing_perm_ids:
+                    db.session.add(RolePermission(role_id=role.id, permission_id=perm.id))
+
+        db.session.commit()
+
+        unmapped = User.query.filter(User.role_id == None).all()
+        for user in unmapped:
+            role_obj = Role.query.filter_by(name=user.role).first()
+            if not role_obj:
+                role_obj = Role.query.filter_by(name='Viewer').first()
+            if role_obj:
+                user.role_id = role_obj.id
+        db.session.commit()
+        print(f"[RBAC] Seeded roles/permissions; mapped {len(unmapped)} users")
+    except Exception as e:
+        db.session.rollback()
+        print(f"[RBAC] Seed warning: {e}")
+
+
 def init_database():
     """Initialize database with safe schema migration for RBAC and Audit columns."""
     from sqlalchemy import inspect, text
@@ -20075,6 +20338,12 @@ def init_database():
             conn.execute(text("ALTER TABLE user ADD COLUMN is_active BOOLEAN DEFAULT 1"))
             conn.commit()
         print("✅ Added 'is_active' column to user table")
+
+    if 'role_id' not in user_columns:
+        with db.engine.connect() as conn:
+            conn.execute(text("ALTER TABLE user ADD COLUMN role_id INTEGER"))
+            conn.commit()
+        print("✅ Added 'role_id' column to user table")
     
     if 'run' in inspector.get_table_names():
         run_columns = [col['name'] for col in inspector.get_columns('run')]
@@ -20103,19 +20372,22 @@ def init_database():
                 conn.commit()
             print("✅ Added 'is_active' column to run table")
     
+    seed_rbac()
+
     admin = User.query.filter_by(username="admin").first()
     if not admin:
+        admin_role = Role.query.filter_by(name='Admin').first()
         admin = User(
             username="admin",
             password_hash=generate_password_hash("admin"),
             role='Admin',
+            role_id=admin_role.id if admin_role else None,
             is_active=True
         )
         db.session.add(admin)
         db.session.commit()
         print("[INIT] Admin created")
     else:
-        # Always ensure admin has correct role and is active (do NOT touch password)
         needs_update = False
         if admin.role != 'Admin':
             admin.role = 'Admin'
@@ -20123,6 +20395,11 @@ def init_database():
         if not admin.is_active:
             admin.is_active = True
             needs_update = True
+        if admin.role_id is None:
+            admin_role = Role.query.filter_by(name='Admin').first()
+            if admin_role:
+                admin.role_id = admin_role.id
+                needs_update = True
         if needs_update:
             db.session.commit()
             print("[INIT] Admin promoted to admin role")

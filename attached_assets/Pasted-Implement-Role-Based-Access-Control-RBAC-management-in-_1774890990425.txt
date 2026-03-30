@@ -1,0 +1,181 @@
+Implement Role-Based Access Control (RBAC) management in FastDSO/FastWMS so the administrator can manage permissions by profile from the User Management module.
+
+GOAL
+Allow admin users to manage which permissions each profile/role has, and make the app respect those permissions in:
+- routes
+- sidebar/menu visibility
+- action buttons
+
+SCOPE
+- Add permission tables and UI
+- Keep existing users working
+- Migrate current simple role system into structured RBAC without breaking login
+
+DATABASE / MODELS
+
+1) Role
+- id
+- name (unique)
+- description
+- is_active (bool default true)
+- created_at
+
+2) Permission
+- id
+- code (unique)   # e.g. "dashboard:view", "wms:pick"
+- module          # e.g. "dashboard", "wms", "planner"
+- description
+- created_at
+
+3) RolePermission
+- id
+- role_id (FK Role)
+- permission_id (FK Permission)
+
+4) User
+- ensure user has role_id FK to Role
+- if existing user.role is a text field, keep backward compatibility:
+   - if role_id missing, map text role to Role record on startup or first access
+
+INITIAL SEED
+Seed default roles:
+- admin
+- manager
+- category
+- warehouse_manager
+- warehouse_operator
+- consulta
+
+Seed default permissions (minimum set):
+- dashboard:view
+- stock:upload
+- stock:query
+- stock:export
+- distribution:auto
+- distribution:manual
+- planner:view
+- planner:approve
+- planner:assign_picker
+- wms:view
+- wms:moves
+- wms:pick
+- wms:kpis
+- users:manage
+- roles:manage
+
+Seed default mappings:
+- admin -> all
+- manager -> dashboard:view, stock:query, stock:export, planner:view, planner:approve, wms:view, wms:kpis
+- category -> dashboard:view, stock:query, distribution:auto, distribution:manual, planner:view
+- warehouse_manager -> planner:view, planner:assign_picker, wms:view, wms:moves, wms:kpis
+- warehouse_operator -> wms:view, wms:pick
+- consulta -> dashboard:view, stock:query
+
+BACKEND HELPERS
+
+1) Add User.has_permission(code) method:
+- returns True if:
+   - user is admin
+   - OR role has the permission
+- safe fallback if role missing
+
+2) Add decorator:
+require_permission("permission_code")
+- if user not authenticated -> redirect login
+- if user lacks permission -> abort 403 or show friendly access denied page
+
+3) Add template helper:
+can(permission_code)
+so Jinja can do:
+{% if can('wms:view') %} ... {% endif %}
+
+USER MANAGEMENT UI
+
+1) Extend the existing user management module with a new admin-only section:
+Route: /admin/roles
+Permission required: roles:manage
+
+Page sections:
+A) Roles list
+- role name
+- description
+- active/inactive
+- number of users
+- actions: Edit permissions / Edit info
+
+B) Role permissions matrix
+When opening a role:
+- show grouped permissions by module:
+   Dashboard
+   Stock
+   Distribution
+   Planner
+   WMS
+   Users
+- checkbox list per permission
+- Save button
+
+C) Optional:
+- Create new role
+- Duplicate role
+- Disable role
+
+2) In User edit/create screen:
+- replace plain text role with dropdown from Role table
+- show selected role permissions summary
+- save role_id to user
+
+APP ENFORCEMENT
+
+1) Routes
+Apply require_permission decorator to key routes:
+- user management -> users:manage
+- role management -> roles:manage
+- stock upload -> stock:upload
+- stock query -> stock:query
+- manual distribution -> distribution:manual
+- planner approval -> planner:approve
+- picker assignment -> planner:assign_picker
+- wms inventory -> wms:view
+- wms moves -> wms:moves
+- mobile picking -> wms:pick
+- wms kpis -> wms:kpis
+
+2) Sidebar/menu
+Hide modules if user lacks permission:
+- use can(...) in templates
+- if user cannot access a module, it must not be shown
+
+3) Buttons/actions
+Hide action buttons that user cannot execute:
+- approval buttons
+- assign picker
+- create move
+- export if restricted
+- role/user admin buttons
+
+BACKWARD COMPATIBILITY
+- Do not break existing logins
+- If old users have role as plain text and no role_id:
+   - map text to seeded roles by name
+   - if unknown, map to "consulta"
+- Keep old role text field only if needed temporarily; prefer role_id moving forward
+
+UI / STYLE
+- Match current FastDSO admin/user management visuals
+- Use cards, clean table, grouped permission sections
+- Labels in Spanish:
+   - Gestión de perfiles
+   - Permisos
+   - Usuarios asignados
+   - Guardar cambios
+   - Acceso denegado
+
+DELIVERABLES
+- models/tables
+- seeded roles and permissions
+- user role assignment dropdown
+- role permissions management page
+- route protection
+- menu/button visibility by permission
+- no breaking changes to existing modules

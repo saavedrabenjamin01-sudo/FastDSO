@@ -228,7 +228,7 @@
     {% endif %}
 
     <!-- ===== 6) Administración ===== -->
-    {% if current_user.is_authenticated and (current_user.has_permission('admin:users') or current_user.has_permission('audit:view')) %}
+    {% if current_user.is_authenticated and (current_user.has_permission('admin:users') or current_user.has_permission('audit:view') or current_user.has_permission('roles:manage')) %}
     <div class="nav-group">
       <button class="nav-group-toggle" aria-expanded="true">
         <span class="nav-icon"><i class="bi bi-gear"></i></span>
@@ -241,6 +241,12 @@
         <a class="nav-link" href="{{ url_for('admin_users') }}">
           <span class="nav-icon"><i class="bi bi-people"></i></span>
           <span class="nav-text">Gestión de usuarios</span>
+        </a>
+        {% endif %}
+        {% if current_user.has_permission('roles:manage') %}
+        <a class="nav-link" href="{{ url_for('admin_roles') }}">
+          <span class="nav-icon"><i class="bi bi-shield-lock"></i></span>
+          <span class="nav-text">Gestión de perfiles</span>
         </a>
         {% endif %}
         {% if current_user.has_permission('audit:view') %}
