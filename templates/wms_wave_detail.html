@@ -77,7 +77,7 @@
     <i class="bi bi-play-circle"></i> Iniciar Picking
   </button>
   {% endif %}
-  {% if wave.status == 'IN_PROGRESS' %}
+  {% if wave.status in ('IN_PROGRESS', 'NEEDS_REVIEW') %}
   <button class="btn btn-success" id="btn-finish-wave" onclick="apiFinishWave({{ wave.id }})">
     <i class="bi bi-check2-all"></i> Finalizar Wave
   </button>
@@ -110,7 +110,7 @@
             <th class="text-end">Faltante</th>
             <th class="text-center">Estado</th>
             <th class="text-center">Ubicaciones</th>
-            {% if wave.status == 'IN_PROGRESS' and can_operate %}
+            {% if wave.status in ('IN_PROGRESS', 'NEEDS_REVIEW') and can_operate %}
             <th class="text-center">Acciones</th>
             {% endif %}
           </tr>
@@ -158,7 +158,7 @@
               <span class="text-muted">—</span>
               {% endif %}
             </td>
-            {% if wave.status == 'IN_PROGRESS' and can_operate %}
+            {% if wave.status in ('IN_PROGRESS', 'NEEDS_REVIEW') and can_operate %}
             <td class="text-center">
               <div class="d-flex gap-1 justify-content-center">
                 {% if t.status not in ('DONE',) %}
@@ -181,7 +181,7 @@
           </tr>
           {% if t.reservations %}
           <tr class="collapse" id="res-{{ t.id }}">
-            <td colspan="{{ 9 if wave.status == 'IN_PROGRESS' and can_operate else 8 }}" class="bg-light p-0">
+            <td colspan="{{ 9 if wave.status in ('IN_PROGRESS', 'NEEDS_REVIEW') and can_operate else 8 }}" class="bg-light p-0">
               <div class="px-4 py-2">
                 <table class="table table-sm table-borderless mb-0" style="font-size:0.78rem; max-width:480px;">
                   <thead>
