@@ -1,0 +1,245 @@
+Implement mobile-first picking execution for FastWMS as a functional operator workflow (PWA/mobile web style), with mandatory location scanning and issue reporting.
+
+GOAL
+Create a mobile-friendly picking interface for warehouse operators, where:
+- operators only see waves assigned to them
+- picking is executed one task/reservation at a time
+- scanning the location is mandatory before confirming any pick
+- product barcode scan is optional for V1
+- operator can report shortages/issues in real time
+- picking updates WMS and Planner status through existing orchestration
+
+GENERAL UX PRINCIPLES
+- Mobile first
+- Big buttons
+- One main task at a time
+- Minimal text input
+- High contrast
+- FastDSO visual identity (same colors/cards/pills)
+- Must work well on phone screen widths
+
+PAGES / ROUTES
+
+1) /wms/mobile/my-waves
+Purpose:
+- operator sees only waves assigned to current_user
+- statuses allowed: ASSIGNED, IN_PROGRESS
+UI:
+- mobile cards list
+- each card shows:
+  - folio / plan reference
+  - urgency badge
+  - total SKUs
+  - total units
+  - progress %
+  - status
+  - button “Iniciar” or “Continuar”
+Behavior:
+- if wave status == ASSIGNED and user taps Iniciar:
+   - set wave.status = IN_PROGRESS
+   - set pick_started_at if empty
+   - sync planner status using existing orchestration service
+
+2) /wms/mobile/wave/<wave_id>
+Purpose:
+- execute picking for one assigned wave
+Rules:
+- only assigned operator (or warehouse manager/admin) can open
+- mobile-only optimized layout
+
+MAIN SCREEN CONTENT
+A) Top sticky header:
+- Folio
+- urgency badge
+- progress bar (picked lines / total lines)
+- counters:
+   - picked units
+   - remaining units
+   - shortage units
+
+B) Active reservation/task card (ONE AT A TIME)
+Show current next pending reservation (not the whole table first):
+- SKU
+- product_name
+- requested_qty for this reservation OR remaining_qty if task spans multiple reservations
+- location
+- box_number
+- location_code
+- location_type badge
+- optional note / hint
+
+Display it as:
+- large location block:
+   “Ubicación: A-02”
+   “Caja: 01”
+- product block:
+   SKU, name
+- quantity block:
+   Required / Picked / Remaining
+
+C) Mandatory location scan section
+- Button: “Escanear ubicación”
+- Input fallback for manual code entry if scan unavailable
+- The expected location token should be based on:
+   LOCATION + BOX_NUMBER
+   or LOCATION_CODE
+- Accepted scanned formats:
+   - exact location_code
+   - or "LOC|MAIN|<LOCATION>|<BOX_NUMBER>"
+Validation:
+- operator must successfully scan/enter matching location before:
+   - Pick completo
+   - Pick parcial
+   - Reportar incidencia
+- if mismatch:
+   show red alert
+   keep action buttons disabled
+
+D) Optional product scan section (V1 optional)
+- Button: “Escanear producto (opcional)”
+- If scanned and mismatch occurs, show warning but do not hard block (V1)
+- store scan in a lightweight log if possible
+
+E) Action buttons (large mobile buttons)
+- “Pick completo”
+   -> picks all remaining qty for the reservation
+- “Pick parcial”
+   -> opens quantity keypad/modal
+- “Reportar incidencia”
+   -> opens shortage/issue modal
+
+ACTION LOGIC
+
+1) Pick completo
+- Requires successful location scan validation
+- Confirm picked_qty = remaining reserved qty for current reservation
+- Update:
+   - WmsInventory.on_hand_units -= picked_qty
+   - WmsInventory.allocated_units -= picked_qty
+   - WmsPickReservation.picked_qty += picked_qty
+   - WmsPickReservation.status = PICKED
+   - WmsPickTask.picked_qty += picked_qty
+   - if task total picked == requested_qty and no unresolved shortages:
+       task.status = DONE
+- Update wave counters and sync planner status if needed
+- Auto-advance to next pending reservation/task
+
+2) Pick parcial
+- Requires successful location scan validation
+- Opens modal with numeric keypad/input:
+   - picked_qty
+   - optional note
+Validation:
+- picked_qty > 0
+- picked_qty < remaining reserved qty
+Behavior:
+- apply picked_qty as above
+- reservation.status = PARTIAL
+- task.status = IN_PROGRESS unless completed
+- then immediately prompt:
+   “¿Deseas reportar faltante ahora?”
+   buttons:
+   - Sí -> open issue modal prefilled with missing qty
+   - No -> continue
+
+3) Reportar incidencia
+- Requires successful location scan validation
+- Modal fields:
+   - missing_qty (required, >0)
+   - reason_code (dropdown required)
+   - operator_note (textarea optional)
+Reason codes:
+- NO_STOCK
+- DAMAGED
+- NOT_FOUND
+- LOCATION_BLOCKED
+- MIXED_SKU
+- COUNT_MISMATCH
+- QUALITY_HOLD
+- OTHER
+Behavior:
+- create WmsPickIssue
+- update reservation/task:
+   - short_qty += missing_qty
+   - reservation.status = SHORT or PARTIAL as appropriate
+   - task.status = SHORT if picked_qty + short_qty >= requested_qty
+- IMPORTANT:
+   release unpicked reserved stock from allocated_units only
+   do NOT change on_hand_units for missing_qty
+- update wave short_units / short_lines
+- if any issue exists on the wave, wave.status can become NEEDS_REVIEW
+- sync planner status through existing orchestration service
+
+NEXT TASK LOGIC
+Implement helper:
+get_next_mobile_pick_reservation(wave_id, current_user)
+Return next reservation in this order:
+1) reservations with status OPEN or PARTIAL
+2) by task priority/order
+3) location sort based on existing reservation generation
+
+When no reservations remain:
+- show completion screen:
+   “Wave completada”
+   summary:
+   - picked units
+   - shortage units
+   - tasks done
+   - tasks short
+- Button:
+   “Finalizar wave”
+This should:
+- set wave.status = PICKED
+- set pick_finished_at = now()
+- sync Planner/WMS statuses
+
+SCAN UI IMPLEMENTATION
+Use a browser-based scanner library suitable for PWA/mobile:
+- preferred: html5-qrcode
+Requirements:
+- location scan required
+- start/stop camera controls
+- fallback manual entry field if camera permission denied
+- scanner must work inside a modal or dedicated section
+- do NOT build product scan as blocking logic
+
+PWA / MOBILE UX
+- Large tap targets
+- Sticky bottom action bar on mobile
+- Avoid wide tables
+- Use cards and stacked sections
+- Add subtle vibration/feedback indicators only if trivial; otherwise omit
+- Spanish labels everywhere
+
+SECURITY / ACCESS
+- Only users with warehouse/operator role can access /wms/mobile/*
+- Managers/admins may also access for supervision/testing
+
+OPTIONAL LOGGING (recommended)
+Create lightweight scan log table if easy:
+WmsPickScanLog
+- id
+- wave_id
+- task_id nullable
+- reservation_id nullable
+- scan_type (LOCATION, PRODUCT)
+- scanned_value
+- expected_value
+- is_match
+- scanned_by_user_id
+- created_at
+
+SIDEBAR / NAV
+Add under FastWMS:
+- “Mis Waves (Móvil)” -> /wms/mobile/my-waves
+
+DELIVERABLES
+- new mobile templates:
+   templates/wms_mobile_my_waves.html
+   templates/wms_mobile_pick_wave.html
+- routes
+- location scan gating
+- pick complete / partial / issue flows
+- planner/wms sync using existing orchestration hooks
+- UI aligned with FastDSO design system
+- no breaking changes to desktop WMS views

@@ -1047,6 +1047,22 @@ WMS_PICK_ISSUE_REASONS = [
     'MIXED_SKU', 'COUNT_MISMATCH', 'QUALITY_HOLD', 'OTHER'
 ]
 
+WMS_SCAN_TYPES = ['LOCATION', 'PRODUCT']
+
+
+class WmsPickScanLog(db.Model):
+    __tablename__ = 'wms_pick_scan_log'
+    id = db.Column(db.Integer, primary_key=True)
+    wave_id = db.Column(db.Integer, db.ForeignKey('wms_pick_wave.id'), nullable=False, index=True)
+    task_id = db.Column(db.Integer, db.ForeignKey('wms_pick_task.id'), nullable=True)
+    reservation_id = db.Column(db.Integer, db.ForeignKey('wms_pick_reservation.id'), nullable=True)
+    scan_type = db.Column(db.String(20), nullable=False)
+    scanned_value = db.Column(db.String(200), nullable=False)
+    expected_value = db.Column(db.String(200), nullable=True)
+    is_match = db.Column(db.Boolean, nullable=False, default=False)
+    scanned_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
 
 class WmsPickIssue(db.Model):
     __tablename__ = 'wms_pick_issue'
@@ -10152,6 +10168,45 @@ def _wms_rollup_operator_kpi(user_id, work_date):
     kpi.accuracy_rate = round(1 - (short_units / max(total_units, 1)), 4)
 
 
+def get_next_mobile_pick_reservation(wave_id):
+    """Return the next OPEN or PARTIAL reservation for a wave (mobile picking order)."""
+    tasks = (
+        db.session.query(WmsPickTask)
+        .filter_by(wave_id=wave_id)
+        .filter(WmsPickTask.status.in_(('OPEN', 'PENDING', 'IN_PROGRESS')))
+        .order_by(WmsPickTask.id)
+        .all()
+    )
+    task_ids = [t.id for t in tasks]
+    if not task_ids:
+        return None
+    res = (
+        db.session.query(WmsPickReservation)
+        .filter(WmsPickReservation.wave_id == wave_id)
+        .filter(WmsPickReservation.task_id.in_(task_ids))
+        .filter(WmsPickReservation.status.in_(('OPEN', 'PARTIAL')))
+        .order_by(WmsPickReservation.task_id, WmsPickReservation.id)
+        .first()
+    )
+    return res
+
+
+def _mobile_wave_summary(wave):
+    """Return dict with counters for mobile completion screen."""
+    tasks = wave.tasks.all()
+    return {
+        'picked_units': wave.picked_units or 0,
+        'short_units': wave.short_units or 0,
+        'total_units': wave.total_units or 0,
+        'total_lines': wave.total_lines or 0,
+        'picked_lines': wave.picked_lines or 0,
+        'short_lines': wave.short_lines or 0,
+        'tasks_done': sum(1 for t in tasks if t.status == 'DONE'),
+        'tasks_short': sum(1 for t in tasks if t.status == 'SHORT'),
+        'tasks_total': len(tasks),
+    }
+
+
 @app.route('/wms/waves')
 @login_required
 @require_permission('wms:view')
@@ -10884,6 +10939,419 @@ def wms_kpis():
                            global_uph=global_uph, global_lph=global_lph,
                            global_accuracy=global_accuracy,
                            operator_rows=operator_rows, operators=operators)
+
+
+@app.route('/wms/mobile/my-waves')
+@login_required
+@require_permission('wms:view')
+def wms_mobile_my_waves():
+    waves = (
+        db.session.query(WmsPickWave)
+        .filter(WmsPickWave.assigned_to == current_user.id)
+        .filter(WmsPickWave.status.in_(('ASSIGNED', 'IN_PROGRESS', 'NEEDS_REVIEW')))
+        .order_by(WmsPickWave.priority_rank, WmsPickWave.created_at.desc())
+        .all()
+    )
+    wave_data = []
+    for w in waves:
+        plan = w.plan
+        progress_pct = 0
+        total = (w.total_lines or 0)
+        done = (w.picked_lines or 0) + (w.short_lines or 0)
+        if total > 0:
+            progress_pct = round(100 * done / total)
+        wave_data.append({
+            'id': w.id,
+            'folio': plan.folio if plan else f'#{w.id}',
+            'status': w.status,
+            'urgency_level': w.urgency_level or 'MEDIUM',
+            'total_lines': w.total_lines or 0,
+            'total_units': w.total_units or 0,
+            'picked_units': w.picked_units or 0,
+            'short_units': w.short_units or 0,
+            'progress_pct': progress_pct,
+        })
+    return render_template('wms_mobile_my_waves.html', waves=wave_data)
+
+
+@app.route('/wms/mobile/wave/<int:wave_id>')
+@login_required
+@require_permission('wms:view')
+def wms_mobile_pick_wave(wave_id):
+    wave = db.session.get(WmsPickWave, wave_id)
+    if not wave:
+        flash('Wave no encontrada.', 'warning')
+        return redirect(url_for('wms_mobile_my_waves'))
+    if wave.assigned_to != current_user.id and not current_user.has_permission('admin:users'):
+        flash('No tienes acceso a esta wave.', 'danger')
+        return redirect(url_for('wms_mobile_my_waves'))
+    if wave.status not in ('ASSIGNED', 'IN_PROGRESS', 'NEEDS_REVIEW', 'PICKED'):
+        flash(f'Esta wave no está activa (estado: {wave.status}).', 'warning')
+        return redirect(url_for('wms_mobile_my_waves'))
+
+    plan = wave.plan
+    summary = _mobile_wave_summary(wave)
+    next_res = get_next_mobile_pick_reservation(wave_id) if wave.status in ('IN_PROGRESS', 'NEEDS_REVIEW') else None
+
+    next_res_data = None
+    if next_res:
+        task = db.session.get(WmsPickTask, next_res.task_id) if next_res.task_id else None
+        loc = next_res.location
+        remaining_in_res = (next_res.qty_reserved or 0) - (next_res.qty_picked or 0)
+        next_res_data = {
+            'reservation_id': next_res.id,
+            'task_id': next_res.task_id,
+            'sku': task.sku if task else '',
+            'product_name': task.product_name if task else '',
+            'qty_reserved': next_res.qty_reserved or 0,
+            'qty_picked': next_res.qty_picked or 0,
+            'remaining': remaining_in_res,
+            'location_code': next_res.location_code or '',
+            'location': (loc.location or loc.rack or '') if loc else '',
+            'box_number': (loc.box_number or loc.pallet_position or '') if loc else '',
+            'location_type': (loc.location_type or 'BULK') if loc else 'BULK',
+            'task_requested': task.qty_requested if task else 0,
+            'task_picked': task.qty_picked if task else 0,
+            'task_short': task.short_qty if task else 0,
+        }
+
+    return render_template(
+        'wms_mobile_pick_wave.html',
+        wave=wave,
+        plan=plan,
+        summary=summary,
+        next_res=next_res_data,
+        issue_reasons=WMS_PICK_ISSUE_REASONS,
+    )
+
+
+@app.route('/api/wms/mobile/waves/<int:wave_id>/start', methods=['POST'])
+@login_required
+@require_permission('wms:view')
+def api_wms_mobile_wave_start(wave_id):
+    wave = db.session.get(WmsPickWave, wave_id)
+    if not wave:
+        return jsonify({'error': 'Wave no encontrada'}), 404
+    if wave.assigned_to != current_user.id and not current_user.has_permission('admin:users'):
+        return jsonify({'error': 'No autorizado'}), 403
+    if wave.status == 'IN_PROGRESS':
+        return jsonify({'ok': True, 'status': wave.status, 'redirect': url_for('wms_mobile_pick_wave', wave_id=wave_id)})
+    if wave.status != 'ASSIGNED':
+        return jsonify({'error': f'La wave no puede iniciarse en estado {wave.status}'}), 400
+    allowed, msg = _wms_check_priority_gating(wave)
+    if not allowed:
+        return jsonify({'error': msg}), 400
+    wave.status = 'IN_PROGRESS'
+    if not wave.pick_started_at:
+        wave.pick_started_at = datetime.utcnow()
+    db.session.commit()
+    try:
+        sync_plan_from_wave(wave_id, event_type='PICKING_STARTED', actor_user_id=current_user.id)
+    except Exception as _e:
+        print(f"[MOBILE-WMS] WARNING: sync on wave start failed: {_e}")
+    return jsonify({'ok': True, 'status': wave.status, 'redirect': url_for('wms_mobile_pick_wave', wave_id=wave_id)})
+
+
+@app.route('/api/wms/mobile/reservations/<int:res_id>/pick', methods=['POST'])
+@login_required
+@require_permission('wms:view')
+def api_wms_mobile_reservation_pick(res_id):
+    res = db.session.get(WmsPickReservation, res_id)
+    if not res:
+        return jsonify({'error': 'Reservación no encontrada'}), 404
+    wave = db.session.get(WmsPickWave, res.wave_id)
+    if not wave or wave.status not in ('IN_PROGRESS', 'NEEDS_REVIEW'):
+        return jsonify({'error': 'La wave no está activa'}), 400
+    if wave.assigned_to != current_user.id and not current_user.has_permission('admin:users'):
+        return jsonify({'error': 'No autorizado'}), 403
+    if res.status not in ('OPEN', 'PARTIAL'):
+        return jsonify({'error': f'Reservación ya finalizada (estado: {res.status})'}), 400
+
+    data = request.get_json(silent=True) or {}
+    picked_qty = data.get('picked_qty')
+    note = data.get('note', '')
+    if picked_qty is None:
+        return jsonify({'error': 'picked_qty requerido'}), 400
+    try:
+        picked_qty = int(picked_qty)
+    except (ValueError, TypeError):
+        return jsonify({'error': 'picked_qty debe ser entero'}), 400
+    if picked_qty <= 0:
+        return jsonify({'error': 'picked_qty debe ser mayor a 0'}), 400
+    remaining_in_res = (res.qty_reserved or 0) - (res.qty_picked or 0)
+    if picked_qty > remaining_in_res:
+        return jsonify({'error': f'picked_qty ({picked_qty}) supera el pendiente en esta reservación ({remaining_in_res})'}), 400
+
+    wh = db.session.query(WmsWarehouse).filter_by(code=wave.warehouse_code).first()
+    res.qty_picked = (res.qty_picked or 0) + picked_qty
+    if res.qty_picked >= res.qty_reserved:
+        res.status = 'PICKED'
+    else:
+        res.status = 'PARTIAL'
+    res.updated_at = datetime.utcnow()
+
+    if wh and picked_qty > 0:
+        inv = (
+            db.session.query(WmsInventory)
+            .filter_by(warehouse_id=wh.id, location_id=res.location_id, product_id=res.product_id)
+            .first()
+        )
+        if inv:
+            inv.on_hand_units = max(0, (inv.on_hand_units or 0) - picked_qty)
+            inv.allocated_units = max(0, (inv.allocated_units or 0) - picked_qty)
+            inv.updated_at = datetime.utcnow()
+        db.session.add(WmsInventoryEvent(
+            event_type='PICK_PICK',
+            ref_type='pick_reservation',
+            ref_id=str(res_id),
+            warehouse_id=wh.id,
+            location_id=res.location_id,
+            product_id=res.product_id,
+            delta_units=-picked_qty,
+            delta_pallets=0,
+            note=f"Mobile pick: -{picked_qty} uds en {res.location_code or res.location_id} res #{res_id}"
+        ))
+
+    task = db.session.get(WmsPickTask, res.task_id) if res.task_id else None
+    if task:
+        task.qty_picked = (task.qty_picked or 0) + picked_qty
+        if note:
+            task.note = note
+        total_accounted = (task.qty_picked or 0) + (task.short_qty or 0)
+        if task.qty_picked >= task.qty_requested:
+            task.status = 'DONE'
+        elif total_accounted >= task.qty_requested and (task.short_qty or 0) > 0:
+            task.status = 'SHORT'
+        elif task.qty_picked > 0:
+            task.status = 'IN_PROGRESS'
+        task.updated_at = datetime.utcnow()
+
+    _wms_update_wave_counters(wave)
+    wave_became_needs_review = False
+    if task and task.status == 'SHORT' and wave.status == 'IN_PROGRESS' and (wave.short_units or 0) > 0:
+        wave.status = 'NEEDS_REVIEW'
+        wave_became_needs_review = True
+    db.session.commit()
+
+    if wave_became_needs_review:
+        try:
+            sync_plan_from_wave(wave.id, event_type='PICKING_SHORTAGE_REPORTED',
+                                actor_user_id=current_user.id,
+                                note=f'SKU {task.sku if task else "?"}: tarea marcada SHORT via mobile pick')
+        except Exception as _e:
+            print(f"[MOBILE-WMS] WARNING: sync NEEDS_REVIEW on mobile pick failed: {_e}")
+
+    next_res = get_next_mobile_pick_reservation(wave.id)
+    return jsonify({
+        'ok': True,
+        'reservation_status': res.status,
+        'task_status': task.status if task else None,
+        'wave_status': wave.status,
+        'has_next': next_res is not None,
+        'next_reservation_id': next_res.id if next_res else None,
+    })
+
+
+@app.route('/api/wms/mobile/reservations/<int:res_id>/issue', methods=['POST'])
+@login_required
+@require_permission('wms:view')
+def api_wms_mobile_reservation_issue(res_id):
+    res = db.session.get(WmsPickReservation, res_id)
+    if not res:
+        return jsonify({'error': 'Reservación no encontrada'}), 404
+    wave = db.session.get(WmsPickWave, res.wave_id)
+    if not wave or wave.status not in ('IN_PROGRESS', 'NEEDS_REVIEW'):
+        return jsonify({'error': 'La wave no está activa'}), 400
+    if wave.assigned_to != current_user.id and not current_user.has_permission('admin:users'):
+        return jsonify({'error': 'No autorizado'}), 403
+    if res.status not in ('OPEN', 'PARTIAL'):
+        return jsonify({'error': f'Reservación ya finalizada (estado: {res.status})'}), 400
+
+    data = request.get_json(silent=True) or {}
+    missing_qty = data.get('missing_qty')
+    reason_code = data.get('reason_code', '')
+    operator_note = data.get('operator_note', '')
+
+    if missing_qty is None:
+        return jsonify({'error': 'missing_qty requerido'}), 400
+    try:
+        missing_qty = int(missing_qty)
+    except (ValueError, TypeError):
+        return jsonify({'error': 'missing_qty debe ser entero'}), 400
+    if missing_qty <= 0:
+        return jsonify({'error': 'missing_qty debe ser mayor a 0'}), 400
+    if reason_code not in WMS_PICK_ISSUE_REASONS:
+        return jsonify({'error': f'reason_code inválido. Opciones: {WMS_PICK_ISSUE_REASONS}'}), 400
+
+    remaining_in_res = (res.qty_reserved or 0) - (res.qty_picked or 0)
+    if missing_qty > remaining_in_res:
+        missing_qty = remaining_in_res
+    if missing_qty <= 0:
+        return jsonify({'error': 'No hay cantidad pendiente en esta reservación'}), 400
+
+    wh = db.session.query(WmsWarehouse).filter_by(code=wave.warehouse_code).first()
+    if wh:
+        inv = (
+            db.session.query(WmsInventory)
+            .filter_by(warehouse_id=wh.id, location_id=res.location_id, product_id=res.product_id)
+            .first()
+        )
+        if inv:
+            inv.allocated_units = max(0, (inv.allocated_units or 0) - missing_qty)
+            inv.updated_at = datetime.utcnow()
+        db.session.add(WmsInventoryEvent(
+            event_type='PICK_SHORT_RELEASE',
+            ref_type='pick_reservation',
+            ref_id=str(res_id),
+            warehouse_id=wh.id,
+            location_id=res.location_id,
+            product_id=res.product_id,
+            delta_units=0,
+            delta_pallets=0,
+            note=f"Mobile short release: {missing_qty} uds liberadas en {res.location_code or res.location_id} razón={reason_code}"
+        ))
+
+    remaining_after = remaining_in_res - missing_qty
+    if remaining_after <= 0:
+        res.status = 'SHORT'
+    else:
+        res.status = 'PARTIAL'
+    res.updated_at = datetime.utcnow()
+
+    task = db.session.get(WmsPickTask, res.task_id) if res.task_id else None
+    issue = WmsPickIssue(
+        wave_id=wave.id,
+        task_id=task.id if task else (res.task_id or 0),
+        reservation_id=res.id,
+        product_id=res.product_id,
+        sku=task.sku if task else '',
+        location_id=res.location_id,
+        location_code=res.location_code,
+        missing_qty=missing_qty,
+        reason_code=reason_code,
+        operator_note=operator_note or None,
+        reported_by_user_id=current_user.id,
+    )
+    db.session.add(issue)
+
+    if task:
+        task.short_qty = (task.short_qty or 0) + missing_qty
+        total_accounted = (task.qty_picked or 0) + task.short_qty
+        if total_accounted >= task.qty_requested:
+            task.status = 'SHORT'
+        else:
+            task.status = 'IN_PROGRESS'
+        task.updated_at = datetime.utcnow()
+
+    if reason_code in ('DAMAGED', 'QUALITY_HOLD', 'MIXED_SKU') and wh:
+        db.session.add(WmsInventoryEvent(
+            event_type='QUALITY_FLAG',
+            ref_type='pick_issue',
+            ref_id='?',
+            warehouse_id=wh.id,
+            location_id=res.location_id,
+            product_id=res.product_id,
+            delta_units=0,
+            delta_pallets=0,
+            note=f"Incidencia calidad mobile: {reason_code} — {operator_note or ''} res #{res_id}"
+        ))
+
+    _wms_update_wave_counters(wave)
+    wave_transitioned = False
+    if wave.status == 'IN_PROGRESS' and (wave.short_units or 0) > 0:
+        wave.status = 'NEEDS_REVIEW'
+        wave_transitioned = True
+    db.session.commit()
+
+    if wave_transitioned:
+        try:
+            sync_plan_from_wave(wave.id, event_type='PICKING_SHORTAGE_REPORTED',
+                                actor_user_id=current_user.id,
+                                note=f'SKU {task.sku if task else "?"}: {missing_qty} faltantes ({reason_code}) via mobile')
+        except Exception as _e:
+            print(f"[MOBILE-WMS] WARNING: sync on mobile issue report failed: {_e}")
+
+    next_res = get_next_mobile_pick_reservation(wave.id)
+    return jsonify({
+        'ok': True,
+        'reservation_status': res.status,
+        'task_status': task.status if task else None,
+        'wave_status': wave.status,
+        'has_next': next_res is not None,
+        'next_reservation_id': next_res.id if next_res else None,
+    })
+
+
+@app.route('/api/wms/mobile/waves/<int:wave_id>/finish', methods=['POST'])
+@login_required
+@require_permission('wms:view')
+def api_wms_mobile_wave_finish(wave_id):
+    wave = db.session.get(WmsPickWave, wave_id)
+    if not wave:
+        return jsonify({'error': 'Wave no encontrada'}), 404
+    if wave.assigned_to != current_user.id and not current_user.has_permission('admin:users'):
+        return jsonify({'error': 'No autorizado'}), 403
+    if wave.status not in ('IN_PROGRESS', 'NEEDS_REVIEW'):
+        return jsonify({'error': f'Solo se puede finalizar en estado IN_PROGRESS o NEEDS_REVIEW (actual: {wave.status})'}), 400
+
+    tasks = wave.tasks.all()
+    incomplete = [t for t in tasks if t.status not in ('DONE', 'SHORT')]
+    if incomplete:
+        return jsonify({
+            'error': f'Hay {len(incomplete)} tarea(s) pendiente(s). Completa o reporta incidencia para cada una.',
+            'incomplete_skus': [t.sku for t in incomplete]
+        }), 400
+
+    wave.status = 'PICKED'
+    wave.pick_finished_at = datetime.utcnow()
+    _wms_update_wave_counters(wave)
+    db.session.commit()
+    try:
+        _wms_rollup_operator_kpi(wave.assigned_to, date.today())
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    log_audit(action='wms.wave.finish_mobile', entity_type='wms_pick_wave', entity_id=wave.id,
+              status='success', message=f'Wave #{wave.id} finalizada via mobile por {current_user.username}')
+    try:
+        sync_plan_from_wave(wave_id, event_type='PICKING_COMPLETED', actor_user_id=current_user.id)
+    except Exception as _e:
+        print(f"[MOBILE-WMS] WARNING: sync on mobile wave finish failed: {_e}")
+    summary = _mobile_wave_summary(wave)
+    return jsonify({'ok': True, 'status': wave.status, **summary})
+
+
+@app.route('/api/wms/mobile/scans', methods=['POST'])
+@login_required
+@require_permission('wms:view')
+def api_wms_mobile_scan_log():
+    data = request.get_json(silent=True) or {}
+    wave_id = data.get('wave_id')
+    scan_type = (data.get('scan_type') or '').upper()
+    scanned_value = data.get('scanned_value', '').strip()
+    expected_value = data.get('expected_value', '').strip()
+
+    if not wave_id or not scanned_value or scan_type not in WMS_SCAN_TYPES:
+        return jsonify({'error': 'wave_id, scan_type, scanned_value requeridos'}), 400
+
+    is_match = scanned_value.upper() == (expected_value or '').upper()
+    log = WmsPickScanLog(
+        wave_id=wave_id,
+        task_id=data.get('task_id'),
+        reservation_id=data.get('reservation_id'),
+        scan_type=scan_type,
+        scanned_value=scanned_value,
+        expected_value=expected_value or None,
+        is_match=is_match,
+        scanned_by_user_id=current_user.id,
+    )
+    db.session.add(log)
+    try:
+        db.session.commit()
+    except Exception as _e:
+        db.session.rollback()
+        print(f"[MOBILE-WMS] scan log failed: {_e}")
+    return jsonify({'ok': True, 'is_match': is_match})
 
 
 def _parse_distribution_manual_file(file):
