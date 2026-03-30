@@ -274,27 +274,40 @@
       <div class="card-header">
         <span class="fw-semibold"><i class="bi bi-link-45deg"></i> Eventos WMS ↔ Planner</span>
       </div>
-      <div class="card-body p-0">
-        <ul class="list-group list-group-flush" style="font-size:0.78rem; max-height:260px; overflow-y:auto;">
-          {% for ev in planner_events %}
-          {% set ec = {'WAVE_CREATED':'text-success','WAVE_CREATION_FAILED':'text-danger','PICKER_ASSIGNED':'text-primary','PICKER_REASSIGNED':'text-primary','PICKING_STARTED':'text-info','PICKING_COMPLETED':'text-success','PICKING_SHORTAGE_REPORTED':'text-warning','WAVE_CLOSED':'text-secondary','WMS_STATUS_UPDATED':'text-secondary','WAVE_STATUS_SYNCED':'text-secondary'} %}
-          {% set ei = {'WAVE_CREATED':'plus-circle','WAVE_CREATION_FAILED':'x-circle','PICKER_ASSIGNED':'person-check','PICKER_REASSIGNED':'arrow-repeat','PICKING_STARTED':'play-circle','PICKING_COMPLETED':'check-circle','PICKING_SHORTAGE_REPORTED':'exclamation-triangle','WAVE_CLOSED':'lock','WMS_STATUS_UPDATED':'arrow-left-right','WAVE_STATUS_SYNCED':'arrow-left-right'} %}
-          <li class="list-group-item py-1 px-2">
-            <span class="{{ ec.get(ev.event_type, '') }}">
-              <i class="bi bi-{{ ei.get(ev.event_type, 'dot') }}"></i>
-              <strong>{{ ev.event_type.replace('_', ' ') }}</strong>
-            </span>
-            {% if ev.new_status %}
-            <span class="badge bg-secondary" style="font-size:0.65rem;">→ {{ ev.new_status }}</span>
-            {% endif %}
-            <div class="text-muted" style="font-size:0.7rem;">
-              {{ ev.created_at.strftime('%d/%m %H:%M') }}
-              {% if ev.created_by %} · {{ ev.created_by.username }}{% endif %}
-              {% if ev.note %} · {{ ev.note }}{% endif %}
-            </div>
-          </li>
-          {% endfor %}
-        </ul>
+      <div class="card-body p-0" style="max-height:260px; overflow-y:auto;">
+        {% set ec = {'WAVE_CREATED':'text-success','WAVE_CREATION_FAILED':'text-danger','PICKER_ASSIGNED':'text-primary','PICKER_REASSIGNED':'text-primary','PICKING_STARTED':'text-info','PICKING_COMPLETED':'text-success','PICKING_SHORTAGE_REPORTED':'text-warning','WAVE_CLOSED':'text-secondary','WMS_STATUS_UPDATED':'text-muted','WAVE_STATUS_SYNCED':'text-muted','WMS_STATUS_SYNCED':'text-muted'} %}
+        {% set ei = {'WAVE_CREATED':'plus-circle','WAVE_CREATION_FAILED':'x-circle','PICKER_ASSIGNED':'person-check','PICKER_REASSIGNED':'arrow-repeat','PICKING_STARTED':'play-circle','PICKING_COMPLETED':'check-circle','PICKING_SHORTAGE_REPORTED':'exclamation-triangle','WAVE_CLOSED':'lock','WMS_STATUS_UPDATED':'arrow-left-right','WAVE_STATUS_SYNCED':'arrow-left-right','WMS_STATUS_SYNCED':'arrow-left-right'} %}
+        <table class="table table-sm table-striped mb-0" style="font-size:0.75rem;">
+          <thead class="table-dark sticky-top" style="font-size:0.7rem;">
+            <tr>
+              <th>Fecha</th>
+              <th>Evento</th>
+              <th>Estado</th>
+              <th>Usuario</th>
+              <th>Nota</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for ev in planner_events %}
+            <tr>
+              <td class="text-muted text-nowrap">{{ ev.created_at.strftime('%d/%m %H:%M') }}</td>
+              <td>
+                <span class="{{ ec.get(ev.event_type, '') }}">
+                  <i class="bi bi-{{ ei.get(ev.event_type, 'dot') }}"></i>
+                  {{ ev.event_type.replace('_', ' ') }}
+                </span>
+              </td>
+              <td>
+                {% if ev.new_status %}
+                <span class="badge bg-secondary" style="font-size:0.6rem;">{{ ev.new_status }}</span>
+                {% else %}-{% endif %}
+              </td>
+              <td class="text-muted">{{ ev.created_by.username if ev.created_by else '-' }}</td>
+              <td class="text-muted" style="max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ ev.note or '' }}">{{ ev.note or '-' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
     </div>
     {% endif %}

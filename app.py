@@ -10694,21 +10694,13 @@ def api_wms_wave_close(wave_id):
         return jsonify({'error': 'Wave no encontrada'}), 404
     if wave.status not in ('PICKED', 'DONE'):
         return jsonify({'error': f'Solo se pueden cerrar waves en estado PICKED (actual: {wave.status})'}), 400
-    wave.status = 'CLOSED'
-    wave.closed_at = datetime.utcnow()
-    db.session.commit()
     try:
-        if wave.assigned_to and wave.pick_finished_at:
-            _wms_rollup_operator_kpi(wave.assigned_to, wave.pick_finished_at.date())
-            db.session.commit()
-    except Exception:
-        db.session.rollback()
-    try:
-        sync_plan_from_wave(wave.id, event_type='WAVE_CLOSED', actor_user_id=current_user.id)
+        close_wave_and_update_plan(wave_id, actor_user_id=current_user.id)
     except Exception as _e:
-        print(f"[PLANNER-WMS] WARNING: sync on API wave close failed: {_e}")
-    log_audit(action='wms.wave.close_api', entity_type='wms_pick_wave', entity_id=wave.id,
-              status='success', message=f'Wave #{wave.id} cerrada via API por {current_user.username}')
+        return jsonify({'error': f'Error al cerrar wave: {_e}'}), 500
+    log_audit(action='wms.wave.close_api', entity_type='wms_pick_wave', entity_id=wave_id,
+              status='success', message=f'Wave #{wave_id} cerrada via API por {current_user.username}')
+    db.session.refresh(wave)
     return jsonify({'ok': True, 'status': wave.status, 'wave_id': wave.id})
 
 
@@ -18119,6 +18111,13 @@ def close_wave_and_update_plan(wave_id, actor_user_id=None):
         raise ValueError(f"Solo se pueden cerrar waves en estado PICKED (actual: {wave.status})")
     wave.status = 'CLOSED'
     wave.closed_at = datetime.utcnow()
+    db.session.commit()
+    try:
+        if wave.assigned_to and wave.pick_finished_at:
+            _wms_rollup_operator_kpi(wave.assigned_to, wave.pick_finished_at.date())
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
     sync_plan_from_wave(wave_id, event_type='WAVE_CLOSED', actor_user_id=actor_user_id)
     print(f"[PLANNER-WMS] wave closed plan={wave.plan_id} wave={wave_id}")
 
