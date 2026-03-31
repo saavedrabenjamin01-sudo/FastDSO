@@ -1,0 +1,391 @@
+{% extends 'base.html' %}
+{% block title %}Revisión de Plan {{ plan.folio }} - FastDSO{% endblock %}
+{% block page_title %}Revisión de Distribución{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+
+  <!-- ── Header ── -->
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+    <div>
+      <h5 class="mb-0 fw-bold">
+        Plan <span class="text-primary">{{ plan.folio }}</span>
+        <span class="badge ms-2
+          {% if plan.status == 'DRAFT_REVIEW' %}bg-warning text-dark
+          {% elif plan.status == 'APPROVED' %}bg-success
+          {% else %}bg-secondary{% endif %}"
+          style="font-size:.72rem;">
+          {{ 'EN REVISIÓN' if plan.status == 'DRAFT_REVIEW' else plan.status }}
+        </span>
+        {% if plan.urgency == 'URGENT' %}
+        <span class="badge bg-danger ms-1" style="font-size:.7rem;">URGENTE</span>
+        {% endif %}
+      </h5>
+      <small class="text-muted">
+        Revisión previa al envío al FastPlanner &middot;
+        Generado: {{ plan.created_at.strftime('%d/%m/%Y %H:%M') if plan.created_at else '—' }}
+        {% if plan.approved_by %}
+          &middot; Aprobado por {{ plan.approved_by.username }}
+        {% endif %}
+      </small>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('runs') }}" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-arrow-left me-1"></i>Volver a corridas
+      </a>
+    </div>
+  </div>
+
+  <!-- ── KPI Cards ── -->
+  <div class="row g-3 mb-3">
+    <div class="col-6 col-md-3">
+      <div class="card border-0 shadow-sm text-center py-3">
+        <div class="card-body py-2">
+          <div style="font-size:1.8rem;font-weight:700;color:#1d4ed8;">{{ lines|length }}</div>
+          <div class="text-muted" style="font-size:.78rem;">Líneas totales</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card border-0 shadow-sm text-center py-3">
+        <div class="card-body py-2">
+          <div style="font-size:1.8rem;font-weight:700;color:#059669;" id="kpi-total-units">{{ total_final_units }}</div>
+          <div class="text-muted" style="font-size:.78rem;">Unidades finales</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card border-0 shadow-sm text-center py-3">
+        <div class="card-body py-2">
+          <div style="font-size:1.8rem;font-weight:700;color:#0369a1;">{{ store_rows|length }}</div>
+          <div class="text-muted" style="font-size:.78rem;">Tiendas destino</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card border-0 shadow-sm text-center py-3">
+        <div class="card-body py-2">
+          <div style="font-size:1.8rem;font-weight:700;color:{{ '#b45309' if adjusted_count else '#6b7280' }};" id="kpi-adjusted">{{ adjusted_count }}</div>
+          <div class="text-muted" style="font-size:.78rem;">Líneas ajustadas</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+
+    <!-- ── LEFT: Store summary ── -->
+    <div class="col-lg-4 col-xl-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-header d-flex justify-content-between align-items-center py-2">
+          <h6 class="mb-0 fw-semibold"><i class="bi bi-shop me-1"></i>Resumen por tienda</h6>
+          <span class="badge bg-secondary">{{ store_rows|length }}</span>
+        </div>
+        <div class="table-responsive" style="max-height:520px;overflow-y:auto;">
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-light sticky-top">
+              <tr>
+                <th>Tienda</th>
+                <th class="text-center">SKUs</th>
+                <th class="text-end">Uds</th>
+                <th class="text-end">%</th>
+              </tr>
+            </thead>
+            <tbody id="store-summary-body">
+              {% for row in store_rows %}
+              <tr data-store="{{ row.store }}">
+                <td style="font-size:.82rem;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ row.store }}">{{ row.store }}</td>
+                <td class="text-center" style="font-size:.82rem;">{{ row.skus }}</td>
+                <td class="text-end fw-semibold" style="font-size:.82rem;" data-store-units="{{ row.store }}">{{ row.units }}</td>
+                <td class="text-end text-muted" style="font-size:.78rem;" data-store-pct="{{ row.store }}">{{ row.pct }}%</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── RIGHT: Editable detail table ── -->
+    <div class="col-lg-8 col-xl-9">
+      <div class="card border-0 shadow-sm">
+        <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2 py-2">
+          <h6 class="mb-0 fw-semibold"><i class="bi bi-table me-1"></i>Detalle de líneas</h6>
+          {% if can_edit %}
+          <div class="d-flex gap-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="resetAllQty()">
+              <i class="bi bi-arrow-counterclockwise me-1"></i>Restaurar sugeridos
+            </button>
+          </div>
+          {% endif %}
+        </div>
+
+        <form id="reviewForm"
+              action="{{ url_for('distribution_review_save', plan_id=plan.id) }}"
+              method="POST">
+
+          <div class="table-responsive" style="max-height:560px;overflow-y:auto;">
+            <table class="table table-sm table-hover mb-0 align-middle">
+              <thead class="table-light sticky-top">
+                <tr>
+                  <th style="min-width:90px;">SKU</th>
+                  <th style="min-width:140px;">Producto</th>
+                  <th style="min-width:80px;">Categoría</th>
+                  <th style="min-width:110px;">Tienda</th>
+                  <th class="text-center" style="min-width:70px;" title="Cantidad sugerida por el motor">Sugerido</th>
+                  <th class="text-center" style="min-width:100px;">
+                    Cant. final
+                    {% if can_edit %}<small class="text-muted fw-normal">(editable)</small>{% endif %}
+                  </th>
+                  <th class="text-center" style="min-width:80px;">Estado</th>
+                  <th class="text-center" style="min-width:50px;" title="Stock disponible en CD">CD</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for line in lines %}
+                {% set sku = line.product.sku if line.product else '—' %}
+                {% set cd_stock = cd_stock_map.get(sku, 0) %}
+                {% set eff = line.effective_qty() %}
+                <tr data-line-id="{{ line.id }}"
+                    data-store="{{ line.store.name if line.store else '—' }}"
+                    data-suggested="{{ line.qty_suggested or line.qty_planned }}"
+                    data-adjusted="{{ 'true' if line.is_manually_adjusted else 'false' }}">
+                  <td>
+                    <code style="font-size:.78rem;">{{ sku }}</code>
+                  </td>
+                  <td style="font-size:.8rem;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+                      title="{{ line.product.name if line.product else '' }}">
+                    {{ (line.product.name or '—')[:40] if line.product else '—' }}
+                  </td>
+                  <td>
+                    {% if line.product and line.product.category %}
+                    <span class="badge bg-light text-dark border" style="font-size:.68rem;">{{ line.product.category[:14] }}</span>
+                    {% else %}
+                    <span class="text-muted" style="font-size:.78rem;">—</span>
+                    {% endif %}
+                  </td>
+                  <td style="font-size:.8rem;">{{ line.store.name if line.store else '—' }}</td>
+                  <td class="text-center text-muted" style="font-size:.85rem;">
+                    {{ line.qty_suggested or line.qty_planned }}
+                  </td>
+                  <td class="text-center">
+                    {% if can_edit %}
+                    <input type="number"
+                           name="qty_final_{{ line.id }}"
+                           class="form-control form-control-sm qty-input text-center"
+                           value="{{ eff }}"
+                           min="0"
+                           style="width:72px;margin:0 auto;font-size:.85rem;"
+                           data-suggested="{{ line.qty_suggested or line.qty_planned }}"
+                           data-line-id="{{ line.id }}"
+                           data-store="{{ line.store.name if line.store else '—' }}"
+                           onchange="onQtyChange(this)">
+                    {% else %}
+                    <span class="fw-semibold" style="font-size:.85rem;">{{ eff }}</span>
+                    <input type="hidden" name="qty_final_{{ line.id }}" value="{{ eff }}">
+                    {% endif %}
+                  </td>
+                  <td class="text-center">
+                    <span class="badge status-badge
+                      {% if line.is_manually_adjusted %}bg-warning text-dark{% else %}bg-light text-dark border{% endif %}"
+                      id="badge_{{ line.id }}"
+                      style="font-size:.68rem;">
+                      {{ 'EDITADO' if line.is_manually_adjusted else 'AUTO' }}
+                    </span>
+                  </td>
+                  <td class="text-center">
+                    {% if cd_stock > 0 %}
+                    <span class="text-muted" style="font-size:.78rem;" title="Stock CD: {{ cd_stock }}">
+                      {{ cd_stock }}
+                      {% if eff > cd_stock %}
+                      <i class="bi bi-exclamation-triangle-fill text-warning ms-1" title="Qty final supera stock CD disponible"></i>
+                      {% endif %}
+                    </span>
+                    {% else %}
+                    <span class="text-danger" style="font-size:.78rem;" title="Sin stock en CD">0</span>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% else %}
+                <tr>
+                  <td colspan="8" class="text-center text-muted py-4">Sin líneas en este plan.</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Action bar -->
+          {% if can_edit %}
+          <div class="card-footer d-flex justify-content-between align-items-center gap-2 flex-wrap">
+            <div class="text-muted" style="font-size:.82rem;">
+              <span id="footer-adjusted-count">{{ adjusted_count }}</span> línea(s) ajustada(s) de {{ lines|length }}
+            </div>
+            <div class="d-flex gap-2">
+              <a href="{{ url_for('runs') }}" class="btn btn-sm btn-outline-secondary">Cancelar</a>
+              <button type="submit" class="btn btn-sm btn-outline-primary" form="reviewForm">
+                <i class="bi bi-floppy me-1"></i>Guardar ajustes
+              </button>
+              <button type="button" class="btn btn-sm btn-success" onclick="confirmAndSend()">
+                <i class="bi bi-check-circle me-1"></i>Confirmar y enviar al Planner
+              </button>
+            </div>
+          </div>
+          {% elif plan.status == 'DRAFT_REVIEW' %}
+          <div class="card-footer d-flex justify-content-end gap-2">
+            <a href="{{ url_for('runs') }}" class="btn btn-sm btn-outline-secondary">Cancelar</a>
+            <button type="button" class="btn btn-sm btn-success" onclick="confirmAndSend()">
+              <i class="bi bi-check-circle me-1"></i>Confirmar y enviar al Planner
+            </button>
+          </div>
+          {% else %}
+          <div class="card-footer text-muted text-center" style="font-size:.82rem;">
+            <i class="bi bi-lock me-1"></i>Este plan ya fue confirmado. Solo lectura.
+          </div>
+          {% endif %}
+
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Zero-qty SKU warnings -->
+  <div id="zero-sku-warnings" class="mt-3"></div>
+
+</div>
+
+<!-- Confirm modal -->
+<div class="modal fade" id="confirmModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-check-circle-fill text-success me-2"></i>Confirmar envío al Planner</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p>¿Confirmas que el plan <strong>{{ plan.folio }}</strong> está listo para enviarse a FastPlanner y WMS?</p>
+        <ul class="mb-0 text-muted" style="font-size:.88rem;">
+          <li>Se creará una Pick Wave en WMS con las cantidades finales.</li>
+          <li>Una vez enviado, el plan no se puede editar.</li>
+        </ul>
+        <div id="confirm-summary" class="mt-2 p-2 bg-light rounded" style="font-size:.85rem;"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <form action="{{ url_for('distribution_review_confirm', plan_id=plan.id) }}" method="POST" style="display:inline;">
+          <button type="submit" class="btn btn-success">
+            <i class="bi bi-check-circle me-1"></i>Confirmar y enviar
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+.qty-input:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,.15); }
+.qty-input.changed { border-color: #f59e0b; background: #fffbeb; }
+.sticky-top { position: sticky; top: 0; z-index: 1; }
+</style>
+
+<script>
+const globalTotalUnits = { value: {{ total_final_units }} };
+
+function onQtyChange(input) {
+  const lineId = input.dataset.lineId;
+  const store = input.dataset.store;
+  const suggested = parseInt(input.dataset.suggested) || 0;
+  const newVal = Math.max(0, parseInt(input.value) || 0);
+  input.value = newVal;
+
+  const badge = document.getElementById('badge_' + lineId);
+  if (newVal !== suggested) {
+    input.classList.add('changed');
+    if (badge) { badge.className = 'badge bg-warning text-dark'; badge.textContent = 'EDITADO'; }
+  } else {
+    input.classList.remove('changed');
+    if (badge) { badge.className = 'badge bg-light text-dark border'; badge.textContent = 'AUTO'; }
+  }
+
+  recalcTotals();
+}
+
+function recalcTotals() {
+  let total = 0;
+  let adjusted = 0;
+  const storeMap = {};
+
+  document.querySelectorAll('.qty-input').forEach(inp => {
+    const val = Math.max(0, parseInt(inp.value) || 0);
+    const store = inp.dataset.store;
+    const suggested = parseInt(inp.dataset.suggested) || 0;
+    total += val;
+    if (val !== suggested) adjusted++;
+    storeMap[store] = (storeMap[store] || 0) + val;
+  });
+
+  const kpi = document.getElementById('kpi-total-units');
+  if (kpi) kpi.textContent = total;
+  const kpiAdj = document.getElementById('kpi-adjusted');
+  if (kpiAdj) kpiAdj.textContent = adjusted;
+  const footerAdj = document.getElementById('footer-adjusted-count');
+  if (footerAdj) footerAdj.textContent = adjusted;
+
+  const grandTotal = total || 1;
+  for (const [store, units] of Object.entries(storeMap)) {
+    const unitsEl = document.querySelector(`[data-store-units="${store}"]`);
+    const pctEl = document.querySelector(`[data-store-pct="${store}"]`);
+    if (unitsEl) unitsEl.textContent = units;
+    if (pctEl) pctEl.textContent = (units / grandTotal * 100).toFixed(1) + '%';
+  }
+
+  buildZeroWarnings();
+}
+
+function buildZeroWarnings() {
+  const skuMap = {};
+  document.querySelectorAll('.qty-input').forEach(inp => {
+    const row = inp.closest('tr');
+    const sku = row ? row.querySelector('code') : null;
+    if (!sku) return;
+    const skuText = sku.textContent.trim();
+    const val = parseInt(inp.value) || 0;
+    if (!skuMap[skuText]) skuMap[skuText] = 0;
+    skuMap[skuText] += val;
+  });
+  const container = document.getElementById('zero-sku-warnings');
+  if (!container) return;
+  const zeros = Object.keys(skuMap).filter(s => skuMap[s] === 0);
+  if (zeros.length === 0) { container.innerHTML = ''; return; }
+  container.innerHTML = `<div class="alert alert-warning py-2 d-flex align-items-start gap-2" style="font-size:.84rem;">
+    <i class="bi bi-exclamation-triangle-fill mt-1"></i>
+    <div><strong>${zeros.length} SKU(s) sin distribución final:</strong> ${zeros.slice(0, 10).join(', ')}${zeros.length > 10 ? '…' : ''}</div>
+  </div>`;
+}
+
+function resetAllQty() {
+  document.querySelectorAll('.qty-input').forEach(inp => {
+    inp.value = inp.dataset.suggested;
+    inp.classList.remove('changed');
+    const badge = document.getElementById('badge_' + inp.dataset.lineId);
+    if (badge) { badge.className = 'badge bg-light text-dark border'; badge.textContent = 'AUTO'; }
+  });
+  recalcTotals();
+}
+
+function confirmAndSend() {
+  let total = 0;
+  document.querySelectorAll('.qty-input').forEach(inp => { total += Math.max(0, parseInt(inp.value) || 0); });
+  if (total === 0) {
+    alert('No hay unidades con cantidad final > 0. Ajusta antes de confirmar.');
+    return;
+  }
+  const summary = document.getElementById('confirm-summary');
+  if (summary) summary.innerHTML = `<strong>Unidades finales:</strong> ${total}`;
+  const modal = new bootstrap.Modal(document.getElementById('confirmModal'));
+  modal.show();
+}
+
+document.addEventListener('DOMContentLoaded', buildZeroWarnings);
+</script>
+{% endblock %}

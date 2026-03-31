@@ -49,19 +49,19 @@ ROLES = ['Admin', 'Management', 'CategoryManager', 'WarehouseOps', 'WarehouseMan
 ROLE_PERMISSIONS = {
     'Admin': [
         'dashboard:view', 'sales:upload', 'sales_macro:upload', 'stock_store:upload', 'stock_cd:upload',
-        'stock:query', 'stock:upload', 'stock:export', 'distribution:generate', 'distribution:export', 'distribution:manual',
+        'stock:query', 'stock:upload', 'stock:export', 'distribution:generate', 'distribution:export', 'distribution:manual', 'distribution:edit',
         'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'runs:submit', 'runs:approve', 'admin:users', 'admin:reset', 'audit:view',
         'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view',
         'planner:view', 'planner:operate', 'planner:manage', 'planner:approve', 'planner:assign_picker',
         'wms:view', 'wms:moves', 'wms:pick', 'wms:kpis', 'users:manage', 'roles:manage'
     ],
     'Management': [
-        'dashboard:view', 'stock:query', 'stock:export', 'distribution:export',
+        'dashboard:view', 'stock:query', 'stock:export', 'distribution:export', 'distribution:edit',
         'forecast_v2:view', 'runs:view', 'runs:approve', 'audit:view', 'rebalancing:view', 'slow_stock:view', 'store_health:view', 'alerts:view',
         'planner:view', 'planner:manage', 'planner:approve', 'wms:view', 'wms:kpis'
     ],
     'CategoryManager': [
-        'dashboard:view', 'sales:upload', 'sales_macro:upload', 'distribution:generate', 'distribution:export', 'distribution:manual',
+        'dashboard:view', 'sales:upload', 'sales_macro:upload', 'distribution:generate', 'distribution:export', 'distribution:manual', 'distribution:edit',
         'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'runs:submit', 'rebalancing:view', 'rebalancing:run',
         'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view',
         'planner:view'
@@ -88,7 +88,7 @@ PERMISSION_MODULES = {
     'Dashboard': ['dashboard:view'],
     'Ventas': ['sales:upload', 'sales_macro:upload'],
     'Stock': ['stock_store:upload', 'stock_cd:upload', 'stock:upload', 'stock:query', 'stock:export'],
-    'Distribución': ['distribution:generate', 'distribution:export', 'distribution:manual'],
+    'Distribución': ['distribution:generate', 'distribution:export', 'distribution:manual', 'distribution:edit'],
     'Forecast': ['forecast_v2:view', 'forecast_v2:run'],
     'Corridas': ['runs:view', 'runs:submit', 'runs:approve'],
     'Rebalanceo': ['rebalancing:view', 'rebalancing:run'],
@@ -785,7 +785,11 @@ class DistributionPlan(db.Model):
         return db.session.query(db.func.count(db.func.distinct(DistributionPlanLine.product_id))).filter(DistributionPlanLine.plan_id == self.id).scalar() or 0
 
     def total_units(self):
-        return db.session.query(db.func.sum(DistributionPlanLine.qty_planned)).filter(DistributionPlanLine.plan_id == self.id).scalar() or 0
+        from sqlalchemy import func as sa_func
+        val = db.session.query(
+            sa_func.sum(sa_func.coalesce(DistributionPlanLine.qty_final, DistributionPlanLine.qty_planned))
+        ).filter(DistributionPlanLine.plan_id == self.id).scalar()
+        return val or 0
 
     def total_stores(self):
         return db.session.query(db.func.count(db.func.distinct(DistributionPlanLine.store_id))).filter(DistributionPlanLine.plan_id == self.id).scalar() or 0
@@ -799,10 +803,34 @@ class DistributionPlanLine(db.Model):
     product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
     store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=True)
     qty_planned = db.Column(db.Integer, nullable=False, default=0)
+    qty_suggested = db.Column(db.Integer, nullable=True)
+    qty_final = db.Column(db.Integer, nullable=True)
+    is_manually_adjusted = db.Column(db.Boolean, nullable=False, default=False)
+    adjustment_note = db.Column(db.Text, nullable=True)
     line_notes = db.Column(db.Text, nullable=True)
 
     product = db.relationship('Product')
     store = db.relationship('Store')
+
+    def effective_qty(self):
+        """Return qty_final if set, otherwise qty_planned."""
+        if self.qty_final is not None:
+            return self.qty_final
+        return self.qty_planned
+
+
+class DistributionAdjustmentLog(db.Model):
+    """Audit log for manual qty_final edits on distribution plan lines."""
+    __tablename__ = 'distribution_adjustment_log'
+    id = db.Column(db.Integer, primary_key=True)
+    plan_id = db.Column(db.Integer, db.ForeignKey('distribution_plan.id'), nullable=False, index=True)
+    line_id = db.Column(db.Integer, db.ForeignKey('distribution_plan_line.id'), nullable=False)
+    old_qty_final = db.Column(db.Integer, nullable=True)
+    new_qty_final = db.Column(db.Integer, nullable=False)
+    changed_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    changed_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    changed_by = db.relationship('User')
 
 
 class PlanActivityLog(db.Model):
@@ -1600,10 +1628,14 @@ def wms_create_pick_wave_for_plan(plan_id, priority='MEDIUM', warehouse_code='MA
     demand_rows = (
         db.session.query(
             DistributionPlanLine.product_id,
-            func.sum(DistributionPlanLine.qty_planned).label('total_qty')
+            func.sum(
+                func.coalesce(DistributionPlanLine.qty_final, DistributionPlanLine.qty_planned)
+            ).label('total_qty')
         )
         .filter(DistributionPlanLine.plan_id == plan_id)
-        .filter(DistributionPlanLine.qty_planned > 0)
+        .filter(
+            func.coalesce(DistributionPlanLine.qty_final, DistributionPlanLine.qty_planned) > 0
+        )
         .group_by(DistributionPlanLine.product_id)
         .all()
     )
@@ -11804,6 +11836,9 @@ def distribution_manual():
                 product_id=product.id,
                 store_id=l['store_id'],
                 qty_planned=l['qty'],
+                qty_suggested=l['qty'],
+                qty_final=l['qty'],
+                is_manually_adjusted=False,
                 line_notes=l.get('note') or None
             )
             db.session.add(line)
@@ -12844,7 +12879,7 @@ def approve_and_send(run_id):
     plan = DistributionPlan(
         folio=folio,
         source_run_id=run.run_id,
-        status='APPROVED',
+        status='DRAFT_REVIEW',
         urgency=run.urgency or 'MEDIUM',
         notes_commercial=run.submit_note,
         created_by_user_id=run.submitted_by_user_id,
@@ -12854,30 +12889,189 @@ def approve_and_send(run_id):
     )
     db.session.add(plan)
     db.session.flush()
-    
+
     predictions = Prediction.query.filter_by(run_id=run.run_id).filter(Prediction.quantity > 0).all()
     for pred in predictions:
         line = DistributionPlanLine(
             plan_id=plan.id,
             product_id=pred.product_id,
             store_id=pred.store_id,
-            qty_planned=pred.quantity
+            qty_planned=pred.quantity,
+            qty_suggested=pred.quantity,
+            qty_final=pred.quantity,
+            is_manually_adjusted=False
         )
         db.session.add(line)
-    
+
     activity = PlanActivityLog(
         plan_id=plan.id,
-        action='APPROVED_AND_SENT',
+        action='CREATED_FOR_REVIEW',
         user_id=current_user.id,
-        comment=f'Plan aprobado y enviado a FastPlanner por {current_user.username}'
+        comment=f'Plan creado en revisión por {current_user.username}. Pendiente de ajuste y confirmación.'
     )
     db.session.add(activity)
-    
+
     run.status = 'APPROVED'
     run.approved_by_user_id = current_user.id
     run.approved_at = datetime.utcnow()
     run.planner_plan_id = plan.id
 
+    db.session.commit()
+
+    log_audit(
+        action='run.approved_and_sent',
+        entity_type='run',
+        entity_id=run.id,
+        run_id=run_id,
+        status='success',
+        message=f'Corrida aprobada. Plan {plan.folio} creado en REVISIÓN ({len(predictions)} líneas).'
+    )
+
+    flash(f'Corrida aprobada. Plan {plan.folio} listo para revisión antes de enviar al Planner.', 'success')
+    return redirect(url_for('distribution_review', plan_id=plan.id))
+
+
+@app.route('/distribution/review/<int:plan_id>')
+@login_required
+@require_permission('runs:approve')
+def distribution_review(plan_id):
+    """Review page for a DRAFT_REVIEW distribution plan — edit qty_final before sending to Planner."""
+    plan = db.session.get(DistributionPlan, plan_id)
+    if not plan:
+        abort(404)
+    if plan.status not in ('DRAFT_REVIEW', 'APPROVED'):
+        flash('Este plan ya no está en revisión.', 'warning')
+        return redirect(url_for('planner'))
+
+    can_edit = plan.status == 'DRAFT_REVIEW' and current_user.has_permission('distribution:edit')
+
+    lines = (
+        DistributionPlanLine.query
+        .filter_by(plan_id=plan.id)
+        .join(Product, DistributionPlanLine.product_id == Product.id)
+        .join(Store, DistributionPlanLine.store_id == Store.id, isouter=True)
+        .order_by(Store.name, Product.sku)
+        .all()
+    )
+
+    cd_stock_raw = (
+        db.session.query(Product.sku, db.func.sum(StockCD.quantity))
+        .join(StockCD, StockCD.product_id == Product.id)
+        .group_by(Product.sku)
+        .all()
+    )
+    cd_stock_map = {r[0]: int(r[1] or 0) for r in cd_stock_raw}
+
+    store_summary = {}
+    for line in lines:
+        store_name = line.store.name if line.store else '—'
+        eff = line.effective_qty()
+        if store_name not in store_summary:
+            store_summary[store_name] = {'skus': set(), 'units': 0}
+        store_summary[store_name]['skus'].add(line.product_id)
+        store_summary[store_name]['units'] += eff
+    total_final_units = sum(v['units'] for v in store_summary.values())
+    store_rows = sorted(
+        [{'store': k, 'skus': len(v['skus']), 'units': v['units'],
+          'pct': round(v['units'] / total_final_units * 100, 1) if total_final_units else 0}
+         for k, v in store_summary.items()],
+        key=lambda x: -x['units']
+    )
+
+    adjusted_count = sum(1 for l in lines if l.is_manually_adjusted)
+
+    return render_template(
+        'distribution_review.html',
+        plan=plan,
+        lines=lines,
+        store_rows=store_rows,
+        total_final_units=total_final_units,
+        adjusted_count=adjusted_count,
+        cd_stock_map=cd_stock_map,
+        can_edit=can_edit,
+    )
+
+
+@app.route('/distribution/review/<int:plan_id>/save', methods=['POST'])
+@login_required
+@require_permission('distribution:edit')
+def distribution_review_save(plan_id):
+    """Save adjusted qty_final values for all lines in the plan."""
+    plan = db.session.get(DistributionPlan, plan_id)
+    if not plan or plan.status != 'DRAFT_REVIEW':
+        abort(400)
+
+    changed = 0
+    for key, value in request.form.items():
+        if not key.startswith('qty_final_'):
+            continue
+        try:
+            line_id = int(key.split('_')[-1])
+            new_qty = int(value)
+            if new_qty < 0:
+                new_qty = 0
+        except (ValueError, IndexError):
+            continue
+
+        line = db.session.get(DistributionPlanLine, line_id)
+        if not line or line.plan_id != plan.id:
+            continue
+
+        old_qty = line.qty_final if line.qty_final is not None else line.qty_planned
+        if old_qty == new_qty:
+            continue
+
+        db.session.add(DistributionAdjustmentLog(
+            plan_id=plan.id,
+            line_id=line.id,
+            old_qty_final=old_qty,
+            new_qty_final=new_qty,
+            changed_by_user_id=current_user.id,
+        ))
+
+        line.qty_final = new_qty
+        line.is_manually_adjusted = (new_qty != (line.qty_suggested or line.qty_planned))
+
+        note = request.form.get(f'note_{line_id}', '').strip()
+        if note:
+            line.adjustment_note = note
+
+        changed += 1
+
+    if changed:
+        db.session.add(PlanActivityLog(
+            plan_id=plan.id,
+            action='QUANTITIES_ADJUSTED',
+            user_id=current_user.id,
+            comment=f'{changed} línea(s) ajustada(s) manualmente por {current_user.username}'
+        ))
+    db.session.commit()
+
+    flash(f'Ajustes guardados: {changed} línea(s) modificada(s).', 'success' if changed else 'info')
+    return redirect(url_for('distribution_review', plan_id=plan_id))
+
+
+@app.route('/distribution/review/<int:plan_id>/confirm', methods=['POST'])
+@login_required
+@require_permission('runs:approve')
+def distribution_review_confirm(plan_id):
+    """Confirm the reviewed plan — set APPROVED and create WMS wave."""
+    plan = db.session.get(DistributionPlan, plan_id)
+    if not plan or plan.status != 'DRAFT_REVIEW':
+        abort(400)
+
+    active_lines = [l for l in plan.lines if (l.qty_final or l.qty_planned or 0) > 0]
+    if not active_lines:
+        flash('El plan no tiene ninguna línea con cantidad > 0. Ajusta antes de confirmar.', 'danger')
+        return redirect(url_for('distribution_review', plan_id=plan_id))
+
+    plan.status = 'APPROVED'
+    db.session.add(PlanActivityLog(
+        plan_id=plan.id,
+        action='CONFIRMED_AND_SENT',
+        user_id=current_user.id,
+        comment=f'Plan confirmado y enviado a FastPlanner por {current_user.username}'
+    ))
     db.session.commit()
 
     wave_msg = ''
@@ -12886,24 +13080,19 @@ def approve_and_send(run_id):
         wave_msg = f' | WMS Pick Wave #{wave.id} creada ({wave.status})'
     except Exception as e:
         print(f"[WMS] ERROR creating pick wave for plan {plan.id}: {e}")
-        try:
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
         wave_msg = f' | WMS Pick Wave no creada: {str(e)}'
-        flash(f'Plan creado pero la Pick Wave WMS no se pudo generar: {str(e)}', 'warning')
+        flash(f'Plan enviado al Planner pero la Pick Wave WMS no se pudo generar: {str(e)}', 'warning')
 
     log_audit(
-        action='run.approved_and_sent',
-        entity_type='run',
-        entity_id=run.id,
-        run_id=run_id,
+        action='distribution.review.confirmed',
+        entity_type='distribution_plan',
+        entity_id=plan.id,
         status='success',
-        message=f'Aprobado y enviado a FastPlanner como {plan.folio}{wave_msg}'
+        message=f'Plan {plan.folio} confirmado y enviado al Planner{wave_msg}'
     )
-    
-    flash(f'Corrida aprobada y enviada a FastPlanner como {plan.folio}{wave_msg}', 'success')
-    return redirect(url_for('runs'))
+
+    flash(f'Plan {plan.folio} enviado al FastPlanner{wave_msg}', 'success')
+    return redirect(url_for('planner'))
 
 
 @app.route('/runs/<run_id>/reject', methods=['POST'])
@@ -20247,6 +20436,25 @@ def ensure_inventory_schema():
                 conn.execute(text("ALTER TABLE stock_cd ADD COLUMN problem_reason TEXT"))
                 conn.commit()
             print("[INVENTORY] Added column stock_cd.problem_reason")
+
+    if 'distribution_plan_line' in table_names:
+        dpl_cols = [col['name'] for col in inspector.get_columns('distribution_plan_line')]
+        dpl_new_cols = {
+            'qty_suggested': 'INTEGER',
+            'qty_final': 'INTEGER',
+            'is_manually_adjusted': 'BOOLEAN DEFAULT 0',
+            'adjustment_note': 'TEXT',
+        }
+        for col_name, col_type in dpl_new_cols.items():
+            if col_name not in dpl_cols:
+                with db.engine.connect() as conn:
+                    conn.execute(text(f"ALTER TABLE distribution_plan_line ADD COLUMN {col_name} {col_type}"))
+                    conn.commit()
+                print(f"[DIST] Added column distribution_plan_line.{col_name}")
+
+    if 'distribution_adjustment_log' not in table_names:
+        DistributionAdjustmentLog.__table__.create(db.engine)
+        print("[DIST] Created distribution_adjustment_log table")
 
     cd_baseline = InventoryBaseline.query.filter_by(scope='cd').first()
     if not cd_baseline:

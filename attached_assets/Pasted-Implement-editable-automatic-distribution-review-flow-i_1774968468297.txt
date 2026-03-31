@@ -1,0 +1,142 @@
+Implement editable automatic distribution review flow in FastDSO before authorization, with a store-level summary and inline editing, while preserving Planner/WMS synchronization.
+
+GOAL
+After generating an automatic distribution, users must be able to:
+1) see a summary consolidated by destination store
+2) edit the suggested quantities inside FastDSO
+3) save the adjusted proposal
+4) then send it to authorization
+5) later approved plans must continue syncing correctly with Planner and WMS
+
+BUSINESS RULES
+- The engine output must be preserved as the original suggestion.
+- User edits must be stored separately.
+- Planner and WMS must always use the final adjusted quantity, not the original suggestion.
+- Editing is only allowed while the plan is in draft/review state (before authorization).
+
+DATA MODEL
+Extend DistributionPlanLine (or equivalent line model) with:
+- qty_suggested (existing if already present; use it as engine output)
+- qty_final (new or confirm existing)  # editable final quantity
+- is_manually_adjusted (bool default false)
+- adjustment_note (nullable)
+
+If qty_final already exists, ensure:
+- automatic generation sets qty_final = qty_suggested initially
+- inline edits update qty_final and set is_manually_adjusted=true when changed
+
+PLAN STATUS
+Ensure plan status flow supports:
+- DRAFT
+- READY_FOR_AUTH
+- APPROVED
+- SENT_TO_PLANNER (or your equivalent existing flow)
+Editing is allowed only in DRAFT / review stage.
+
+UI / ROUTES
+
+1) After automatic distribution generation, redirect to a new review page:
+Route suggestion:
+- /distribution/review/<plan_id>
+or reuse existing preview route if it exists
+
+2) Review page sections
+
+A) Top summary cards
+Show:
+- Total SKUs
+- Total units (sum qty_final)
+- Total destination stores
+- Model used / generation mode
+- Number of manually adjusted lines
+
+B) Store consolidated summary table
+Group by destination store:
+Columns:
+- Store
+- Distinct SKUs
+- Total units
+- % of total units
+Sort by total units DESC
+
+C) Editable detail table
+Columns:
+- SKU
+- Product
+- Category (if available)
+- Destination store
+- Qty suggested
+- Qty final (editable numeric input)
+- Status badge:
+   AUTO / EDITADO
+- Optional note icon or field
+
+Behavior:
+- default qty_final = qty_suggested
+- inline editing allowed
+- changing qty_final updates:
+   - line badge to EDITADO
+   - total units
+   - store summary totals
+- allow qty_final = 0
+- disallow negative numbers
+
+3) Save action
+Buttons:
+- “Guardar ajustes”
+- “Enviar a autorizar”
+- “Cancelar”
+
+Guardar ajustes behavior:
+- persist qty_final values
+- set is_manually_adjusted where qty_final != qty_suggested
+- do not change plan status from DRAFT
+
+Enviar a autorizar behavior:
+- validate plan has at least one line with qty_final > 0
+- set plan status = READY_FOR_AUTH (or your existing authorization pending state)
+- lock editing for non-admin users after this point
+- redirect to plan detail / approval flow
+
+4) Warnings / validation
+While editing:
+- If qty_final > current CD stock for that SKU total, show warning badge/icon (soft warning, do not hard block)
+- If all lines for a SKU become 0, show warning:
+   “SKU sin distribución final”
+- If all plan lines become 0, block send to authorization
+
+5) Planner / WMS integration
+When approved and sent forward:
+- all downstream logic (FastPlanner board, WMS wave creation, reservations, picking) must use qty_final only
+- qty_suggested remains for audit/analytics only
+
+6) Permissions
+- Users with distribution:auto or planner:approve may view the review page
+- Only users with the proper distribution edit permission (create a new permission if needed, e.g. distribution:edit) can modify qty_final
+
+7) Audit / traceability
+Recommended:
+Create a small adjustment log table or reuse existing audit log:
+- plan_id
+- line_id
+- old_qty_final
+- new_qty_final
+- changed_by_user_id
+- changed_at
+
+At minimum, write audit log events when adjustments are saved.
+
+8) UX
+- Match FastDSO visual style
+- No spreadsheet-like clutter
+- Keep the store summary visible and easy to read
+- Editable detail table can be paginated if large
+- Totals should feel responsive (server-side is enough, client-side optional)
+
+DELIVERABLES
+- review route/page
+- store summary block
+- editable qty_final flow
+- save adjustments + send to authorization
+- downstream Planner/WMS read qty_final only
+- no breaking changes to automatic distribution engine
