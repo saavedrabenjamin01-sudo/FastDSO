@@ -8487,17 +8487,35 @@ def upload():
                 Prediction.quantity > 0
             ).scalar() or 0
             
+            # Create a DRAFT plan immediately so the distributor can review
+            # and edit quantities before sending to authorization.
+            run_obj = Run.query.filter_by(run_id=run_id).first()
+            plan_id_for_review = None
+            if run_obj:
+                try:
+                    draft_plan = _create_plan_from_run_draft(run_obj, user_id=user_id, status='DRAFT')
+                    plan_id_for_review = draft_plan.id
+                    print(f'[PLAN] redirecting to review plan_id={plan_id_for_review}')
+                except Exception as e:
+                    print(f'[PLAN] ERROR creating draft plan: {e}')
+
+            if plan_id_for_review:
+                review_url = url_for('distribution_review', plan_id=plan_id_for_review)
+                if is_ajax:
+                    return jsonify({'ok': True, 'message': msg, 'category': 'success', 'redirect_url': review_url})
+                flash(msg, 'success')
+                return redirect(review_url)
+
+            # Fallback if plan creation failed
             if is_ajax:
                 return jsonify({
                     'ok': True,
                     'message': msg,
                     'category': 'success',
-                    'redirect_url': url_for('dashboard', approval_modal=1, modal_run_id=run_id, 
-                                           modal_units=total_units, modal_skus=num_skus, modal_stores=num_stores)
+                    'redirect_url': url_for('runs')
                 })
             flash(msg, 'success')
-            return redirect(url_for('dashboard', approval_modal=1, modal_run_id=run_id,
-                                   modal_units=total_units, modal_skus=num_skus, modal_stores=num_stores))
+            return redirect(url_for('runs'))
             
         except Exception as e:
             db.session.rollback()
@@ -8565,18 +8583,31 @@ def generate_from_pending():
             Prediction.quantity > 0
         ).scalar() or 0
         
+        # Create a DRAFT plan immediately so the distributor can review
+        # and edit quantities before sending to authorization.
+        run_obj_p = Run.query.filter_by(run_id=run_id).first()
+        plan_id_for_review_p = None
+        if run_obj_p:
+            try:
+                draft_plan_p = _create_plan_from_run_draft(run_obj_p, user_id=user_id, status='DRAFT')
+                plan_id_for_review_p = draft_plan_p.id
+                print(f'[PLAN] redirecting to review plan_id={plan_id_for_review_p}')
+            except Exception as e_p:
+                print(f'[PLAN] ERROR creating draft plan: {e_p}')
+
+        if plan_id_for_review_p:
+            review_url_p = url_for('distribution_review', plan_id=plan_id_for_review_p)
+            if is_ajax:
+                return jsonify({'ok': True, 'message': msg, 'category': 'success', 'redirect_url': review_url_p})
+            flash(msg, 'success')
+            return redirect(review_url_p)
+
+        # Fallback if plan creation failed
         if is_ajax:
-            return jsonify({
-                'ok': True,
-                'message': msg,
-                'category': 'success',
-                'redirect_url': url_for('dashboard', approval_modal=1, modal_run_id=run_id,
-                                       modal_units=total_units, modal_skus=num_skus, modal_stores=num_stores)
-            })
+            return jsonify({'ok': True, 'message': msg, 'category': 'success', 'redirect_url': url_for('runs')})
         flash(msg, 'success')
-        return redirect(url_for('dashboard', approval_modal=1, modal_run_id=run_id,
-                               modal_units=total_units, modal_skus=num_skus, modal_stores=num_stores))
-    
+        return redirect(url_for('runs'))
+
     except Exception as e:
         db.session.rollback()
         if is_ajax:
@@ -12809,6 +12840,64 @@ def compute_run_summary(run_id):
     }
 
 
+# ── Plan-from-run helper ──────────────────────────────────────────────
+def _create_plan_from_run_draft(run, user_id, status='DRAFT'):
+    """Create a DistributionPlan + lines from a run's predictions.
+
+    Called immediately after generation so the distributor can review/edit
+    before sending to authorization.  Lines are seeded with:
+        qty_planned  = engine output
+        qty_suggested = engine output
+        qty_final    = engine output
+        is_manually_adjusted = False
+    """
+    folio = run.folio or f"PLAN-{run.run_id[:8].upper()}"
+    existing_folio = DistributionPlan.query.filter_by(folio=folio).first()
+    if existing_folio:
+        folio = f"{folio}-{datetime.utcnow().strftime('%H%M%S')}"
+
+    plan = DistributionPlan(
+        folio=folio,
+        source_run_id=run.run_id,
+        source='AUTO',
+        status=status,
+        urgency=run.urgency or 'MEDIUM',
+        notes_commercial=run.submit_note,
+        created_by_user_id=user_id,
+        created_at=datetime.utcnow(),
+    )
+    db.session.add(plan)
+    db.session.flush()
+
+    predictions = (
+        Prediction.query
+        .filter_by(run_id=run.run_id)
+        .filter(Prediction.quantity > 0)
+        .all()
+    )
+    for pred in predictions:
+        line = DistributionPlanLine(
+            plan_id=plan.id,
+            product_id=pred.product_id,
+            store_id=pred.store_id,
+            qty_planned=pred.quantity,
+            qty_suggested=pred.quantity,
+            qty_final=pred.quantity,
+            is_manually_adjusted=False,
+        )
+        db.session.add(line)
+
+    db.session.add(PlanActivityLog(
+        plan_id=plan.id,
+        action='CREATED_FOR_REVIEW',
+        user_id=user_id,
+        comment=f'Plan {folio} creado en borrador con {len(predictions)} líneas. Pendiente de revisión y autorización.',
+    ))
+    db.session.commit()
+    print(f'[PLAN] auto distribution created plan_id={plan.id} status={status}')
+    return plan
+
+
 # ------------------ Run Workflow: Submit for Approval ------------------
 @app.route('/runs/<run_id>/submit_for_approval', methods=['POST'])
 @login_required
@@ -12870,46 +12959,65 @@ def approve_and_send(run_id):
     if predictions_count == 0:
         flash('No hay cantidades positivas para enviar a bodega', 'warning')
         return redirect(url_for('runs'))
-    
-    folio = run.folio or f"PLAN-{run.run_id[:8].upper()}"
-    existing = DistributionPlan.query.filter_by(folio=folio).first()
-    if existing:
-        folio = f"{folio}-{datetime.utcnow().strftime('%H%M%S')}"
-    
-    plan = DistributionPlan(
-        folio=folio,
-        source_run_id=run.run_id,
-        status='DRAFT_REVIEW',
-        urgency=run.urgency or 'MEDIUM',
-        notes_commercial=run.submit_note,
-        created_by_user_id=run.submitted_by_user_id,
-        approved_by_user_id=current_user.id,
-        created_at=run.submitted_at or datetime.utcnow(),
-        approved_at=datetime.utcnow()
-    )
-    db.session.add(plan)
-    db.session.flush()
 
-    predictions = Prediction.query.filter_by(run_id=run.run_id).filter(Prediction.quantity > 0).all()
-    for pred in predictions:
-        line = DistributionPlanLine(
+    # Reuse an existing pre-created DRAFT_REVIEW plan if the distributor already
+    # went through the review page and clicked "Enviar a autorizar".
+    plan = DistributionPlan.query.filter_by(
+        source_run_id=run.run_id, status='DRAFT_REVIEW'
+    ).first()
+
+    if plan:
+        # Plan was pre-created and reviewed — just stamp approval metadata.
+        plan.approved_by_user_id = current_user.id
+        plan.approved_at = datetime.utcnow()
+        db.session.add(PlanActivityLog(
             plan_id=plan.id,
-            product_id=pred.product_id,
-            store_id=pred.store_id,
-            qty_planned=pred.quantity,
-            qty_suggested=pred.quantity,
-            qty_final=pred.quantity,
-            is_manually_adjusted=False
-        )
-        db.session.add(line)
+            action='APPROVED_BY_MANAGER',
+            user_id=current_user.id,
+            comment=f'Plan aprobado por {current_user.username} (flujo de revisión previa).'
+        ))
+        print(f'[PLAN] reusing existing plan_id={plan.id} status=DRAFT_REVIEW → APPROVED')
+    else:
+        # Backward-compat: plan was not pre-created (old runs / direct approval).
+        folio = run.folio or f"PLAN-{run.run_id[:8].upper()}"
+        existing_folio = DistributionPlan.query.filter_by(folio=folio).first()
+        if existing_folio:
+            folio = f"{folio}-{datetime.utcnow().strftime('%H%M%S')}"
 
-    activity = PlanActivityLog(
-        plan_id=plan.id,
-        action='CREATED_FOR_REVIEW',
-        user_id=current_user.id,
-        comment=f'Plan creado en revisión por {current_user.username}. Pendiente de ajuste y confirmación.'
-    )
-    db.session.add(activity)
+        plan = DistributionPlan(
+            folio=folio,
+            source_run_id=run.run_id,
+            status='DRAFT_REVIEW',
+            urgency=run.urgency or 'MEDIUM',
+            notes_commercial=run.submit_note,
+            created_by_user_id=run.submitted_by_user_id,
+            approved_by_user_id=current_user.id,
+            created_at=run.submitted_at or datetime.utcnow(),
+            approved_at=datetime.utcnow()
+        )
+        db.session.add(plan)
+        db.session.flush()
+
+        predictions = Prediction.query.filter_by(run_id=run.run_id).filter(Prediction.quantity > 0).all()
+        for pred in predictions:
+            line = DistributionPlanLine(
+                plan_id=plan.id,
+                product_id=pred.product_id,
+                store_id=pred.store_id,
+                qty_planned=pred.quantity,
+                qty_suggested=pred.quantity,
+                qty_final=pred.quantity,
+                is_manually_adjusted=False
+            )
+            db.session.add(line)
+
+        db.session.add(PlanActivityLog(
+            plan_id=plan.id,
+            action='CREATED_FOR_REVIEW',
+            user_id=current_user.id,
+            comment=f'Plan creado en revisión por {current_user.username} (flujo clásico).'
+        ))
+        print(f'[PLAN] auto distribution created plan_id={plan.id} status=DRAFT_REVIEW (compat path)')
 
     run.status = 'APPROVED'
     run.approved_by_user_id = current_user.id
@@ -12924,7 +13032,7 @@ def approve_and_send(run_id):
         entity_id=run.id,
         run_id=run_id,
         status='success',
-        message=f'Corrida aprobada. Plan {plan.folio} creado en REVISIÓN ({len(predictions)} líneas).'
+        message=f'Corrida aprobada. Plan {plan.folio} listo para revisión.'
     )
 
     flash(f'Corrida aprobada. Plan {plan.folio} listo para revisión antes de enviar al Planner.', 'success')
@@ -12933,17 +13041,18 @@ def approve_and_send(run_id):
 
 @app.route('/distribution/review/<int:plan_id>')
 @login_required
-@require_permission('runs:approve')
 def distribution_review(plan_id):
-    """Review page for a DRAFT_REVIEW distribution plan — edit qty_final before sending to Planner."""
+    """Review page for a DRAFT / DRAFT_REVIEW distribution plan — edit qty_final before sending to Planner."""
+    if not current_user.has_permission('distribution:edit') and not current_user.has_permission('runs:approve'):
+        abort(403)
     plan = db.session.get(DistributionPlan, plan_id)
     if not plan:
         abort(404)
-    if plan.status not in ('DRAFT_REVIEW', 'APPROVED'):
+    if plan.status not in ('DRAFT', 'DRAFT_REVIEW', 'APPROVED'):
         flash('Este plan ya no está en revisión.', 'warning')
         return redirect(url_for('planner'))
 
-    can_edit = plan.status == 'DRAFT_REVIEW' and current_user.has_permission('distribution:edit')
+    can_edit = plan.status in ('DRAFT', 'DRAFT_REVIEW') and current_user.has_permission('distribution:edit')
 
     lines = (
         DistributionPlanLine.query
@@ -12998,7 +13107,7 @@ def distribution_review(plan_id):
 def distribution_review_save(plan_id):
     """Save adjusted qty_final values for all lines in the plan."""
     plan = db.session.get(DistributionPlan, plan_id)
-    if not plan or plan.status != 'DRAFT_REVIEW':
+    if not plan or plan.status not in ('DRAFT', 'DRAFT_REVIEW'):
         abort(400)
 
     changed = 0
@@ -13049,6 +13158,86 @@ def distribution_review_save(plan_id):
 
     flash(f'Ajustes guardados: {changed} línea(s) modificada(s).', 'success' if changed else 'info')
     return redirect(url_for('distribution_review', plan_id=plan_id))
+
+
+@app.route('/distribution/review/<int:plan_id>/submit_for_auth', methods=['POST'])
+@login_required
+@require_permission('distribution:edit')
+def distribution_review_submit_auth(plan_id):
+    """Move a DRAFT plan to DRAFT_REVIEW (awaiting manager approval) and
+    submit its linked run for approval.  This is triggered by the
+    'Enviar a autorizar' button on the review page."""
+    plan = db.session.get(DistributionPlan, plan_id)
+    if not plan or plan.status != 'DRAFT':
+        flash('Este plan ya fue enviado a autorización o no está en borrador.', 'warning')
+        return redirect(url_for('distribution_review', plan_id=plan_id))
+
+    # Persist any qty_final edits submitted in the same form POST.
+    changed = 0
+    for key, value in request.form.items():
+        if not key.startswith('qty_final_'):
+            continue
+        try:
+            line_id = int(key.split('_')[-1])
+            new_qty = max(0, int(value))
+        except (ValueError, IndexError):
+            continue
+        line = db.session.get(DistributionPlanLine, line_id)
+        if not line or line.plan_id != plan.id:
+            continue
+        old_qty = line.qty_final if line.qty_final is not None else line.qty_planned
+        if old_qty != new_qty:
+            db.session.add(DistributionAdjustmentLog(
+                plan_id=plan.id,
+                line_id=line.id,
+                old_qty_final=old_qty,
+                new_qty_final=new_qty,
+                changed_by_user_id=current_user.id,
+            ))
+            line.qty_final = new_qty
+            line.is_manually_adjusted = (new_qty != (line.qty_suggested or line.qty_planned))
+            note = request.form.get(f'note_{line_id}', '').strip()
+            if note:
+                line.adjustment_note = note
+            changed += 1
+
+    # Advance plan to DRAFT_REVIEW (locked for editing by non-approvers).
+    plan.status = 'DRAFT_REVIEW'
+    urgency = request.form.get('urgency', 'MEDIUM')
+    if urgency not in ('LOW', 'MEDIUM', 'URGENT'):
+        urgency = 'MEDIUM'
+    submit_note = request.form.get('submit_note', '').strip()
+
+    db.session.add(PlanActivityLog(
+        plan_id=plan.id,
+        action='SENT_FOR_AUTH',
+        user_id=current_user.id,
+        comment=f'Plan enviado a autorización por {current_user.username}. Urgencia: {urgency}. {changed} líneas ajustadas.',
+    ))
+
+    # Also submit the linked run for approval so it appears in the manager's queue.
+    if plan.source_run_id:
+        run = Run.query.filter_by(run_id=plan.source_run_id).first()
+        if run and run.status in ('DRAFT', 'completed'):
+            run.status = 'PENDING_APPROVAL'
+            run.urgency = urgency
+            run.submit_note = submit_note
+            run.submitted_by_user_id = current_user.id
+            run.submitted_at = datetime.utcnow()
+            print(f'[PLAN] sent to authorization plan_id={plan.id} status=READY_FOR_AUTH (run={run.run_id} → PENDING_APPROVAL)')
+
+    db.session.commit()
+
+    log_audit(
+        action='distribution.plan.submit_for_auth',
+        entity_type='distribution_plan',
+        entity_id=plan.id,
+        status='success',
+        message=f'Plan {plan.folio} enviado a autorización con urgencia {urgency}.'
+    )
+
+    flash(f'Plan {plan.folio} enviado a autorización. Un responsable deberá aprobarlo para enviarlo al Planner.', 'success')
+    return redirect(url_for('runs'))
 
 
 @app.route('/distribution/review/<int:plan_id>/confirm', methods=['POST'])

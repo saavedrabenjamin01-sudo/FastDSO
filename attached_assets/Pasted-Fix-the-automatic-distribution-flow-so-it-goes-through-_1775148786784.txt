@@ -1,0 +1,70 @@
+Fix the automatic distribution flow so it goes through the editable review page before authorization.
+
+PROBLEM
+After generating an automatic distribution, the app still redirects directly to authorization instead of the new editable review screen.
+The intended flow is:
+
+Generate automatic distribution
+-> open editable review page
+-> allow qty_final adjustments
+-> user explicitly clicks "Enviar a autorizar"
+-> then authorization flow starts
+
+GOAL
+Reconnect the real generation flow to the review/edit stage.
+
+REQUIRED CHANGES
+
+1) Find the actual route/action used by the automatic distribution generator
+- This is the route triggered by the button/form the user uses today to generate a distribution.
+- It likely creates DistributionPlan + DistributionPlanLines and then redirects directly to authorization or plan detail.
+
+2) Change the post-generation redirect
+After the automatic distribution is successfully generated:
+- DO NOT redirect to authorization
+- DO NOT auto-open authorization popup
+- Instead redirect to:
+  /distribution/review/<plan_id>
+  (or the existing review endpoint implemented earlier)
+
+3) Ensure plan status after generation is DRAFT
+- Automatic plans must be created in editable draft/review state
+- They should not be marked READY_FOR_AUTH or equivalent yet
+- Authorization should happen only when the user clicks "Enviar a autorizar" from the review screen
+
+4) Ensure line quantities are initialized correctly
+For every generated DistributionPlanLine:
+- qty_suggested = engine result
+- qty_final = qty_suggested initially
+- is_manually_adjusted = false
+
+5) Review page behavior
+- The review page must load immediately after generation
+- It must show:
+  - top summary cards
+  - store consolidated summary
+  - editable detail table
+- Buttons:
+  - Guardar ajustes
+  - Enviar a autorizar
+  - Cancelar
+
+6) Authorization flow
+- Only the "Enviar a autorizar" action should move the plan from DRAFT to READY_FOR_AUTH (or the app’s equivalent pending-authorization state)
+- Once sent to authorization, editing should no longer be allowed for standard users
+
+7) Safety / regression check
+- Do not break manual distribution flow
+- Do not break Planner/WMS downstream sync
+- Planner/WMS must continue using qty_final only once the plan is approved and sent forward
+
+8) Add debug logs
+Add concise logs:
+[PLAN] auto distribution created plan_id=... status=DRAFT
+[PLAN] redirecting to review plan_id=...
+[PLAN] sent to authorization plan_id=... status=READY_FOR_AUTH
+
+DELIVERABLE
+- Automatic generation now lands on the editable review screen
+- Authorization is no longer triggered automatically
+- Users can edit qty_final before sending to authorization

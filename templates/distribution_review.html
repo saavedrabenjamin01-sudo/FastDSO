@@ -11,19 +11,28 @@
       <h5 class="mb-0 fw-bold">
         Plan <span class="text-primary">{{ plan.folio }}</span>
         <span class="badge ms-2
-          {% if plan.status == 'DRAFT_REVIEW' %}bg-warning text-dark
+          {% if plan.status == 'DRAFT' %}bg-secondary
+          {% elif plan.status == 'DRAFT_REVIEW' %}bg-warning text-dark
           {% elif plan.status == 'APPROVED' %}bg-success
           {% else %}bg-secondary{% endif %}"
           style="font-size:.72rem;">
-          {{ 'EN REVISIÓN' if plan.status == 'DRAFT_REVIEW' else plan.status }}
+          {% if plan.status == 'DRAFT' %}BORRADOR
+          {% elif plan.status == 'DRAFT_REVIEW' %}EN AUTORIZACIÓN
+          {% else %}{{ plan.status }}{% endif %}
         </span>
         {% if plan.urgency == 'URGENT' %}
         <span class="badge bg-danger ms-1" style="font-size:.7rem;">URGENTE</span>
         {% endif %}
       </h5>
       <small class="text-muted">
-        Revisión previa al envío al FastPlanner &middot;
-        Generado: {{ plan.created_at.strftime('%d/%m/%Y %H:%M') if plan.created_at else '—' }}
+        {% if plan.status == 'DRAFT' %}
+          Revisa y ajusta las cantidades antes de enviar a autorizar
+        {% elif plan.status == 'DRAFT_REVIEW' %}
+          Pendiente de aprobación por un responsable
+        {% else %}
+          Plan confirmado y enviado al FastPlanner
+        {% endif %}
+        &middot; Generado: {{ plan.created_at.strftime('%d/%m/%Y %H:%M') if plan.created_at else '—' }}
         {% if plan.approved_by %}
           &middot; Aprobado por {{ plan.approved_by.username }}
         {% endif %}
@@ -215,8 +224,8 @@
             </table>
           </div>
 
-          <!-- Action bar -->
-          {% if can_edit %}
+          <!-- ── Action bar ── -->
+          {% if plan.status == 'DRAFT' and can_edit %}
           <div class="card-footer d-flex justify-content-between align-items-center gap-2 flex-wrap">
             <div class="text-muted" style="font-size:.82rem;">
               <span id="footer-adjusted-count">{{ adjusted_count }}</span> línea(s) ajustada(s) de {{ lines|length }}
@@ -226,19 +235,41 @@
               <button type="submit" class="btn btn-sm btn-outline-primary" form="reviewForm">
                 <i class="bi bi-floppy me-1"></i>Guardar ajustes
               </button>
-              <button type="button" class="btn btn-sm btn-success" onclick="confirmAndSend()">
-                <i class="bi bi-check-circle me-1"></i>Confirmar y enviar al Planner
+              <button type="button" class="btn btn-sm btn-success" onclick="openSubmitAuthModal()">
+                <i class="bi bi-send me-1"></i>Enviar a autorizar
               </button>
             </div>
           </div>
+
           {% elif plan.status == 'DRAFT_REVIEW' %}
-          <div class="card-footer d-flex justify-content-end gap-2">
-            <a href="{{ url_for('runs') }}" class="btn btn-sm btn-outline-secondary">Cancelar</a>
-            <button type="button" class="btn btn-sm btn-success" onclick="confirmAndSend()">
-              <i class="bi bi-check-circle me-1"></i>Confirmar y enviar al Planner
-            </button>
-          </div>
-          {% else %}
+            {% if can_edit %}
+            <div class="card-footer d-flex justify-content-between align-items-center gap-2 flex-wrap">
+              <div class="text-muted" style="font-size:.82rem;">
+                <span id="footer-adjusted-count">{{ adjusted_count }}</span> línea(s) ajustada(s) de {{ lines|length }}
+              </div>
+              <div class="d-flex gap-2">
+                <a href="{{ url_for('runs') }}" class="btn btn-sm btn-outline-secondary">Cancelar</a>
+                <button type="submit" class="btn btn-sm btn-outline-primary" form="reviewForm">
+                  <i class="bi bi-floppy me-1"></i>Guardar ajustes
+                </button>
+              </div>
+            </div>
+            {% endif %}
+            {% if can('runs:approve') %}
+            <div class="card-footer d-flex justify-content-between align-items-center gap-2 flex-wrap
+                        {% if can_edit %}border-top-0{% endif %}">
+              <div class="text-muted" style="font-size:.82rem;">
+                <i class="bi bi-clock-history me-1"></i>Pendiente de aprobación de responsable
+              </div>
+              <div class="d-flex gap-2">
+                <button type="button" class="btn btn-sm btn-success" onclick="confirmAndSend()">
+                  <i class="bi bi-check-circle me-1"></i>Confirmar y enviar al Planner
+                </button>
+              </div>
+            </div>
+            {% endif %}
+
+          {% elif plan.status == 'APPROVED' %}
           <div class="card-footer text-muted text-center" style="font-size:.82rem;">
             <i class="bi bi-lock me-1"></i>Este plan ya fue confirmado. Solo lectura.
           </div>
@@ -254,7 +285,46 @@
 
 </div>
 
-<!-- Confirm modal -->
+<!-- ── Enviar a autorizar modal (DRAFT → DRAFT_REVIEW) ── -->
+<div class="modal fade" id="submitAuthModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-send-fill text-primary me-2"></i>Enviar a autorizar</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="submitAuthForm"
+            action="{{ url_for('distribution_review_submit_auth', plan_id=plan.id) }}"
+            method="POST">
+        <div class="modal-body">
+          <p class="mb-3">El plan <strong>{{ plan.folio }}</strong> será enviado a autorización. Un responsable deberá aprobarlo antes de enviarlo al Planner y WMS.</p>
+          <div id="submit-auth-summary" class="mb-3 p-2 bg-light rounded" style="font-size:.85rem;"></div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold" style="font-size:.85rem;">Urgencia</label>
+            <select name="urgency" class="form-select form-select-sm">
+              <option value="LOW">Baja</option>
+              <option value="MEDIUM" selected>Media</option>
+              <option value="URGENT">Urgente</option>
+            </select>
+          </div>
+          <div class="mb-2">
+            <label class="form-label fw-semibold" style="font-size:.85rem;">Nota para el autorizador <span class="text-muted fw-normal">(opcional)</span></label>
+            <textarea name="submit_note" class="form-control form-control-sm" rows="2" placeholder="Instrucciones, contexto o aclaraciones..."></textarea>
+          </div>
+          <p class="text-muted mb-0" style="font-size:.8rem;"><i class="bi bi-info-circle me-1"></i>Las cantidades finales actuales serán las que se envíen al autorizador.</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-success" onclick="injectQtyInputsIntoAuthForm()">
+            <i class="bi bi-send me-1"></i>Enviar a autorizar
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ── Confirm + Send to Planner modal (DRAFT_REVIEW → APPROVED) ── -->
 <div class="modal fade" id="confirmModal" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">
@@ -373,6 +443,35 @@ function resetAllQty() {
   recalcTotals();
 }
 
+// ── Enviar a autorizar ──
+function openSubmitAuthModal() {
+  let total = 0;
+  document.querySelectorAll('.qty-input').forEach(inp => { total += Math.max(0, parseInt(inp.value) || 0); });
+  if (total === 0) {
+    alert('No hay unidades con cantidad final > 0. Ajusta antes de enviar a autorizar.');
+    return;
+  }
+  const summary = document.getElementById('submit-auth-summary');
+  if (summary) summary.innerHTML = `<strong>Unidades finales:</strong> ${total}`;
+  new bootstrap.Modal(document.getElementById('submitAuthModal')).show();
+}
+
+function injectQtyInputsIntoAuthForm() {
+  // Copy current qty_final inputs into the auth form so the POST includes them.
+  const authForm = document.getElementById('submitAuthForm');
+  // Remove any previously injected hidden inputs to avoid duplicates.
+  authForm.querySelectorAll('input[data-injected]').forEach(el => el.remove());
+  document.querySelectorAll('.qty-input').forEach(inp => {
+    const hidden = document.createElement('input');
+    hidden.type = 'hidden';
+    hidden.name = inp.name;
+    hidden.value = inp.value;
+    hidden.dataset.injected = '1';
+    authForm.appendChild(hidden);
+  });
+}
+
+// ── Confirmar y enviar al Planner ──
 function confirmAndSend() {
   let total = 0;
   document.querySelectorAll('.qty-input').forEach(inp => { total += Math.max(0, parseInt(inp.value) || 0); });
@@ -382,8 +481,7 @@ function confirmAndSend() {
   }
   const summary = document.getElementById('confirm-summary');
   if (summary) summary.innerHTML = `<strong>Unidades finales:</strong> ${total}`;
-  const modal = new bootstrap.Modal(document.getElementById('confirmModal'));
-  modal.show();
+  new bootstrap.Modal(document.getElementById('confirmModal')).show();
 }
 
 document.addEventListener('DOMContentLoaded', buildZeroWarnings);
