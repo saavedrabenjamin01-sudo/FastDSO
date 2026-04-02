@@ -19254,6 +19254,10 @@ def assign_picker_to_plan_wave(plan_id, picker_user_id, manager_user_id=None):
 def sync_plan_from_wave(wave_id, event_type=None, note=None, actor_user_id=None):
     """
     Mirror WMS wave status into the linked DistributionPlan.
+    Also auto-advances plan.status based on wave execution state:
+      wave IN_PROGRESS  → plan APPROVED → IN_PROGRESS
+      wave PICKED/CLOSED → plan APPROVED/IN_PROGRESS → PACKED
+      wave NEEDS_REVIEW  → plan stays IN_PROGRESS (flags warning)
     Writes a PlannerWmsEventLog entry. Commits.
     """
     wave = db.session.get(WmsPickWave, wave_id)
@@ -19263,19 +19267,68 @@ def sync_plan_from_wave(wave_id, event_type=None, note=None, actor_user_id=None)
     if not plan:
         return
 
-    old_status = plan.wms_status
+    old_wms_status = plan.wms_status
+    old_plan_status = plan.status
     plan.wms_status = wave.status
     if wave.assigned_to:
         plan.assigned_to_user_id = wave.assigned_to
     if not plan.wms_wave_id:
         plan.wms_wave_id = wave.id
 
+    # ── Auto-advance Planner operational status ──────────────────────────
+    status_note = note
+    if wave.status == 'IN_PROGRESS' and plan.status == 'APPROVED':
+        plan.status = 'IN_PROGRESS'
+        plan.started_at = plan.started_at or datetime.utcnow()
+        db.session.add(PlanActivityLog(
+            plan_id=plan.id,
+            action='TAKEN',
+            user_id=actor_user_id,
+            comment=f'Plan iniciado automáticamente por inicio de picking WMS (wave #{wave_id})'
+        ))
+        status_note = (note or '') + f' | Plan: {old_plan_status} → IN_PROGRESS'
+        print(f'[PLANNER-WMS] plan={plan.id} auto-advanced APPROVED → IN_PROGRESS (wave={wave_id})')
+
+    elif wave.status in ('PICKED', 'CLOSED') and plan.status in ('APPROVED', 'IN_PROGRESS'):
+        plan.status = 'PACKED'
+        db.session.add(PlanActivityLog(
+            plan_id=plan.id,
+            action='PACKED',
+            user_id=actor_user_id,
+            comment=f'Plan marcado EMPACADO automáticamente por finalización de picking WMS (wave #{wave_id})'
+        ))
+        status_note = (note or '') + f' | Plan: {old_plan_status} → PACKED'
+        print(f'[PLANNER-WMS] plan={plan.id} auto-advanced {old_plan_status} → PACKED (wave={wave_id})')
+
+    elif wave.status == 'NEEDS_REVIEW' and plan.status == 'APPROVED':
+        plan.status = 'IN_PROGRESS'
+        plan.started_at = plan.started_at or datetime.utcnow()
+        db.session.add(PlanActivityLog(
+            plan_id=plan.id,
+            action='TAKEN',
+            user_id=actor_user_id,
+            comment=f'Plan iniciado (NEEDS_REVIEW) por picking WMS con incidencias (wave #{wave_id})'
+        ))
+        status_note = (note or '') + f' | Plan: {old_plan_status} → IN_PROGRESS (NEEDS_REVIEW)'
+        print(f'[PLANNER-WMS] plan={plan.id} auto-advanced APPROVED → IN_PROGRESS NEEDS_REVIEW (wave={wave_id})')
+
     _planner_wms_log(plan.id, event_type or 'WMS_STATUS_SYNCED', wave_id=wave.id,
-                     old_status=old_status, new_status=wave.status,
+                     old_status=old_wms_status, new_status=wave.status,
                      assigned_user_id=wave.assigned_to,
-                     created_by_user_id=actor_user_id, note=note)
+                     created_by_user_id=actor_user_id, note=status_note)
     db.session.commit()
-    print(f"[PLANNER-WMS] sync plan={plan.id} wave={wave_id} status={wave.status}")
+    print(f"[PLANNER-WMS] sync plan={plan.id} wave={wave_id} wms_status={wave.status} plan_status={plan.status}")
+
+
+def get_wms_issues_for_plan(plan_id):
+    """Return all WmsPickIssue rows for a plan via its linked pick wave(s)."""
+    return (
+        db.session.query(WmsPickIssue)
+        .join(WmsPickWave, WmsPickIssue.wave_id == WmsPickWave.id)
+        .filter(WmsPickWave.plan_id == plan_id)
+        .order_by(WmsPickIssue.wave_id, WmsPickIssue.task_id, WmsPickIssue.id)
+        .all()
+    )
 
 
 def close_wave_and_update_plan(wave_id, actor_user_id=None):
@@ -19418,6 +19471,8 @@ def planner_detail(plan_id):
     else:
         operators = []
 
+    wms_issues = get_wms_issues_for_plan(plan.id)
+
     return render_template(
         'planner_detail.html',
         plan=plan,
@@ -19431,6 +19486,7 @@ def planner_detail(plan_id):
         latest_wave=latest_wave,
         planner_events=planner_events,
         operators=operators,
+        wms_issues=wms_issues,
     )
 
 
@@ -19620,18 +19676,88 @@ def planner_dispatch(plan_id):
 @login_required
 @require_permission('planner:operate')
 def planner_close(plan_id):
-    """Close a plan: move from DISPATCHED to CLOSED with optional exceptions upload."""
+    """Close a plan: move from DISPATCHED to CLOSED.
+
+    Incident sources (processed in order, not mutually exclusive):
+    1. WMS issues: automatically pulled from the linked pick wave (always processed when present).
+    2. Manual exceptions file: optional CSV/XLSX upload (legacy + supplemental path).
+    """
     plan = DistributionPlan.query.get_or_404(plan_id)
-    
+
     if plan.status != 'DISPATCHED':
         flash('Solo se pueden cerrar planes en estado DESPACHADO', 'warning')
         return redirect(url_for('planner'))
-    
-    no_exceptions = request.form.get('no_exceptions') == '1'
-    exceptions_file = request.files.get('exceptions_file')
+
     exceptions_count = 0
     exceptions_file_name = None
-    
+    latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar() or date.today()
+
+    # ── 1. Process WMS issues automatically ──────────────────────────────
+    wms_issues = get_wms_issues_for_plan(plan.id)
+    hold_reason_codes = {'DAMAGED', 'QUALITY_HOLD', 'NOT_FOUND', 'NO_STOCK', 'COUNT_MISMATCH', 'MIXED_SKU'}
+    for issue in wms_issues:
+        if issue.reason_code not in hold_reason_codes:
+            continue
+        if not issue.missing_qty or issue.missing_qty <= 0:
+            continue
+        product = db.session.get(Product, issue.product_id)
+        if not product:
+            continue
+
+        hold_reason = f'WMS picking ({issue.reason_code}) - Folio {plan.folio}'
+        if issue.operator_note:
+            hold_reason = f'{issue.operator_note[:80]} - {hold_reason}'
+
+        product.is_on_hold = True
+        product.hold_reason = hold_reason
+        product.hold_source = 'wms_picking'
+        product.hold_created_at = datetime.utcnow()
+
+        existing = StockCD.query.filter_by(
+            as_of_date=latest_cd_date,
+            product_id=product.id,
+            quality_status='PROBLEM'
+        ).first()
+        if existing:
+            existing.quantity += issue.missing_qty
+            existing.problem_reason = hold_reason
+        else:
+            db.session.add(StockCD(
+                as_of_date=latest_cd_date,
+                product_id=product.id,
+                quantity=issue.missing_qty,
+                quality_status='PROBLEM',
+                problem_reason=hold_reason
+            ))
+
+        db.session.add(InventoryEvent(
+            event_type='PLANNER_INCIDENT_TO_HOLD',
+            event_date=date.today(),
+            product_id=product.id,
+            store_id=None,
+            qty_delta=0,
+            ref_type='wms_picking_issue',
+            ref_id=str(issue.id),
+            note=hold_reason,
+            created_by_user_id=current_user.id,
+        ))
+        db.session.add(ProductHold(
+            product_id=product.id,
+            is_active=True,
+            reason='WMS_PICKING_ISSUE',
+            observation=f'{issue.reason_code}: {issue.operator_note or ""} (Wave #{issue.wave_id})',
+            created_by_user_id=current_user.id,
+        ))
+        exceptions_count += 1
+
+    if exceptions_count:
+        print(f"[INVENTORY] Planner close folio={plan.folio}: {exceptions_count} WMS issues → ProductHold")
+
+    # ── 2. Process optional manual exceptions file ────────────────────────
+    no_exceptions = request.form.get('no_exceptions') == '1'
+    exceptions_file = request.files.get('exceptions_file')
+    manual_count = 0
+
     if not no_exceptions and exceptions_file and exceptions_file.filename:
         try:
             from werkzeug.utils import secure_filename as wz_secure_filename
@@ -19656,8 +19782,6 @@ def planner_close(plan_id):
             if 'sku' not in df.columns or 'quantity' not in df.columns:
                 flash('El archivo debe contener columnas: sku, quantity', 'danger')
                 return redirect(url_for('planner'))
-            
-            latest_cd_date = db.session.query(db.func.max(StockCD.as_of_date)).scalar() or date.today()
             
             has_observation_col = 'observation' in df.columns or 'observacion' in df.columns or 'reason' in df.columns
             obs_col = 'observation' if 'observation' in df.columns else ('observacion' if 'observacion' in df.columns else 'reason')

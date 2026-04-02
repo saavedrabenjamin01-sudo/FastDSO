@@ -97,6 +97,11 @@
             {% if pw.assigned_operator %}
             <small class="text-muted" style="font-size:0.6rem;"><i class="bi bi-person-badge"></i> {{ pw.assigned_operator.username }}</small>
             {% endif %}
+            {% if pw.short_units %}
+            <span class="badge bg-danger" style="font-size:0.6rem;" title="{{ pw.short_units }} unidades faltantes en el picking">
+              <i class="bi bi-exclamation-triangle-fill"></i> {{ pw.short_units }} faltantes
+            </span>
+            {% endif %}
             <a href="{{ url_for('wms_wave_detail', wave_id=pw.id) }}" class="btn btn-xs btn-outline-dark" style="font-size:0.6rem; padding:1px 5px;" title="Ver Pick Wave">
               <i class="bi bi-box-arrow-up-right"></i> Ver Picking
             </a>
@@ -169,18 +174,19 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
         <div class="modal-body">
-          <p class="text-muted mb-3">Sube un archivo con los artículos no enviados / dañados / faltantes. Estos se devolverán al CD como <strong>Stock Problema</strong> (no elegible para distribución).</p>
-          
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Archivo de excepciones (Excel/CSV)</label>
-            <input type="file" name="exceptions_file" id="exceptionsFile" class="form-control" accept=".xlsx,.xls,.csv">
-            <div class="form-text">Columnas requeridas: <code>sku</code>, <code>quantity</code>. Opcional: <code>product_name</code></div>
+          <div class="alert alert-info mb-3" style="font-size:0.85rem;">
+            <i class="bi bi-info-circle-fill"></i>
+            Las <strong>incidencias WMS</strong> reportadas por el operador durante el picking se procesarán automáticamente como Stock Problema / Hold al cerrar el folio.
           </div>
-          
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Archivo de excepciones adicional (opcional)</label>
+            <input type="file" name="exceptions_file" id="exceptionsFile" class="form-control" accept=".xlsx,.xls,.csv">
+            <div class="form-text">Columnas requeridas: <code>sku</code>, <code>quantity</code>. Opcional: <code>observation</code>, <code>product_name</code></div>
+          </div>
           <div class="form-check mt-3">
             <input class="form-check-input" type="checkbox" id="noExceptionsCheck" name="no_exceptions" value="1" onchange="toggleExceptionsFile()">
             <label class="form-check-label" for="noExceptionsCheck">
-              <i class="bi bi-check2-circle text-success"></i> No hay excepciones - cerrar sin archivo
+              <i class="bi bi-check2-circle text-success"></i> Sin excepciones manuales adicionales
             </label>
           </div>
         </div>

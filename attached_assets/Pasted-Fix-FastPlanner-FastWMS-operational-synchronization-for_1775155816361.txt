@@ -1,0 +1,96 @@
+Fix FastPlanner <-> FastWMS operational synchronization for status transitions and issue handoff.
+
+GOAL
+Planner and WMS must stay synchronized during execution:
+- When a picker starts an assigned WMS wave, Planner status must automatically change from "Aprobado" to "En Progreso".
+- When the wave is finished, Planner status must automatically change to "Empacado".
+- When closing the folio in Planner, the old manual incident checkbox/report flow must be replaced with the actual issues reported by the picker in WMS.
+
+PART 1 — STATUS SYNCHRONIZATION
+
+1) Update WMS -> Planner status mapping
+Whenever WmsPickWave status changes, sync Planner plan status as follows:
+- READY_TO_ASSIGN or ASSIGNED -> keep Planner as "Aprobado"
+- IN_PROGRESS -> set Planner status to "En Progreso"
+- PICKED or CLOSED -> set Planner status to "Empacado"
+- NEEDS_REVIEW -> keep Planner as "En Progreso" but add warning/flag in Planner UI
+
+2) Trigger points
+Apply sync automatically at these points:
+- when operator starts the wave:
+   WmsPickWave.status = IN_PROGRESS
+   -> Planner.status = "En Progreso"
+- when operator finishes the wave:
+   WmsPickWave.status = PICKED
+   -> Planner.status = "Empacado"
+- when manager closes the wave:
+   WmsPickWave.status = CLOSED
+   -> Planner.status remains "Empacado"
+
+3) Update existing orchestration service
+In the Planner/WMS sync service, replace the old generic mirror logic with the explicit status mapping above.
+
+4) Add audit log events
+Write PlannerWmsEventLog entries:
+- PICKING_STARTED
+- PICKING_COMPLETED
+- WAVE_CLOSED
+with old_status/new_status and plan_id/wave_id
+
+PART 2 — INCIDENT HANDOFF TO PLANNER
+
+1) Remove old manual incident checkbox dependency
+In Planner folio close flow:
+- do not rely on the old checkbox/manual incident flag as the source of truth
+- keep the checkbox hidden or deprecated
+- actual incident data must come from WMS issues
+
+2) Pull WMS issues into Planner close screen
+When opening folio close screen/modal in Planner:
+- query WmsPickIssue rows linked to the folio/wave
+- show them in a summary section:
+   SKU | Producto | Ubicación | Caja (if available) | Cantidad faltante | Motivo | Nota operario
+- group by SKU if needed, but preserve detail availability
+
+3) Close folio behavior
+When user closes the folio in Planner:
+- if WMS issues exist, include them in the close summary automatically
+- create/update any existing planner incident record from those WMS issues if your app already uses one
+- mark folio closed with real incident data attached
+
+4) UI changes in Planner
+On folio detail / close modal:
+- add section title:
+   "Incidencias reportadas en picking"
+- if no WMS issues:
+   show:
+   "Sin incidencias reportadas por el operario"
+- if issues exist:
+   show warning badge and summary count
+
+5) Optional but recommended
+Add a small badge to Planner cards:
+- "Con incidencias" if WMS issues exist for the linked wave
+
+PART 3 — DATA LINKING
+Ensure every WmsPickIssue is linked to:
+- wave_id
+- task_id
+- reservation_id if available
+- product_id / sku
+- and indirectly to the Planner plan/folio through wave.plan_id
+
+If needed, add helper:
+get_wms_issues_for_plan(plan_id)
+
+PART 4 — SAFETY
+- Do not break existing close flow for folios with no WMS wave
+- If no WMS issues exist, Planner should still close normally
+- Keep backward compatibility with older records that may not have wave linkage
+
+DELIVERABLES
+- Planner status updates automatically based on WMS wave execution
+- Planner close screen consumes WMS issues instead of manual checkbox
+- Incident summary visible in Planner
+- audit/event log updated
+- no breaking changes to existing FastDSO modules

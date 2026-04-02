@@ -195,9 +195,9 @@
           <button type="submit" class="btn btn-warning w-100"><i class="bi bi-truck"></i> Marcar como Despachado</button>
         </form>
         {% elif plan.status == 'DISPATCHED' %}
-        <form method="post" action="{{ url_for('planner_close', plan_id=plan.id) }}">
-          <button type="submit" class="btn btn-secondary w-100"><i class="bi bi-check-circle"></i> Cerrar Plan</button>
-        </form>
+        <button type="button" class="btn btn-secondary w-100" data-bs-toggle="modal" data-bs-target="#modalCerrarPlan">
+          <i class="bi bi-check-circle"></i> Cerrar Plan
+        </button>
         {% endif %}
       </div>
     </div>
@@ -244,6 +244,14 @@
           <div class="small text-muted mt-1"><i class="bi bi-play-circle"></i> Inicio: {{ latest_wave.pick_started_at.strftime('%d/%m %H:%M') }}</div>
           {% endif %}
         </div>
+        {% if latest_wave.status == 'NEEDS_REVIEW' %}
+        <div class="alert alert-warning py-1 px-2 mt-2 mb-1" style="font-size:0.75rem;">
+          <i class="bi bi-exclamation-triangle-fill"></i> <strong>Incidencias reportadas</strong> — el operador registró faltantes. Revisa la wave antes de continuar.
+        </div>
+        {% endif %}
+        {% if latest_wave.short_units %}
+        <div class="small text-danger mt-1"><i class="bi bi-exclamation-circle"></i> {{ latest_wave.short_units }} unidades faltantes</div>
+        {% endif %}
         {% if can_manage and latest_wave.status in ('READY_TO_ASSIGN', 'ASSIGNED', 'NEEDS_REVIEW') %}
         <button type="button" class="btn btn-sm btn-outline-primary w-100 mt-1" data-bs-toggle="modal" data-bs-target="#modalAsignarPicker">
           <i class="bi bi-person-plus"></i> Asignar Picker
@@ -383,6 +391,88 @@
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
           <button type="submit" class="btn btn-primary"><i class="bi bi-person-check"></i> Asignar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if can_operate and plan.status == 'DISPATCHED' %}
+<div class="modal fade" id="modalCerrarPlan" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-check-circle"></i> Cerrar Folio: {{ plan.folio }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="post" action="{{ url_for('planner_close', plan_id=plan.id) }}" enctype="multipart/form-data">
+        <div class="modal-body">
+
+          {% if wms_issues %}
+          <div class="alert alert-warning mb-3" style="font-size:0.85rem;">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            <strong>{{ wms_issues|length }} incidencia(s) WMS</strong> detectadas en el picking.
+            Estas se procesarán automáticamente como <strong>Stock Problema / Hold</strong> al cerrar.
+          </div>
+          <div class="table-responsive mb-3" style="max-height:260px; overflow-y:auto;">
+            <table class="table table-sm table-bordered table-striped mb-0" style="font-size:0.75rem;">
+              <thead class="table-dark sticky-top" style="font-size:0.7rem;">
+                <tr>
+                  <th>SKU</th>
+                  <th>Producto</th>
+                  <th>Faltantes</th>
+                  <th>Motivo</th>
+                  <th>Nota operador</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for issue in wms_issues %}
+                <tr>
+                  <td class="text-nowrap"><code>{{ issue.sku }}</code></td>
+                  <td>{{ issue.product.name if issue.product else '—' }}</td>
+                  <td class="text-center text-danger fw-semibold">{{ issue.missing_qty }}</td>
+                  <td>
+                    {% set rc_map = {'DAMAGED':'Dañado','QUALITY_HOLD':'Calidad','NOT_FOUND':'No encontrado','NO_STOCK':'Sin stock','COUNT_MISMATCH':'Diferencia conteo','MIXED_SKU':'SKU mixto','LOCATION_BLOCKED':'Ubicación bloqueada','OTHER':'Otro'} %}
+                    <span class="badge bg-{{ 'danger' if issue.reason_code in ('DAMAGED','QUALITY_HOLD','NO_STOCK','NOT_FOUND') else 'warning text-dark' }}">
+                      {{ rc_map.get(issue.reason_code, issue.reason_code) }}
+                    </span>
+                  </td>
+                  <td class="text-muted" style="max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ issue.operator_note or '' }}">
+                    {{ issue.operator_note or '—' }}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <div class="alert alert-success mb-3" style="font-size:0.85rem;">
+            <i class="bi bi-check2-circle"></i> Sin incidencias WMS registradas. El folio se cerrará sin excepciones.
+          </div>
+          {% endif %}
+
+          <hr>
+          <div class="mb-3">
+            <label class="form-label fw-semibold small">Archivo de excepciones adicional (opcional)</label>
+            <input type="file" name="exceptions_file" class="form-control form-control-sm" accept=".xlsx,.xls,.csv">
+            <div class="form-text">Columnas requeridas: <code>sku</code>, <code>quantity</code>. Opcional: <code>observation</code>, <code>product_name</code></div>
+          </div>
+          {% if not wms_issues %}
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="detailNoExceptions" name="no_exceptions" value="1">
+            <label class="form-check-label" for="detailNoExceptions">
+              <i class="bi bi-check2-circle text-success"></i> No hay excepciones — cerrar sin archivo
+            </label>
+          </div>
+          {% endif %}
+
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-secondary">
+            <i class="bi bi-check-circle"></i> Confirmar cierre
+          </button>
         </div>
       </form>
     </div>
