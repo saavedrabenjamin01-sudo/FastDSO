@@ -19247,7 +19247,9 @@ def assign_picker_to_plan_wave(plan_id, picker_user_id, manager_user_id=None):
                      assigned_user_id=picker_user_id, created_by_user_id=manager_user_id,
                      note=f'Picker: {picker.username}')
     db.session.commit()
-    print(f"[PLANNER-WMS] picker assigned plan={plan_id} wave={wave.id} user={picker.username}")
+    # Board column does NOT change on assignment — plan.status stays APPROVED ("Aprobado")
+    print(f'[PLANNER-WMS] picker assigned but plan stays in Aprobados '
+          f'plan={plan_id} wave={wave.id} board_field=status value={plan.status} picker={picker.username}')
     return wave
 
 
@@ -19275,42 +19277,57 @@ def sync_plan_from_wave(wave_id, event_type=None, note=None, actor_user_id=None)
     if not plan.wms_wave_id:
         plan.wms_wave_id = wave.id
 
-    # ── Auto-advance Planner operational status ──────────────────────────
+    # ── Auto-advance Planner board column based on wave execution state ──
+    # Board field: DistributionPlan.status
+    #   'APPROVED'    → kanban column "Aprobado"
+    #   'IN_PROGRESS' → kanban column "En Progreso"
+    #   'PACKED'      → kanban column "Empacado"
     status_note = note
-    if wave.status == 'IN_PROGRESS' and plan.status == 'APPROVED':
+    if wave.status == 'ASSIGNED':
+        # Picker assignment alone must NOT move the folio. Board column stays APPROVED.
+        print(f'[PLANNER-WMS] picker assigned but plan stays in Aprobados '
+              f'plan={plan.id} wave={wave_id} board_field=status value={plan.status}')
+
+    elif wave.status == 'IN_PROGRESS' and plan.status == 'APPROVED':
+        # Wave STARTED → move board column APPROVED → IN_PROGRESS ("En Progreso")
         plan.status = 'IN_PROGRESS'
         plan.started_at = plan.started_at or datetime.utcnow()
         db.session.add(PlanActivityLog(
             plan_id=plan.id,
             action='TAKEN',
             user_id=actor_user_id,
-            comment=f'Plan iniciado automáticamente por inicio de picking WMS (wave #{wave_id})'
+            comment=f'Plan movido a En Progreso automáticamente porque wave #{wave_id} inició picking'
         ))
-        status_note = (note or '') + f' | Plan: {old_plan_status} → IN_PROGRESS'
-        print(f'[PLANNER-WMS] plan={plan.id} auto-advanced APPROVED → IN_PROGRESS (wave={wave_id})')
+        status_note = (note or '') + f' | plan.status: {old_plan_status} → IN_PROGRESS'
+        print(f'[PLANNER-WMS] plan {plan.id} moved to En Progreso because wave {wave_id} started')
 
     elif wave.status in ('PICKED', 'CLOSED') and plan.status in ('APPROVED', 'IN_PROGRESS'):
+        # Wave FINISHED → move board column → PACKED ("Empacado")
         plan.status = 'PACKED'
         db.session.add(PlanActivityLog(
             plan_id=plan.id,
             action='PACKED',
             user_id=actor_user_id,
-            comment=f'Plan marcado EMPACADO automáticamente por finalización de picking WMS (wave #{wave_id})'
+            comment=f'Plan movido a Empacado automáticamente porque wave #{wave_id} finalizó picking'
         ))
-        status_note = (note or '') + f' | Plan: {old_plan_status} → PACKED'
-        print(f'[PLANNER-WMS] plan={plan.id} auto-advanced {old_plan_status} → PACKED (wave={wave_id})')
+        status_note = (note or '') + f' | plan.status: {old_plan_status} → PACKED'
+        print(f'[PLANNER-WMS] plan {plan.id} moved to Empacado because wave {wave_id} finished')
 
     elif wave.status == 'NEEDS_REVIEW' and plan.status == 'APPROVED':
+        # Wave has shortages but picking started — also move to IN_PROGRESS
         plan.status = 'IN_PROGRESS'
         plan.started_at = plan.started_at or datetime.utcnow()
         db.session.add(PlanActivityLog(
             plan_id=plan.id,
             action='TAKEN',
             user_id=actor_user_id,
-            comment=f'Plan iniciado (NEEDS_REVIEW) por picking WMS con incidencias (wave #{wave_id})'
+            comment=f'Plan movido a En Progreso (NEEDS_REVIEW) porque wave #{wave_id} reportó incidencias'
         ))
-        status_note = (note or '') + f' | Plan: {old_plan_status} → IN_PROGRESS (NEEDS_REVIEW)'
-        print(f'[PLANNER-WMS] plan={plan.id} auto-advanced APPROVED → IN_PROGRESS NEEDS_REVIEW (wave={wave_id})')
+        status_note = (note or '') + f' | plan.status: {old_plan_status} → IN_PROGRESS (NEEDS_REVIEW)'
+        print(f'[PLANNER-WMS] plan {plan.id} moved to En Progreso (NEEDS_REVIEW) because wave {wave_id} started with issues')
+
+    else:
+        print(f'[PLANNER-WMS] no board column change: plan={plan.id} plan.status={plan.status} wave={wave_id} wave.status={wave.status}')
 
     _planner_wms_log(plan.id, event_type or 'WMS_STATUS_SYNCED', wave_id=wave.id,
                      old_status=old_wms_status, new_status=wave.status,

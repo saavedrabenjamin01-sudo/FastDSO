@@ -1,0 +1,90 @@
+Fix the exact operational status flow between WMS Picking Waves and FastPlanner board columns.
+
+GOAL
+Close this workflow first and only this workflow:
+
+1) When a folio is approved, it appears in Planner column:
+   "Aprobados"
+
+2) The warehouse manager assigns a picker from WMS Picking Waves.
+   This assignment does NOT move the folio yet.
+   It must remain in "Aprobados".
+
+3) When the picker actually STARTS the wave:
+   - WmsPickWave.status must become IN_PROGRESS
+   - the linked Planner folio must automatically move to column "En Progreso"
+
+4) When the picker FINISHES the picking:
+   - WmsPickWave.status becomes PICKED (or CLOSED if that is your final picking status)
+   - the linked Planner folio must automatically move to column "Empacado"
+
+IMPORTANT
+Do not change any other flow yet.
+Do not touch authorization, incidents, dispatch, or closing logic in this fix.
+Only fix the board-column transitions based on wave execution.
+
+STEP 1 — IDENTIFY THE REAL PLANNER COLUMN FIELD
+Find the exact field used by FastPlanner board/kanban to place folios into columns.
+It may be one of:
+- status
+- planner_status
+- stage
+- board_status
+- column_name
+- similar
+You must update THAT real field, not only a mirror field like wms_status.
+
+Add temporary debug logging if needed:
+[PLANNER DEBUG] plan_id=... current board field=... value=...
+
+STEP 2 — UPDATE THE START-WAVE TRANSITION
+Find the endpoint/action where a picker starts a wave.
+This is the exact moment when wave.status becomes IN_PROGRESS.
+At that point:
+- update the real Planner board field to "En Progreso"
+- commit the change
+- log:
+  [PLANNER-WMS] plan <id> moved to En Progreso because wave <id> started
+
+IMPORTANT:
+- assignment alone must NOT move the folio
+- only actual start of picking moves it
+
+STEP 3 — UPDATE THE FINISH-WAVE TRANSITION
+Find the endpoint/action where a picker finishes the wave and wave.status becomes PICKED (or CLOSED).
+At that point:
+- update the real Planner board field to "Empacado"
+- commit the change
+- log:
+  [PLANNER-WMS] plan <id> moved to Empacado because wave <id> finished
+
+STEP 4 — KEEP APPROVED STATE ON ASSIGNMENT
+In the picker assignment flow:
+- do NOT move the folio out of "Aprobados"
+- only set assigned picker fields and wave assigned_to/status
+- add log:
+  [PLANNER-WMS] picker assigned but plan stays in Aprobados
+
+STEP 5 — VERIFY BOARD QUERY
+Check the FastPlanner board query/render logic.
+Ensure the "Aprobados", "En Progreso", and "Empacado" columns are reading the same field you are updating above.
+If the board currently derives columns from another field, make the sync update that exact field.
+
+STEP 6 — SAFE FALLBACK
+If a plan has no linked wave:
+- do nothing
+- do not break planner board
+
+STEP 7 — MANUAL TEST LOGGING
+Add concise logs:
+- when wave assigned
+- when wave started
+- when wave finished
+- and the resulting planner board field value after each action
+
+DELIVERABLE
+After this fix:
+- approved folio stays in Aprobados when picker is assigned
+- folio moves to En Progreso only when wave starts
+- folio moves to Empacado when wave finishes
+- no other workflow changes
