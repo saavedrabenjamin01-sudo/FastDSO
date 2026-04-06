@@ -1,0 +1,140 @@
+Implement Phase 2 improvements for the FastDSO folio/distribution edit screen, turning it into a high-productivity operational editing workspace.
+
+GOAL
+After the user generates an automatic distribution and lands on the editable review page, they should be able to make mass adjustments much faster, especially by store, without redoing the whole distribution.
+
+IMPORTANT
+Do not change the core flow:
+Generate distribution -> review/edit -> save adjustments -> send to authorization -> Planner/WMS sync using qty_final only.
+
+PHASE 2 FEATURES TO ADD
+
+1) MASS EDITING TOOLS
+Add a new "Ajustes masivos" panel above the editable detail table.
+
+This panel must support:
+
+A) Adjust by store
+- Dropdown: select a store
+- Action buttons:
+  - "Poner todas en 0"
+  - "+1 a todas"
+  - "+5 a todas"
+  - "-1 a todas"
+  - "-5 a todas"
+- Apply only to currently visible filtered lines for that store
+- Do not allow qty_final < 0
+
+B) Adjust by selected rows
+- Add checkbox per line in the detail table
+- Add a “Seleccionar todo visible” checkbox in the header
+- Mass actions for selected rows:
+  - "Poner en 0"
+  - "+1"
+  - "+5"
+  - "-1"
+  - "-5"
+
+C) Optional direct set
+- Input numeric field:
+  "Reemplazar qty_final por:"
+- Apply to:
+  - selected rows
+  - or all visible rows of selected store
+
+2) GROUPED VIEW BY STORE
+Add a toggle at the top of the detail section:
+- "Vista por líneas"
+- "Vista agrupada por tienda"
+
+When "Vista agrupada por tienda" is active:
+- Show accordion cards, one per store
+- Each store card header must display:
+  - Store name
+  - Total SKUs
+  - Total qty_final
+  - Total warning lines
+  - Number of edited lines
+- Expanding a store shows the editable SKU lines for that store
+
+Each store accordion must have local action buttons:
+- "Poner tienda en 0"
+- "+1 a toda la tienda"
+- "+5 a toda la tienda"
+- "-1 a toda la tienda"
+- "-5 a toda la tienda"
+
+3) QUICK ADJUSTMENT BUTTONS PER LINE
+In each editable row add compact quick actions near qty_final:
+- -1
+- +1
+- +5
+These should:
+- immediately update qty_final
+- update delta
+- set AJUSTADO badge if changed
+- refresh summary counters
+
+4) BETTER CHANGE TRACKING
+Enhance manual adjustment visibility:
+- If qty_final != qty_suggested:
+  - highlight the row softly
+  - show AJUSTADO badge
+- Add a new column:
+  "Cambio manual"
+  with values:
+   - Sin cambios
+   - Aumentado
+   - Disminuido
+   - En 0
+
+5) STORE-LEVEL IMPACT SUMMARY
+In the consolidated store summary add:
+- delta total vs suggested
+- total edited lines
+- optional warning icon if all qty_final are 0 for that store
+
+Columns for store summary should become:
+- Store
+- Distinct SKUs
+- Qty suggested total
+- Qty final total
+- Delta total
+- % of total final units
+- Warning lines
+- Edited lines
+
+6) SAVE EXPERIENCE
+When the user clicks "Guardar ajustes":
+- save all qty_final changes
+- save is_manually_adjusted flags
+- optionally write audit log entries for changed lines
+- show success popup/toast:
+  "Ajustes guardados correctamente"
+
+7) UX / STYLE
+- Keep FastDSO visual language
+- Buttons must be compact but clear
+- Store grouped cards should feel similar to WMS accordion cards
+- Mobile/tablet behavior optional, but do not break current desktop layout
+- Use Spanish labels everywhere
+
+8) SAFETY RULES
+- qty_final cannot go below 0
+- qty_suggested must never be overwritten
+- do not break authorization flow
+- do not break manual distribution review flow
+- Planner and WMS must still consume qty_final only
+
+9) PERFORMANCE
+- Mass updates should happen in the browser/UI state first, then persist on Save
+- Avoid full page reload for each quick adjustment if current architecture allows
+- If full reactive client-side update is too heavy, keep the UI simple but functional and stable
+
+DELIVERABLES
+- Mass adjustment panel
+- Grouped-by-store editable view
+- Per-line quick adjustment buttons
+- Store summary with delta/edit counts
+- Better visual tracking of changed lines
+- No breaking changes to existing FastDSO flow

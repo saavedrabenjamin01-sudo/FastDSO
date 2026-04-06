@@ -13140,9 +13140,15 @@ def distribution_review(plan_id):
             (sales is None or sales == 0)
         )
         if store_name not in store_summary:
-            store_summary[store_name] = {'skus': set(), 'units': 0, 'warnings': 0, 'has_zero': False}
+            store_summary[store_name] = {
+                'skus': set(), 'units': 0, 'warnings': 0,
+                'suggested': 0, 'edited': 0,
+            }
         store_summary[store_name]['skus'].add(line.product_id)
         store_summary[store_name]['units'] += eff
+        store_summary[store_name]['suggested'] += (line.qty_suggested or line.qty_planned)
+        if line.is_manually_adjusted:
+            store_summary[store_name]['edited'] += 1
         if has_warn:
             store_summary[store_name]['warnings'] += 1
 
@@ -13151,8 +13157,11 @@ def distribution_review(plan_id):
         [{'store': k,
           'skus': len(v['skus']),
           'units': v['units'],
+          'suggested_total': v['suggested'],
+          'delta_total': v['units'] - v['suggested'],
           'pct': round(v['units'] / total_final_units * 100, 1) if total_final_units else 0,
           'warnings': v['warnings'],
+          'edited': v['edited'],
           'all_zero': v['units'] == 0,
          }
          for k, v in store_summary.items()],
@@ -13164,10 +13173,19 @@ def distribution_review(plan_id):
     # ── Total warnings across all lines ──────────────────────────────────
     total_warnings = sum(r['warnings'] for r in store_rows)
 
+    # ── Group lines by store for accordion view ───────────────────────────
+    lines_by_store = {}
+    for line in lines:
+        sname = line.store.name if line.store else '—'
+        if sname not in lines_by_store:
+            lines_by_store[sname] = []
+        lines_by_store[sname].append(line)
+
     return render_template(
         'distribution_review.html',
         plan=plan,
         lines=lines,
+        lines_by_store=lines_by_store,
         store_rows=store_rows,
         total_final_units=total_final_units,
         adjusted_count=adjusted_count,
