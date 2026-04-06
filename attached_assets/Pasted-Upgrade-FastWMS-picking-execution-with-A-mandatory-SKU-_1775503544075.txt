@@ -1,0 +1,164 @@
+Upgrade FastWMS picking execution with:
+A) mandatory SKU scan validation
+B) automatic end-of-wave reallocation when a reservation location fails but the same SKU exists in another location
+
+GOAL
+Improve operator picking flow so that:
+1) location scan is mandatory
+2) SKU scan is also validated before confirming a pick
+3) if a reservation cannot be picked from its assigned location due to an issue, and the same SKU has available stock elsewhere, the system automatically creates a new reservation for the missing qty at the END of the wave
+
+PART A — SKU SCAN VALIDATION
+
+CURRENT STATE
+Location scan is mandatory.
+Now add SKU scan validation before confirming a pick.
+
+REQUIRED BEHAVIOR
+1) On the mobile picking screen, add a SKU scan/input section:
+- Button: "Escanear SKU"
+- Manual fallback input if scan is unavailable
+- Accepted value:
+   - exact sku
+   - or exact product barcode if your system already maps barcode to sku
+   V1 minimum: exact sku validation
+
+2) Validation rules
+Before allowing:
+- Pick completo
+- Pick parcial
+- Reportar incidencia
+
+The system must validate:
+- location scan matched expected location
+- sku scan matched expected SKU
+
+If location matches but SKU does not:
+- show red error
+- keep action buttons disabled
+
+3) Logging
+Optional but recommended:
+- save SKU scan attempts in WmsPickScanLog with:
+   scan_type = PRODUCT
+   scanned_value
+   expected_value
+   is_match
+
+PART B — AUTOMATIC REALLOCATION TO ANOTHER LOCATION
+
+BUSINESS RULE
+If the operator reports that reserved stock in the current location cannot be used, but the same SKU has available stock in another location, FastWMS must automatically create a new reservation for the missing quantity and place it at the END of the wave.
+
+ELIGIBLE ISSUE REASONS FOR REALLOCATION
+If reason_code is one of:
+- NO_STOCK
+- DAMAGED
+- NOT_FOUND
+- MIXED_SKU
+- QUALITY_HOLD
+
+then try reallocation.
+
+DO NOT reallocate for reasons that do not make sense physically unless explicitly allowed.
+
+MODEL CHANGES
+Extend WmsPickReservation with:
+- sequence_order (int)
+- is_reallocation (bool default false)
+- reallocated_from_reservation_id (nullable FK to WmsPickReservation.id)
+
+If sequence_order does not exist, add it and populate existing reservations in current order.
+
+REALLOCATION LOGIC
+Create helper/service:
+
+try_reallocate_shortage_for_reservation(reservation_id, missing_qty)
+
+Behavior:
+1) Get the reservation, task, wave, product_id, warehouse_code
+2) Search for alternative eligible WmsInventory rows for the same SKU/product:
+   - same warehouse MAIN
+   - active locations
+   - available_units > 0
+   - exclude original failed location
+3) Sort eligible locations by:
+   - location_type priority: PICK first, BULK second
+   - available_units ascending
+   - location ascending
+   - box_number ascending
+4) Reserve from those locations until missing_qty is covered or stock runs out:
+   - increment inventory.allocated_units by reserve_qty
+   - create new WmsPickReservation rows:
+       wave_id = same wave
+       task_id = same task
+       product_id = same product
+       location_id / location / box_number / location_code from new location
+       reserved_qty = reserve_qty
+       picked_qty = 0
+       status = OPEN
+       is_reallocation = true
+       reallocated_from_reservation_id = original reservation id
+       sequence_order = max(sequence_order in wave) + 1, incrementing for each new reservation
+5) Return:
+   - qty_reallocated
+   - list of new reservation ids
+   - remaining_uncovered_qty
+
+ISSUE REPORT FLOW UPDATE
+Update POST /api/wms/tasks/<task_id>/report-issue
+
+Current behavior already:
+- creates WmsPickIssue
+- updates short_qty
+- releases unpicked allocated stock from the failed reservation
+
+Now extend it:
+1) After creating the issue and releasing original allocated stock for the missing qty,
+   call try_reallocate_shortage_for_reservation(...) if the reason allows reallocation
+2) If reallocation succeeds partially or fully:
+   - reduce the net shortage impact on the task by the reallocated amount
+   - keep issue log from original location
+   - create a note/log:
+      [WMS] reallocated sku=... qty=... from A-02-01 to B-01-02
+3) If fully reallocated:
+   - task should remain IN_PROGRESS unless all qty is already picked
+   - do NOT leave the task as permanently SHORT just because original location failed
+4) If partially reallocated:
+   - task short_qty should reflect only the still-uncovered amount
+5) If no reallocation possible:
+   - keep current SHORT behavior
+
+WAVE EXECUTION ORDER
+Update next-reservation selection logic:
+- normal reservations first by sequence_order
+- reallocated reservations appear at the END because their sequence_order is appended
+This preserves the operator flow.
+
+MOBILE UI UPDATE
+On the operator picking page:
+- show a small badge for reallocated reservations:
+   "Reasignada"
+- if a reallocation happened after an issue, show toast/message:
+   "Se encontró stock adicional en otra ubicación. La tarea fue enviada al final de la wave."
+- new reservations at end must appear naturally as the operator advances
+
+SAFETY
+- Never over-allocate beyond available_units
+- Never reallocate from the same failed location
+- Never create negative allocated/on_hand
+- Use transactions around issue + release + reallocation
+
+DEBUG LOGS
+Add logs:
+[WMS] sku scan expected=... got=... match=...
+[WMS] issue reported reservation=... sku=... missing=... reason=...
+[WMS] reallocation search sku=... missing=... candidates=...
+[WMS] reallocated sku=... qty=... new_reservation=... sequence=...
+
+DELIVERABLES
+- mobile UI supports mandatory SKU scan
+- issue flow tries automatic reallocation
+- new reservations are appended to the end of the wave
+- task shortage reflects only still-uncovered qty
+- no breaking changes to existing Planner/WMS synchronization

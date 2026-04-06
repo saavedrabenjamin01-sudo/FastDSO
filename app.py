@@ -1152,6 +1152,9 @@ class WmsPickReservation(db.Model):
     qty_reserved = db.Column(db.Integer, nullable=False, default=0)
     qty_picked = db.Column(db.Integer, nullable=False, default=0)
     status = db.Column(db.String(20), nullable=False, default='OPEN')
+    sequence_order = db.Column(db.Integer, nullable=False, default=0)
+    is_reallocation = db.Column(db.Boolean, nullable=False, default=False)
+    reallocated_from_reservation_id = db.Column(db.Integer, db.ForeignKey('wms_pick_reservation.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, nullable=True)
 
@@ -1511,6 +1514,9 @@ def _ensure_wms_defaults(session=None):
             'status': "ALTER TABLE wms_pick_reservation ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'OPEN'",
             'created_at': "ALTER TABLE wms_pick_reservation ADD COLUMN created_at DATETIME",
             'updated_at': "ALTER TABLE wms_pick_reservation ADD COLUMN updated_at DATETIME",
+            'sequence_order': "ALTER TABLE wms_pick_reservation ADD COLUMN sequence_order INTEGER NOT NULL DEFAULT 0",
+            'is_reallocation': "ALTER TABLE wms_pick_reservation ADD COLUMN is_reallocation BOOLEAN NOT NULL DEFAULT 0",
+            'reallocated_from_reservation_id': "ALTER TABLE wms_pick_reservation ADD COLUMN reallocated_from_reservation_id INTEGER",
         }
         for col_name, sql_stmt in _res_migrations.items():
             if col_name not in res_cols:
@@ -1518,6 +1524,16 @@ def _ensure_wms_defaults(session=None):
                     conn.execute(text(sql_stmt))
                     conn.commit()
                 print(f"[WMS] Added column wms_pick_reservation.{col_name}")
+        if 'sequence_order' not in res_cols:
+            try:
+                with db.engine.connect() as conn:
+                    conn.execute(text(
+                        "UPDATE wms_pick_reservation SET sequence_order = id WHERE sequence_order = 0"
+                    ))
+                    conn.commit()
+                print("[WMS] Populated sequence_order for existing reservations")
+            except Exception as _se:
+                print(f"[WMS] WARNING: sequence_order backfill failed: {_se}")
     if 'wms_location' in inspector.get_table_names():
         loc_cols = [c['name'] for c in inspector.get_columns('wms_location')]
         _loc_migrations = {
@@ -10357,7 +10373,7 @@ def _wms_rollup_operator_kpi(user_id, work_date):
 
 
 def get_next_mobile_pick_reservation(wave_id):
-    """Return the next OPEN or PARTIAL reservation for a wave (mobile picking order)."""
+    """Return the next OPEN or PARTIAL reservation for a wave (mobile picking order by sequence_order)."""
     tasks = (
         db.session.query(WmsPickTask)
         .filter_by(wave_id=wave_id)
@@ -10373,7 +10389,7 @@ def get_next_mobile_pick_reservation(wave_id):
         .filter(WmsPickReservation.wave_id == wave_id)
         .filter(WmsPickReservation.task_id.in_(task_ids))
         .filter(WmsPickReservation.status.in_(('OPEN', 'PARTIAL')))
-        .order_by(WmsPickReservation.task_id, WmsPickReservation.id)
+        .order_by(WmsPickReservation.sequence_order, WmsPickReservation.id)
         .first()
     )
     return res
@@ -11201,6 +11217,7 @@ def wms_mobile_pick_wave(wave_id):
             'task_requested': task.qty_requested if task else 0,
             'task_picked': task.qty_picked if task else 0,
             'task_short': task.short_qty if task else 0,
+            'is_reallocation': bool(next_res.is_reallocation),
         }
 
     return render_template(
@@ -11340,6 +11357,121 @@ def api_wms_mobile_reservation_pick(res_id):
     })
 
 
+WMS_REALLOC_ELIGIBLE_REASONS = {'NO_STOCK', 'DAMAGED', 'NOT_FOUND', 'MIXED_SKU', 'QUALITY_HOLD'}
+
+
+def try_reallocate_shortage_for_reservation(reservation_id, missing_qty):
+    """
+    Attempt to cover missing_qty for a failed reservation by finding alternative
+    WmsInventory rows for the same product in the same warehouse, excluding the
+    original location.
+
+    Returns dict:
+        qty_reallocated: int
+        new_reservation_ids: list[int]
+        remaining_uncovered: int
+    """
+    res = db.session.get(WmsPickReservation, reservation_id)
+    if not res or missing_qty <= 0:
+        return {'qty_reallocated': 0, 'new_reservation_ids': [], 'remaining_uncovered': missing_qty}
+
+    wave = db.session.get(WmsPickWave, res.wave_id)
+    task = db.session.get(WmsPickTask, res.task_id) if res.task_id else None
+
+    wh = db.session.query(WmsWarehouse).filter_by(code=(wave.warehouse_code if wave else 'MAIN')).first()
+    if not wh:
+        print(f"[WMS] reallocation search: warehouse not found for reservation={reservation_id}")
+        return {'qty_reallocated': 0, 'new_reservation_ids': [], 'remaining_uncovered': missing_qty}
+
+    sku_display = task.sku if task else str(res.product_id)
+    print(f"[WMS] reallocation search sku={sku_display} missing={missing_qty} candidates=searching...")
+
+    loc_type_priority = db.case(
+        (WmsLocation.location_type == 'PICK', 0),
+        else_=1
+    )
+
+    candidates = (
+        db.session.query(WmsInventory, WmsLocation)
+        .join(WmsLocation, WmsLocation.id == WmsInventory.location_id)
+        .filter(
+            WmsInventory.warehouse_id == wh.id,
+            WmsInventory.product_id == res.product_id,
+            WmsLocation.is_active == True,
+            WmsInventory.location_id != res.location_id,
+        )
+        .filter(
+            (WmsInventory.on_hand_units - WmsInventory.allocated_units) > 0
+        )
+        .order_by(
+            loc_type_priority,
+            WmsInventory.on_hand_units - WmsInventory.allocated_units,
+            WmsLocation.location,
+            WmsLocation.box_number,
+            WmsLocation.location_code,
+        )
+        .all()
+    )
+
+    print(f"[WMS] reallocation search sku={sku_display} missing={missing_qty} candidates={len(candidates)}")
+
+    max_seq = db.session.query(func.max(WmsPickReservation.sequence_order)).filter_by(wave_id=res.wave_id).scalar() or 0
+
+    remaining = missing_qty
+    qty_reallocated = 0
+    new_reservation_ids = []
+
+    for inv, loc in candidates:
+        if remaining <= 0:
+            break
+        available = (inv.on_hand_units or 0) - (inv.allocated_units or 0)
+        if available <= 0:
+            continue
+        reserve_qty = min(available, remaining)
+        inv.allocated_units = (inv.allocated_units or 0) + reserve_qty
+        inv.updated_at = datetime.utcnow()
+
+        max_seq += 1
+        new_res = WmsPickReservation(
+            wave_id=res.wave_id,
+            task_id=res.task_id,
+            product_id=res.product_id,
+            location_id=loc.id,
+            location_code=loc.location_code,
+            qty_reserved=reserve_qty,
+            qty_picked=0,
+            status='OPEN',
+            is_reallocation=True,
+            reallocated_from_reservation_id=reservation_id,
+            sequence_order=max_seq,
+        )
+        db.session.add(new_res)
+        db.session.flush()
+
+        db.session.add(WmsInventoryEvent(
+            event_type='PICK_REALLOC_RESERVE',
+            ref_type='pick_reservation',
+            ref_id=str(new_res.id),
+            warehouse_id=wh.id,
+            location_id=loc.id,
+            product_id=res.product_id,
+            delta_units=0,
+            delta_pallets=0,
+            note=f"Reasignación: {reserve_qty} uds de {loc.location_code} para cubrir faltante en {res.location_code} res#{reservation_id}"
+        ))
+
+        new_reservation_ids.append(new_res.id)
+        remaining -= reserve_qty
+        qty_reallocated += reserve_qty
+        print(f"[WMS] reallocated sku={sku_display} qty={reserve_qty} new_reservation={new_res.id} sequence={max_seq}")
+
+    return {
+        'qty_reallocated': qty_reallocated,
+        'new_reservation_ids': new_reservation_ids,
+        'remaining_uncovered': remaining,
+    }
+
+
 @app.route('/api/wms/mobile/reservations/<int:res_id>/issue', methods=['POST'])
 @login_required
 @require_permission('wms:view')
@@ -11422,11 +11554,23 @@ def api_wms_mobile_reservation_issue(res_id):
     )
     db.session.add(issue)
 
+    print(f"[WMS] issue reported reservation={res_id} sku={task.sku if task else '?'} missing={missing_qty} reason={reason_code}")
+
+    realloc_result = {'qty_reallocated': 0, 'new_reservation_ids': [], 'remaining_uncovered': missing_qty}
+    if reason_code in WMS_REALLOC_ELIGIBLE_REASONS:
+        realloc_result = try_reallocate_shortage_for_reservation(res_id, missing_qty)
+
+    qty_reallocated = realloc_result['qty_reallocated']
+    net_short = missing_qty - qty_reallocated
+
     if task:
-        task.short_qty = (task.short_qty or 0) + missing_qty
+        task.short_qty = (task.short_qty or 0) + net_short
         total_accounted = (task.qty_picked or 0) + task.short_qty
         if total_accounted >= task.qty_requested:
-            task.status = 'SHORT'
+            if task.short_qty > 0 and qty_reallocated == 0:
+                task.status = 'SHORT'
+            else:
+                task.status = 'IN_PROGRESS'
         else:
             task.status = 'IN_PROGRESS'
         task.updated_at = datetime.utcnow()
@@ -11446,7 +11590,7 @@ def api_wms_mobile_reservation_issue(res_id):
 
     _wms_update_wave_counters(wave)
     wave_transitioned = False
-    if wave.status == 'IN_PROGRESS' and (wave.short_units or 0) > 0:
+    if wave.status == 'IN_PROGRESS' and (wave.short_units or 0) > 0 and net_short > 0:
         wave.status = 'NEEDS_REVIEW'
         wave_transitioned = True
     db.session.commit()
@@ -11455,7 +11599,7 @@ def api_wms_mobile_reservation_issue(res_id):
         try:
             sync_plan_from_wave(wave.id, event_type='PICKING_SHORTAGE_REPORTED',
                                 actor_user_id=current_user.id,
-                                note=f'SKU {task.sku if task else "?"}: {missing_qty} faltantes ({reason_code}) via mobile')
+                                note=f'SKU {task.sku if task else "?"}: {missing_qty} faltantes ({reason_code}) via mobile; reasignados={qty_reallocated}')
         except Exception as _e:
             print(f"[MOBILE-WMS] WARNING: sync on mobile issue report failed: {_e}")
 
@@ -11467,6 +11611,9 @@ def api_wms_mobile_reservation_issue(res_id):
         'wave_status': wave.status,
         'has_next': next_res is not None,
         'next_reservation_id': next_res.id if next_res else None,
+        'reallocation_qty': qty_reallocated,
+        'reallocation_new_reservations': realloc_result['new_reservation_ids'],
+        'net_short': net_short,
     })
 
 

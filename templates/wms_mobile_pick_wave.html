@@ -222,9 +222,16 @@
   <div class="mpick-card" id="pick-card">
     <div class="mpick-card-header">
       <span class="mpick-card-title"><i class="bi bi-hand-index-thumb me-1"></i>Siguiente reservación</span>
-      <span class="m-badge {% if next_res.location_type == 'PICK' %}m-badge-pick{% else %}m-badge-bulk{% endif %}">
-        {{ next_res.location_type }}
-      </span>
+      <div style="display:flex;gap:6px;align-items:center;">
+        {% if next_res.is_reallocation %}
+        <span class="m-badge" style="background:#7c3aed;color:#fff;font-size:.67rem;">
+          <i class="bi bi-arrow-repeat me-1"></i>Reasignada
+        </span>
+        {% endif %}
+        <span class="m-badge {% if next_res.location_type == 'PICK' %}m-badge-pick{% else %}m-badge-bulk{% endif %}">
+          {{ next_res.location_type }}
+        </span>
+      </div>
     </div>
 
     <!-- Location block -->
@@ -268,10 +275,10 @@
     </div>
   </div>
 
-  <!-- Scan section -->
+  <!-- Step 1: Location scan -->
   <div class="mpick-scan-card" id="scan-section">
     <div class="mpick-scan-header" id="scan-header">
-      <span class="mpick-scan-title" id="scan-title"><i class="bi bi-qr-code-scan me-1"></i>Escanear ubicación (obligatorio)</span>
+      <span class="mpick-scan-title" id="scan-title"><i class="bi bi-qr-code-scan me-1"></i>Paso 1 — Escanear ubicación (obligatorio)</span>
     </div>
     <div class="mpick-scan-body">
       <div class="mpick-scan-status" id="scan-status">
@@ -293,6 +300,35 @@
       </div>
       <div style="font-size:.7rem; color:#94a3b8; margin-top:6px;">
         Esperado: <code id="expected-loc-display">{{ next_res.location_code }}</code>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 2: SKU scan (shown after location validated) -->
+  <div class="mpick-scan-card" id="sku-scan-section" style="display:none;">
+    <div class="mpick-scan-header" id="sku-scan-header">
+      <span class="mpick-scan-title" id="sku-scan-title"><i class="bi bi-upc-scan me-1"></i>Paso 2 — Escanear SKU (obligatorio)</span>
+    </div>
+    <div class="mpick-scan-body">
+      <div class="mpick-scan-status" id="sku-scan-status">
+        <span class="scan-icon">📦</span>
+        <span id="sku-scan-status-text">Escanea o ingresa el SKU del producto</span>
+      </div>
+
+      <div id="sku-qr-reader" style="display:none;"></div>
+
+      <button class="btn-cam" id="btn-sku-cam" onclick="toggleSkuCamera()">
+        <i class="bi bi-camera"></i> Activar cámara (SKU)
+      </button>
+
+      <div class="mpick-scan-input-row">
+        <input type="text" id="manual-sku-input" class="mpick-scan-input"
+               placeholder="p. ej. {{ next_res.sku }}"
+               autocomplete="off" autocapitalize="characters" spellcheck="false" />
+        <button class="btn-scan-confirm" onclick="validateSku(document.getElementById('manual-sku-input').value)">OK</button>
+      </div>
+      <div style="font-size:.7rem; color:#94a3b8; margin-top:6px;">
+        Esperado: <code id="expected-sku-display">{{ next_res.sku }}</code>
       </div>
     </div>
   </div>
@@ -415,11 +451,21 @@
 var WAVE_ID = {{ wave.id }};
 var RES_ID  = {{ next_res.reservation_id if next_res else 'null' }};
 var EXPECTED_LOC = "{{ next_res.location_code if next_res else '' }}".toUpperCase();
+var EXPECTED_SKU = "{{ next_res.sku if next_res else '' }}".toUpperCase();
 var MAX_QTY = {{ next_res.remaining if next_res else 0 }};
 
 var locationValidated = false;
+var skuValidated = false;
 var html5QrCode = null;
+var skuHtml5QrCode = null;
 var cameraActive = false;
+var skuCameraActive = false;
+
+/* ── gate action buttons on both validations ── */
+function updateActionButtons() {
+  var enabled = locationValidated && skuValidated;
+  document.querySelectorAll('.action-gated').forEach(function(b) { b.disabled = !enabled; });
+}
 
 /* ── location scan utils ── */
 function parseScanToken(val) {
@@ -442,26 +488,61 @@ function validateLocation(raw) {
   var statusEl   = document.getElementById('scan-status');
   var scanHeader = document.getElementById('scan-header');
   var scanTitle  = document.getElementById('scan-title');
+  var skuSection = document.getElementById('sku-scan-section');
 
   if (isMatch) {
     statusEl.className   = 'mpick-scan-status ok';
     statusEl.innerHTML   = '<span class="scan-icon">✅</span><span>Ubicación verificada: <strong>' + scanned + '</strong></span>';
     scanHeader.className = 'mpick-scan-header validated';
-    scanTitle.innerHTML  = '<i class="bi bi-check-circle-fill me-1"></i>Ubicación verificada';
+    scanTitle.innerHTML  = '<i class="bi bi-check-circle-fill me-1"></i>Paso 1 — Ubicación verificada';
     scanTitle.className  = 'mpick-scan-title';
-    document.querySelectorAll('.action-gated').forEach(b => b.disabled = false);
+    if (skuSection) skuSection.style.display = 'block';
   } else {
     statusEl.className   = 'mpick-scan-status err';
     statusEl.innerHTML   = '<span class="scan-icon">❌</span><span>No coincide. Escaneado: <strong>' + scanned + '</strong> — esperado: <strong>' + EXPECTED_LOC + '</strong></span>';
     scanHeader.className = 'mpick-scan-header invalid';
-    scanTitle.innerHTML  = '<i class="bi bi-x-circle-fill me-1"></i>Ubicación no coincide';
+    scanTitle.innerHTML  = '<i class="bi bi-x-circle-fill me-1"></i>Paso 1 — Ubicación no coincide';
     scanTitle.className  = 'mpick-scan-title invalid';
-    document.querySelectorAll('.action-gated').forEach(b => b.disabled = true);
+    skuValidated = false;
+    if (skuSection) skuSection.style.display = 'none';
   }
+  updateActionButtons();
   stopCamera();
 }
 
-/* ── camera ── */
+/* ── SKU scan ── */
+function validateSku(raw) {
+  var scanned = (raw || '').toUpperCase().trim();
+  if (!scanned) return;
+
+  var isMatch = (scanned === EXPECTED_SKU);
+  skuValidated = isMatch;
+  console.log('[WMS] sku scan expected=' + EXPECTED_SKU + ' got=' + scanned + ' match=' + isMatch);
+
+  logScan('PRODUCT', scanned, EXPECTED_SKU);
+
+  var statusEl   = document.getElementById('sku-scan-status');
+  var scanHeader = document.getElementById('sku-scan-header');
+  var scanTitle  = document.getElementById('sku-scan-title');
+
+  if (isMatch) {
+    statusEl.className  = 'mpick-scan-status ok';
+    statusEl.innerHTML  = '<span class="scan-icon">✅</span><span>SKU verificado: <strong>' + scanned + '</strong></span>';
+    scanHeader.className = 'mpick-scan-header validated';
+    scanTitle.innerHTML  = '<i class="bi bi-check-circle-fill me-1"></i>Paso 2 — SKU verificado';
+    scanTitle.className  = 'mpick-scan-title';
+  } else {
+    statusEl.className  = 'mpick-scan-status err';
+    statusEl.innerHTML  = '<span class="scan-icon">❌</span><span>SKU no coincide. Escaneado: <strong>' + scanned + '</strong> — esperado: <strong>' + EXPECTED_SKU + '</strong></span>';
+    scanHeader.className = 'mpick-scan-header invalid';
+    scanTitle.innerHTML  = '<i class="bi bi-x-circle-fill me-1"></i>Paso 2 — SKU no coincide';
+    scanTitle.className  = 'mpick-scan-title invalid';
+  }
+  updateActionButtons();
+  stopSkuCamera();
+}
+
+/* ── location camera ── */
 function toggleCamera() {
   if (cameraActive) { stopCamera(); return; }
   var btn = document.getElementById('btn-cam');
@@ -500,6 +581,45 @@ function stopCamera() {
   if (reader) reader.style.display = 'none';
 }
 
+/* ── SKU camera ── */
+function toggleSkuCamera() {
+  if (skuCameraActive) { stopSkuCamera(); return; }
+  var btn = document.getElementById('btn-sku-cam');
+  var reader = document.getElementById('sku-qr-reader');
+  reader.style.display = 'block';
+  btn.innerHTML = '<i class="bi bi-camera-video-off"></i> Detener cámara';
+  btn.className = 'btn-cam active';
+  skuHtml5QrCode = new Html5Qrcode('sku-qr-reader');
+  skuHtml5QrCode.start(
+    { facingMode: 'environment' },
+    { fps: 10, qrbox: { width: 240, height: 80 } },
+    function(decodedText) {
+      document.getElementById('manual-sku-input').value = decodedText;
+      validateSku(decodedText);
+    },
+    function() {}
+  ).then(function() {
+    skuCameraActive = true;
+  }).catch(function(err) {
+    console.warn('SKU camera error:', err);
+    reader.style.display = 'none';
+    btn.innerHTML = '<i class="bi bi-camera"></i> Cámara no disponible — use entrada manual';
+    btn.className = 'btn-cam';
+    skuCameraActive = false;
+  });
+}
+
+function stopSkuCamera() {
+  if (skuHtml5QrCode && skuCameraActive) {
+    skuHtml5QrCode.stop().catch(function(){});
+    skuCameraActive = false;
+  }
+  var btn = document.getElementById('btn-sku-cam');
+  var reader = document.getElementById('sku-qr-reader');
+  if (btn) { btn.innerHTML = '<i class="bi bi-camera"></i> Activar cámara (SKU)'; btn.className = 'btn-cam'; }
+  if (reader) reader.style.display = 'none';
+}
+
 /* ── scan log ── */
 function logScan(scanType, scannedValue, expectedValue) {
   fetch('/api/wms/mobile/scans', {
@@ -518,7 +638,7 @@ function logScan(scanType, scannedValue, expectedValue) {
 
 /* ── pick complete ── */
 function doPick(resId, qty, partial, note) {
-  if (!locationValidated) { alert('Debes escanear la ubicación primero.'); return; }
+  if (!locationValidated || !skuValidated) { alert('Debes escanear ubicación y SKU antes de continuar.'); return; }
   setActionButtonsLoading(true);
   fetch('/api/wms/mobile/reservations/' + resId + '/pick', {
     method: 'POST',
@@ -543,7 +663,7 @@ function doPick(resId, qty, partial, note) {
 
 /* ── partial modal ── */
 function openPartialModal() {
-  if (!locationValidated) { alert('Debes escanear la ubicación primero.'); return; }
+  if (!locationValidated || !skuValidated) { alert('Debes escanear ubicación y SKU antes de continuar.'); return; }
   document.getElementById('partial-qty').value = 1;
   document.getElementById('partial-qty').max = MAX_QTY - 1;
   document.getElementById('partial-max').textContent = MAX_QTY - 1;
@@ -569,7 +689,7 @@ function submitPartial() {
 
 /* ── issue modal ── */
 function openIssueModal() {
-  if (!locationValidated) { alert('Debes escanear la ubicación primero.'); return; }
+  if (!locationValidated || !skuValidated) { alert('Debes escanear ubicación y SKU antes de continuar.'); return; }
   document.getElementById('issue-qty').value = MAX_QTY;
   document.getElementById('issue-reason').value = '';
   document.getElementById('issue-note').value = '';
@@ -593,7 +713,15 @@ function submitIssue() {
   .then(r => r.json())
   .then(function(data) {
     if (data.ok) {
-      window.location.reload();
+      if (data.reallocation_qty && data.reallocation_qty > 0) {
+        showMobileToast(
+          '📦 Se encontró stock adicional (' + data.reallocation_qty + ' uds) en otra ubicación. La tarea fue enviada al final de la wave.',
+          '#7c3aed'
+        );
+        setTimeout(function() { window.location.reload(); }, 2800);
+      } else {
+        window.location.reload();
+      }
     } else {
       alert(data.error || 'Error al reportar incidencia');
       setActionButtonsLoading(false);
@@ -604,6 +732,21 @@ function submitIssue() {
     setActionButtonsLoading(false);
   });
 }
+
+/* ── mobile toast notification ── */
+function showMobileToast(msg, color) {
+  var t = document.createElement('div');
+  t.style.cssText = 'position:fixed;bottom:calc(var(--bottomnav-h,70px) + 16px);left:12px;right:12px;z-index:999;'
+    + 'background:' + (color || '#1d4ed8') + ';color:#fff;border-radius:14px;padding:14px 16px;'
+    + 'font-size:.85rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.25);'
+    + 'animation:fadeInUp .3s ease;line-height:1.4;';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(function() { t.style.opacity = '0'; t.style.transition = 'opacity .4s'; setTimeout(function() { t.remove(); }, 400); }, 2400);
+}
+var _styleToast = document.createElement('style');
+_styleToast.textContent = '@keyframes fadeInUp{from{transform:translateY(16px);opacity:0}to{transform:translateY(0);opacity:1}}';
+document.head.appendChild(_styleToast);
 
 /* ── wave start (from ASSIGNED state) ── */
 function mobileStartWave(waveId, btn) {
