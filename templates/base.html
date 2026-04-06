@@ -219,6 +219,12 @@
           <span class="nav-icon"><i class="bi bi-box-seam"></i></span>
           <span class="nav-text">WMS Waves</span>
         </a>
+        {% if current_user.has_permission('wms:moves') %}
+        <a class="nav-link" href="{{ url_for('wms_manual_wave_new') }}">
+          <span class="nav-icon"><i class="bi bi-plus-circle"></i></span>
+          <span class="nav-text">Crear ola manual</span>
+        </a>
+        {% endif %}
         <a class="nav-link" href="{{ url_for('wms_my_waves') }}">
           <span class="nav-icon"><i class="bi bi-person-badge"></i></span>
           <span class="nav-text">Mi Picking</span>

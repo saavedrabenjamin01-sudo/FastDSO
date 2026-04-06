@@ -3,13 +3,29 @@
 {% block content %}
 <div class="content-header">
   <div class="d-flex align-items-center gap-3 flex-wrap">
-    <a href="{{ url_for('planner_detail', plan_id=plan.id) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
+    <a href="{{ url_for('wms_waves_list') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
     <div>
       <h1 class="mb-0"><i class="bi bi-boxes"></i> Pick Wave #{{ wave.id }}</h1>
       <p class="text-muted mb-0">
+        {% if plan %}
         <i class="bi bi-clipboard-check"></i>
         <a href="{{ url_for('planner_detail', plan_id=plan.id) }}" class="text-decoration-none">{{ plan.folio }}</a>
-        &nbsp;|&nbsp; <i class="bi bi-building"></i> {{ wave.warehouse_code }}
+        &nbsp;|&nbsp;
+        {% elif wave.external_reference %}
+        <i class="bi bi-globe me-1"></i>Ref: <strong>{{ wave.external_reference }}</strong> &nbsp;|&nbsp;
+        {% else %}
+        <i class="bi bi-pencil-square me-1"></i>Ola manual &nbsp;|&nbsp;
+        {% endif %}
+        <i class="bi bi-building"></i> {{ wave.warehouse_code }}
+        {% set ws = wave.wave_source or 'PLANNER' %}
+        {% if ws != 'PLANNER' %}
+        &nbsp;|&nbsp;
+        {% if ws == 'MANUAL_WEB' %}
+        <span class="badge" style="background:#7c3aed;font-size:.72rem;"><i class="bi bi-globe me-1"></i>VENTA WEB</span>
+        {% else %}
+        <span class="badge" style="background:#6b7280;font-size:.72rem;">MANUAL</span>
+        {% endif %}
+        {% endif %}
       </p>
     </div>
     <div class="ms-auto d-flex gap-2 align-items-center flex-wrap">

@@ -1066,11 +1066,18 @@ PICK_WAVE_PRIORITIES = ['LOW', 'MEDIUM', 'URGENT']
 PICK_TASK_STATUSES = ['OPEN', 'PICKING', 'DONE', 'CANCELLED']
 
 
+WMS_WAVE_SOURCES = ['PLANNER', 'MANUAL_WEB', 'MANUAL_OTHER']
+
+
 class WmsPickWave(db.Model):
     __tablename__ = 'wms_pick_wave'
     id = db.Column(db.Integer, primary_key=True)
     warehouse_code = db.Column(db.String(20), nullable=False, default='MAIN')
-    plan_id = db.Column(db.Integer, db.ForeignKey('distribution_plan.id'), nullable=False, index=True)
+    plan_id = db.Column(db.Integer, db.ForeignKey('distribution_plan.id'), nullable=True, index=True)
+    wave_source = db.Column(db.String(20), nullable=False, default='PLANNER')
+    external_reference = db.Column(db.String(200), nullable=True)
+    customer_name = db.Column(db.String(200), nullable=True)
+    channel = db.Column(db.String(50), nullable=True)
     status = db.Column(db.String(20), nullable=False, default='RELEASED')
     priority = db.Column(db.String(10), nullable=False, default='MEDIUM')
     urgency_level = db.Column(db.String(10), nullable=False, default='MEDIUM')
@@ -1483,6 +1490,10 @@ def _ensure_wms_defaults(session=None):
             'picked_units': "ALTER TABLE wms_pick_wave ADD COLUMN picked_units INTEGER NOT NULL DEFAULT 0",
             'short_lines': "ALTER TABLE wms_pick_wave ADD COLUMN short_lines INTEGER NOT NULL DEFAULT 0",
             'short_units': "ALTER TABLE wms_pick_wave ADD COLUMN short_units INTEGER NOT NULL DEFAULT 0",
+            'wave_source': "ALTER TABLE wms_pick_wave ADD COLUMN wave_source VARCHAR(20) NOT NULL DEFAULT 'PLANNER'",
+            'external_reference': "ALTER TABLE wms_pick_wave ADD COLUMN external_reference VARCHAR(200)",
+            'customer_name': "ALTER TABLE wms_pick_wave ADD COLUMN customer_name VARCHAR(200)",
+            'channel': "ALTER TABLE wms_pick_wave ADD COLUMN channel VARCHAR(50)",
         }
         for col_name, sql_stmt in _wave_migrations.items():
             if col_name not in wave_cols:
@@ -1490,6 +1501,16 @@ def _ensure_wms_defaults(session=None):
                     conn.execute(text(sql_stmt))
                     conn.commit()
                 print(f"[WMS] Added column wms_pick_wave.{col_name}")
+        if 'wave_source' not in wave_cols:
+            try:
+                with db.engine.connect() as conn:
+                    conn.execute(text(
+                        "UPDATE wms_pick_wave SET wave_source='PLANNER' WHERE wave_source IS NULL OR wave_source=''"
+                    ))
+                    conn.commit()
+                print("[WMS] Backfilled wave_source=PLANNER for existing waves")
+            except Exception as _wse:
+                print(f"[WMS] WARNING: wave_source backfill failed: {_wse}")
     if 'wms_pick_task' in inspector.get_table_names():
         task_cols = [c['name'] for c in inspector.get_columns('wms_pick_task')]
         _task_migrations = {
@@ -1831,6 +1852,176 @@ def wms_create_pick_wave_for_plan(plan_id, priority='MEDIUM', warehouse_code='MA
     except Exception:
         pass
 
+    return wave, total_requested, total_reserved
+
+
+def create_manual_pick_wave(wave_source, lines, priority='MEDIUM',
+                            external_reference=None, customer_name=None,
+                            channel=None, note=None, warehouse_code='MAIN', user=None):
+    """
+    Create a manual WMS pick wave (MANUAL_WEB or MANUAL_OTHER) without a Distribution Plan.
+    lines: list of {'product_id': int, 'qty': int, 'sku': str, 'product_name': str}
+           (already aggregated by the caller)
+
+    Returns (wave, total_requested, total_reserved)
+    """
+    print(f"[WMS] manual wave create start source={wave_source} lines={len(lines)} warehouse={warehouse_code}")
+    wh = db.session.query(WmsWarehouse).filter_by(code=warehouse_code).first()
+    if not wh:
+        raise ValueError(f"Warehouse {warehouse_code} not found")
+
+    demand_map = {line['product_id']: line['qty'] for line in lines}
+    product_meta = {line['product_id']: line for line in lines}
+    product_ids_needed = list(demand_map.keys())
+
+    all_locs = db.session.query(WmsLocation).filter_by(warehouse_id=wh.id).all()
+    loc_type_map = {loc.id: loc.location_type or 'BULK' for loc in all_locs}
+    loc_code_map = {loc.id: loc.location_code for loc in all_locs}
+    loc_active_map = {loc.id: loc.is_active for loc in all_locs}
+    loc_location_map = {loc.id: (loc.location or loc.rack or '') for loc in all_locs}
+    loc_box_map = {loc.id: (loc.box_number or loc.pallet_position or '') for loc in all_locs}
+
+    LOCATION_TYPE_PRIORITY = {'PICK': 1, 'BULK': 2}
+
+    inv_rows = (
+        db.session.query(WmsInventory)
+        .filter(WmsInventory.warehouse_id == wh.id)
+        .filter(WmsInventory.product_id.in_(product_ids_needed))
+        .all()
+    )
+    inv_by_product = {}
+    for inv in inv_rows:
+        if not loc_active_map.get(inv.location_id, False):
+            continue
+        avail = max(0, (inv.on_hand_units or 0) - (inv.allocated_units or 0))
+        if avail <= 0:
+            continue
+        inv_by_product.setdefault(inv.product_id, []).append(inv)
+
+    for pid in inv_by_product:
+        inv_by_product[pid].sort(key=lambda i: (
+            LOCATION_TYPE_PRIORITY.get(loc_type_map.get(i.location_id, 'BULK'), 9),
+            max(0, (i.on_hand_units or 0) - (i.allocated_units or 0)),
+            loc_location_map.get(i.location_id, ''),
+            loc_box_map.get(i.location_id, ''),
+            loc_code_map.get(i.location_id, '')
+        ))
+
+    urgency = priority if priority in WMS_URGENCY_RANK else 'MEDIUM'
+    wave = WmsPickWave(
+        warehouse_code=warehouse_code,
+        plan_id=None,
+        wave_source=wave_source,
+        external_reference=external_reference or None,
+        customer_name=customer_name or None,
+        channel=channel or None,
+        priority=priority,
+        urgency_level=urgency,
+        priority_rank=WMS_URGENCY_RANK.get(urgency, 2),
+        status='READY_TO_ASSIGN',
+        total_lines=len(demand_map),
+        total_units=sum(demand_map.values()),
+        created_by_user_id=user.id if user else None
+    )
+    db.session.add(wave)
+    db.session.flush()
+
+    total_requested = 0
+    total_reserved = 0
+    has_shortage = False
+
+    for pid, qty_needed in demand_map.items():
+        meta = product_meta.get(pid, {})
+        sku = meta.get('sku', f"PID-{pid}")
+        product_name = meta.get('product_name', sku)
+        total_requested += qty_needed
+        qty_remaining = qty_needed
+        task_reserved = 0
+        reservations_for_task = []
+
+        for inv in inv_by_product.get(pid, []):
+            if qty_remaining <= 0:
+                break
+            avail = max(0, (inv.on_hand_units or 0) - (inv.allocated_units or 0))
+            if avail <= 0:
+                continue
+            to_reserve = min(avail, qty_remaining)
+            inv.allocated_units = min(inv.on_hand_units or 0, (inv.allocated_units or 0) + to_reserve)
+            inv.updated_at = datetime.utcnow()
+            qty_remaining -= to_reserve
+            task_reserved += to_reserve
+            loc_code = loc_code_map.get(inv.location_id, '')
+            reservations_for_task.append({'location_id': inv.location_id, 'location_code': loc_code, 'qty_reserved': to_reserve})
+            db.session.add(WmsInventoryEvent(
+                event_type='PICK_RESERVE',
+                ref_type='pick_wave',
+                ref_id=str(wave.id),
+                warehouse_id=wh.id,
+                location_id=inv.location_id,
+                product_id=pid,
+                delta_units=0,
+                delta_pallets=0,
+                note=f"Reserva manual wave #{wave.id} ({wave_source}): {to_reserve} uds en {loc_code}"
+            ))
+
+        total_reserved += task_reserved
+        task_short = qty_remaining
+        if task_short > 0:
+            has_shortage = True
+
+        task_status = 'OPEN' if task_short == 0 else 'SHORT'
+        task_note = None if task_short == 0 else f'PARTIAL: reservado {task_reserved}/{qty_needed}'
+        if task_reserved == 0:
+            task_note = 'NO_STOCK_AVAILABLE'
+
+        best_loc = reservations_for_task[0]['location_code'] if reservations_for_task else None
+        task = WmsPickTask(
+            wave_id=wave.id,
+            product_id=pid,
+            sku=sku,
+            product_name=product_name,
+            qty_requested=qty_needed,
+            qty_picked=0,
+            short_qty=task_short,
+            status=task_status,
+            location_hint=best_loc,
+            note=task_note
+        )
+        db.session.add(task)
+        db.session.flush()
+
+        for r in reservations_for_task:
+            db.session.add(WmsPickReservation(
+                wave_id=wave.id,
+                task_id=task.id,
+                product_id=pid,
+                location_id=r['location_id'],
+                location_code=r['location_code'],
+                qty_reserved=r['qty_reserved'],
+                qty_picked=0,
+                status='OPEN',
+                sequence_order=task.id,
+            ))
+
+        print(f"[WMS] manual reserve sku={sku} required={qty_needed} reserved={task_reserved} short={task_short}")
+
+    wave.status = 'NEEDS_REVIEW' if has_shortage else 'READY_TO_ASSIGN'
+    db.session.flush()
+
+    db.session.add(WmsInventoryEvent(
+        event_type='WAVE_CREATED',
+        ref_type='pick_wave',
+        ref_id=str(wave.id),
+        warehouse_id=wh.id,
+        location_id=wh.id,
+        product_id=product_ids_needed[0] if product_ids_needed else 0,
+        delta_units=0,
+        delta_pallets=0,
+        note=f"Ola manual creada: {wave_source} ref={external_reference or ''} wave=#{wave.id} requested={total_requested} reserved={total_reserved}"
+    ))
+
+    print(f"[WMS] manual wave created: wave_id={wave.id} source={wave_source} "
+          f"requested={total_requested} reserved={total_reserved} status={wave.status}")
     return wave, total_requested, total_reserved
 
 
@@ -10417,15 +10608,134 @@ def _mobile_wave_summary(wave):
 def wms_waves_list():
     status_filter = request.args.get('status', '')
     urgency_filter = request.args.get('urgency', '')
+    source_filter = request.args.get('source', '')
     q = db.session.query(WmsPickWave).order_by(WmsPickWave.priority_rank, WmsPickWave.created_at.desc())
     if status_filter:
         q = q.filter(WmsPickWave.status == status_filter)
     if urgency_filter:
         q = q.filter(WmsPickWave.urgency_level == urgency_filter)
+    if source_filter:
+        q = q.filter(WmsPickWave.wave_source == source_filter)
     waves = q.limit(100).all()
     operators = db.session.query(User).filter(User.role.in_(['WarehouseOps', 'Admin'])).filter(User.is_active == True).all()
     return render_template('wms_waves.html', waves=waves, operators=operators,
-                           status_filter=status_filter, urgency_filter=urgency_filter)
+                           status_filter=status_filter, urgency_filter=urgency_filter,
+                           source_filter=source_filter)
+
+
+@app.route('/wms/manual-waves/new', methods=['GET', 'POST'])
+@login_required
+@require_permission('wms:moves')
+def wms_manual_wave_new():
+    """Create a manual WMS pick wave (WEB or MANUAL_OTHER), no Distribution Plan required."""
+    if request.method == 'GET':
+        return render_template('wms_manual_wave_new.html')
+
+    errors = []
+    wave_type = request.form.get('wave_type', 'MANUAL_WEB').strip()
+    external_ref = request.form.get('external_reference', '').strip()
+    priority = request.form.get('priority', 'MEDIUM').strip()
+    obs = request.form.get('observation', '').strip()
+    customer_name_input = request.form.get('customer_name', '').strip()
+
+    if wave_type not in ('MANUAL_WEB', 'MANUAL_OTHER'):
+        wave_type = 'MANUAL_WEB'
+    if wave_type == 'MANUAL_WEB' and not external_ref:
+        errors.append('Referencia externa requerida para Venta Web.')
+    if priority not in ('LOW', 'MEDIUM', 'URGENT'):
+        priority = 'MEDIUM'
+
+    lines_raw = []
+    file = request.files.get('file')
+    if file and file.filename:
+        import io
+        fname = file.filename.lower()
+        try:
+            if fname.endswith('.csv'):
+                df_upload = pd.read_csv(io.BytesIO(file.read()))
+            else:
+                df_upload = pd.read_excel(io.BytesIO(file.read()))
+            df_upload.columns = [c.strip().lower() for c in df_upload.columns]
+            if 'sku' not in df_upload.columns or 'quantity' not in df_upload.columns:
+                errors.append('El archivo debe tener columnas: sku, quantity')
+            else:
+                for _, row in df_upload.iterrows():
+                    sku_val = str(row.get('sku', '')).strip()
+                    try:
+                        qty_val = int(row.get('quantity', 0))
+                    except (ValueError, TypeError):
+                        qty_val = 0
+                    if sku_val and qty_val > 0:
+                        lines_raw.append({'sku': sku_val, 'qty': qty_val})
+        except Exception as e:
+            errors.append(f'Error al leer archivo: {e}')
+    else:
+        skus_form = request.form.getlist('sku[]')
+        qtys_form = request.form.getlist('qty[]')
+        for sku_val, qty_str in zip(skus_form, qtys_form):
+            sku_val = sku_val.strip()
+            try:
+                qty_val = int(qty_str)
+            except (ValueError, TypeError):
+                qty_val = 0
+            if sku_val and qty_val > 0:
+                lines_raw.append({'sku': sku_val, 'qty': qty_val})
+
+    agg_by_sku = {}
+    for ln in lines_raw:
+        s = normalize_sku(ln['sku'])
+        agg_by_sku[s] = agg_by_sku.get(s, 0) + ln['qty']
+
+    if not agg_by_sku and not errors:
+        errors.append('No hay líneas válidas. Agrega al menos un SKU con cantidad.')
+
+    if errors:
+        return render_template('wms_manual_wave_new.html', errors=errors,
+                               wave_type=wave_type, external_ref=external_ref,
+                               priority=priority, obs=obs, customer_name=customer_name_input)
+
+    resolved_lines = []
+    unknown_skus = []
+    for sku_norm, qty in agg_by_sku.items():
+        product = db.session.query(Product).filter(
+            func.lower(Product.sku) == sku_norm.lower()
+        ).first()
+        if not product:
+            unknown_skus.append(sku_norm)
+            product = Product(sku=sku_norm, name=sku_norm, is_active=True)
+            db.session.add(product)
+            db.session.flush()
+        resolved_lines.append({
+            'product_id': product.id,
+            'sku': product.sku,
+            'product_name': product.name,
+            'qty': qty,
+        })
+
+    try:
+        channel = 'WEB' if wave_type == 'MANUAL_WEB' else None
+        wave, total_req, total_res = create_manual_pick_wave(
+            wave_source=wave_type,
+            lines=resolved_lines,
+            priority=priority,
+            external_reference=external_ref or None,
+            customer_name=customer_name_input or None,
+            channel=channel,
+            note=obs or None,
+            user=current_user,
+        )
+        db.session.commit()
+        msg = f'Ola manual #{wave.id} creada ({wave_type}). SKUs: {len(resolved_lines)}, unidades solicitadas: {total_req}, reservadas: {total_res}.'
+        if unknown_skus:
+            msg += f' SKUs nuevos (stub): {", ".join(unknown_skus[:5])}.'
+        flash(msg, 'success' if wave.status != 'NEEDS_REVIEW' else 'warning')
+        return redirect(url_for('wms_wave_detail', wave_id=wave.id))
+    except Exception as e:
+        db.session.rollback()
+        errors.append(f'Error al crear la ola: {e}')
+        return render_template('wms_manual_wave_new.html', errors=errors,
+                               wave_type=wave_type, external_ref=external_ref,
+                               priority=priority, obs=obs, customer_name=customer_name_input)
 
 
 @app.route('/wms/waves/<int:wave_id>/assign', methods=['POST'])
@@ -19507,9 +19817,13 @@ def sync_plan_from_wave(wave_id, event_type=None, note=None, actor_user_id=None)
       wave PICKED/CLOSED → plan APPROVED/IN_PROGRESS → PACKED
       wave NEEDS_REVIEW  → plan stays IN_PROGRESS (flags warning)
     Writes a PlannerWmsEventLog entry. Commits.
+    Manual waves (wave_source != PLANNER, plan_id=None) are skipped silently.
     """
     wave = db.session.get(WmsPickWave, wave_id)
     if not wave:
+        return
+    if not wave.plan_id:
+        print(f"[PLANNER-WMS] sync skipped: wave={wave_id} is manual (source={wave.wave_source}), no plan linked")
         return
     plan = db.session.get(DistributionPlan, wave.plan_id)
     if not plan:

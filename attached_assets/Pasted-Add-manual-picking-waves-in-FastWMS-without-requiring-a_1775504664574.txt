@@ -1,0 +1,150 @@
+Add manual picking waves in FastWMS without requiring a Planner folio/plan, to support direct-to-customer operations such as WEB sales.
+
+GOAL
+Allow authorized users to create a WMS pick wave directly from WMS, without any Distribution Plan / Planner folio.
+This wave must still use the same WMS reservation, assignment, picking, issue, and mobile execution logic.
+
+BUSINESS CONTEXT
+There are now two main wave origins:
+1) Planner/Distribution waves -> replenishment to stores
+2) Manual WMS waves -> direct picking for web sales or other manual requests
+
+MODEL CHANGES
+
+1) Extend WmsPickWave with:
+- wave_source (string/enum)
+   allowed values:
+   - PLANNER
+   - MANUAL_WEB
+   - MANUAL_OTHER
+- external_reference (nullable string)
+   e.g. web order number
+- customer_name (nullable string, optional for later)
+- channel (nullable string, optional; e.g. WEB)
+- plan_id must remain nullable for manual waves
+
+2) Keep compatibility:
+- Existing Planner-created waves should have wave_source = PLANNER
+- Manual waves will have plan_id = NULL
+
+ROUTES / UI
+
+1) Add new module/page:
+Route: /wms/manual-waves/new
+Permission required:
+- wms:moves or a new permission such as wms:create_manual_wave
+
+2) Page title:
+"Crear ola manual"
+
+3) Form header fields:
+- Tipo de ola:
+   - Venta Web
+   - Manual
+- Referencia externa (required for WEB, optional otherwise)
+- Prioridad:
+   - LOW
+   - MEDIUM
+   - URGENT
+- Observación general
+
+4) Add line input section:
+Allow adding multiple lines manually:
+- SKU
+- Quantity
+- Add line button
+
+Also support optional file upload:
+- CSV/XLSX
+Required columns:
+- sku
+- quantity
+Optional:
+- external_reference
+- note
+
+5) Validation rules:
+- sku must exist or be created as stub if current system allows it
+- quantity must be positive
+- duplicate SKUs in the same manual wave must be aggregated
+- if no lines remain after validation, block creation
+
+WAVE CREATION LOGIC
+
+Create service:
+create_manual_pick_wave(
+    wave_source,
+    external_reference,
+    priority,
+    created_by_user_id,
+    lines,
+    note=None,
+    channel="WEB"
+)
+
+Behavior:
+1) Create WmsPickWave:
+   - wave_source = MANUAL_WEB or MANUAL_OTHER
+   - external_reference = provided value
+   - channel = WEB if applicable
+   - plan_id = NULL
+   - status determined after reservation
+   - urgency_level/priority_rank from selected priority
+2) Aggregate lines by SKU
+3) Create one WmsPickTask per SKU
+4) Run the exact same reservation logic already used for normal waves:
+   - PICK before BULK
+   - lower available_units first
+   - location asc
+   - box_number asc
+5) Create WmsPickReservation rows
+6) Determine wave status:
+   - READY_TO_ASSIGN if fully reserved
+   - NEEDS_REVIEW if any shortage exists
+7) Write audit/event log:
+   - event_type = WAVE_CREATED
+   - note should mention MANUAL_WEB or MANUAL_OTHER
+
+LISTING / MANAGEMENT
+
+1) Update WMS wave list page:
+- show wave_source column/badge
+- show external_reference
+- manual waves should appear in the same operational queue as planner waves
+- assignment and picking flow must work the same way
+
+2) Add badges:
+- PLANNER -> neutral/blue
+- WEB -> purple
+- MANUAL -> gray
+
+3) Filtering:
+On /wms/waves add filter by wave_source
+
+ASSIGNMENT / PICKING
+Manual waves must use the existing workflow:
+- warehouse manager assigns picker
+- operator sees it in mobile "Mis Waves"
+- operator scans location + SKU and executes picks
+- issue reporting and automatic reallocation still apply
+
+PLANNER INTEGRATION
+Manual waves must NOT depend on Planner:
+- do not create DistributionPlan
+- do not appear in Planner board
+- do not try to sync Planner status
+- if any orchestration function assumes plan_id is required, guard it so manual waves skip Planner sync safely
+
+KPI / REPORTING
+Recommended:
+- manual/web waves should still count in WMS productivity KPIs
+- allow later filtering by wave_source in KPIs
+
+DELIVERABLES
+- WmsPickWave extended with wave_source/external_reference
+- New manual wave creation page
+- Manual wave creation service
+- Reservation logic reused
+- WMS list updated to display manual waves
+- No breaking changes to Planner-based waves
+- Labels in Spanish in UI

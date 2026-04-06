@@ -1,9 +1,16 @@
 {% extends "base.html" %}
 {% block title %}WMS Waves — FastDSO{% endblock %}
 {% block content %}
-<div class="content-header">
-  <h1><i class="bi bi-box-seam"></i> Centro de Pick Waves</h1>
-  <p class="text-muted">Gestión y asignación de waves de picking</p>
+<div class="content-header d-flex justify-content-between align-items-start">
+  <div>
+    <h1><i class="bi bi-box-seam"></i> Centro de Pick Waves</h1>
+    <p class="text-muted">Gestión y asignación de waves de picking</p>
+  </div>
+  {% if can('wms:moves') %}
+  <a href="{{ url_for('wms_manual_wave_new') }}" class="btn btn-primary btn-sm align-self-center">
+    <i class="bi bi-plus-circle me-1"></i>Crear ola manual
+  </a>
+  {% endif %}
 </div>
 
 <div class="card mb-4">
@@ -28,6 +35,15 @@
         </select>
       </div>
       <div class="col-auto">
+        <label class="form-label small mb-0">Origen</label>
+        <select name="source" class="form-select form-select-sm" style="width:140px;">
+          <option value="">Todos</option>
+          <option value="PLANNER" {% if source_filter == 'PLANNER' %}selected{% endif %}>Planner</option>
+          <option value="MANUAL_WEB" {% if source_filter == 'MANUAL_WEB' %}selected{% endif %}>Venta Web</option>
+          <option value="MANUAL_OTHER" {% if source_filter == 'MANUAL_OTHER' %}selected{% endif %}>Manual</option>
+        </select>
+      </div>
+      <div class="col-auto">
         <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-funnel"></i> Filtrar</button>
         <a href="{{ url_for('wms_waves_list') }}" class="btn btn-sm btn-outline-secondary">Limpiar</a>
       </div>
@@ -42,7 +58,8 @@
         <thead class="table-light">
           <tr>
             <th>#</th>
-            <th>Folio</th>
+            <th>Origen</th>
+            <th>Folio / Referencia</th>
             <th class="text-center">Urgencia</th>
             <th class="text-center">Estado</th>
             <th class="text-end">Líneas</th>
@@ -57,9 +74,22 @@
           <tr>
             <td>{{ w.id }}</td>
             <td>
+              {% set ws = w.wave_source or 'PLANNER' %}
+              {% if ws == 'PLANNER' %}
+              <span class="badge" style="background:#3b82f6;font-size:.72rem;">PLANNER</span>
+              {% elif ws == 'MANUAL_WEB' %}
+              <span class="badge" style="background:#7c3aed;font-size:.72rem;"><i class="bi bi-globe me-1"></i>WEB</span>
+              {% else %}
+              <span class="badge" style="background:#6b7280;font-size:.72rem;">MANUAL</span>
+              {% endif %}
+            </td>
+            <td>
               <a href="{{ url_for('wms_wave_detail', wave_id=w.id) }}" class="fw-semibold">
-                {{ w.plan.folio if w.plan else '—' }}
+                {% if w.plan %}{{ w.plan.folio }}{% elif w.external_reference %}{{ w.external_reference }}{% else %}Wave #{{ w.id }}{% endif %}
               </a>
+              {% if w.external_reference and w.plan %}
+              <div class="text-muted" style="font-size:.7rem;">Ref: {{ w.external_reference }}</div>
+              {% endif %}
             </td>
             <td class="text-center">
               {% if w.urgency_level == 'URGENT' %}
@@ -100,7 +130,7 @@
           </tr>
           {% endfor %}
           {% if not waves %}
-          <tr><td colspan="9" class="text-center text-muted py-4">No hay waves con los filtros seleccionados.</td></tr>
+          <tr><td colspan="10" class="text-center text-muted py-4">No hay waves con los filtros seleccionados.</td></tr>
           {% endif %}
         </tbody>
       </table>
@@ -119,7 +149,9 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
-          <p class="small text-muted mb-2">Folio: <strong>{{ w.plan.folio if w.plan else '—' }}</strong></p>
+          <p class="small text-muted mb-2">
+            {% if w.plan %}Folio: <strong>{{ w.plan.folio }}</strong>{% elif w.external_reference %}Ref: <strong>{{ w.external_reference }}</strong>{% else %}Wave #{{ w.id }}{% endif %}
+          </p>
           <label class="form-label">Operador</label>
           <select name="operator_id" class="form-select" required>
             <option value="">Seleccione...</option>

@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% block title %}Nueva Ola Manual — FastWMS{% endblock %}
+{% block content %}
+<div class="content-header d-flex align-items-center gap-3">
+  <a href="{{ url_for('wms_waves_list') }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
+  <div>
+    <h1 class="mb-0"><i class="bi bi-plus-circle"></i> Crear Ola de Picking Manual</h1>
+    <p class="text-muted mb-0">Sin folio de distribución — ventas web o despachos manuales</p>
+  </div>
+</div>
+
+{% if errors %}
+<div class="alert alert-danger mb-3">
+  <strong><i class="bi bi-exclamation-triangle me-1"></i>Corrije los siguientes errores antes de continuar:</strong>
+  <ul class="mb-0 mt-1">
+    {% for e in errors %}
+    <li>{{ e }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<form method="post" enctype="multipart/form-data" id="manualWaveForm">
+
+  <div class="row g-3 mb-4">
+
+    <!-- Tipo de ola -->
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header fw-semibold"><i class="bi bi-tag me-1"></i>Tipo de ola</div>
+        <div class="card-body">
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="radio" name="wave_type" id="typeWeb" value="MANUAL_WEB"
+              {% if (wave_type or 'MANUAL_WEB') == 'MANUAL_WEB' %}checked{% endif %} onchange="toggleRefField()">
+            <label class="form-check-label fw-semibold" for="typeWeb">
+              <i class="bi bi-globe me-1 text-purple"></i>Venta Web
+            </label>
+            <div class="text-muted small">Orden e-commerce. Requiere referencia de pedido.</div>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="wave_type" id="typeOther" value="MANUAL_OTHER"
+              {% if wave_type == 'MANUAL_OTHER' %}checked{% endif %} onchange="toggleRefField()">
+            <label class="form-check-label fw-semibold" for="typeOther">
+              <i class="bi bi-pencil-square me-1 text-secondary"></i>Despacho manual
+            </label>
+            <div class="text-muted small">Retiro en tienda, muestreo, venta directa, etc.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Metadatos -->
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header fw-semibold"><i class="bi bi-info-circle me-1"></i>Datos del pedido</div>
+        <div class="card-body">
+          <div id="refGroup" class="mb-3">
+            <label class="form-label small fw-semibold mb-1">
+              Referencia externa <span id="refRequired" class="text-danger">*</span>
+            </label>
+            <input type="text" name="external_reference" class="form-control form-control-sm"
+              placeholder="Ej: ORD-20240601-00123" value="{{ external_ref or '' }}">
+            <div class="form-text">Número de pedido, folio o referencia del sistema externo.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small fw-semibold mb-1">Cliente (opcional)</label>
+            <input type="text" name="customer_name" class="form-control form-control-sm"
+              placeholder="Nombre del cliente o empresa" value="{{ customer_name or '' }}">
+          </div>
+          <div>
+            <label class="form-label small fw-semibold mb-1">Observación (opcional)</label>
+            <textarea name="observation" class="form-control form-control-sm" rows="2"
+              placeholder="Notas adicionales para el operador">{{ obs or '' }}</textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Prioridad -->
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header fw-semibold"><i class="bi bi-lightning-charge me-1"></i>Configuración</div>
+        <div class="card-body">
+          <div class="mb-3">
+            <label class="form-label small fw-semibold mb-1">Urgencia</label>
+            <select name="priority" class="form-select form-select-sm">
+              <option value="LOW" {% if (priority or 'MEDIUM') == 'LOW' %}selected{% endif %}>🔵 Baja</option>
+              <option value="MEDIUM" {% if (priority or 'MEDIUM') == 'MEDIUM' %}selected{% endif %}>🟡 Media</option>
+              <option value="URGENT" {% if priority == 'URGENT' %}selected{% endif %}>🔴 Urgente</option>
+            </select>
+          </div>
+          <div class="alert alert-info py-2 px-3 mb-0" style="font-size:0.8rem;">
+            <i class="bi bi-info-circle me-1"></i>
+            Las olas urgentes <strong>bloquean</strong> el inicio de olas de menor prioridad hasta completarse.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SKU Lines -->
+  <div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center fw-semibold">
+      <span><i class="bi bi-list-ul me-1"></i>Líneas de picking</span>
+      <div class="btn-group btn-group-sm">
+        <button type="button" class="btn btn-outline-secondary" id="tabManualBtn" onclick="showTab('manual')">
+          <i class="bi bi-pencil-square me-1"></i>Entrada manual
+        </button>
+        <button type="button" class="btn btn-outline-secondary" id="tabFileBtn" onclick="showTab('file')">
+          <i class="bi bi-upload me-1"></i>Subir archivo
+        </button>
+      </div>
+    </div>
+    <div class="card-body">
+
+      <!-- Manual entry -->
+      <div id="tabManual">
+        <p class="small text-muted mb-2">Agrega los SKUs y cantidades a preparar. Las cantidades se acumulan si el mismo SKU aparece más de una vez.</p>
+        <table class="table table-sm mb-2" id="lineTable" style="font-size:0.85rem;">
+          <thead class="table-light">
+            <tr>
+              <th>SKU</th>
+              <th style="width:120px;">Cantidad</th>
+              <th style="width:40px;"></th>
+            </tr>
+          </thead>
+          <tbody id="lineBody">
+            <tr class="line-row">
+              <td><input type="text" name="sku[]" class="form-control form-control-sm" placeholder="SKU del producto" required></td>
+              <td><input type="number" name="qty[]" class="form-control form-control-sm" min="1" placeholder="Uds." required></td>
+              <td><button type="button" class="btn btn-sm btn-outline-danger" onclick="removeLine(this)"><i class="bi bi-trash"></i></button></td>
+            </tr>
+          </tbody>
+        </table>
+        <button type="button" class="btn btn-sm btn-outline-primary" onclick="addLine()">
+          <i class="bi bi-plus me-1"></i>Agregar línea
+        </button>
+      </div>
+
+      <!-- File upload -->
+      <div id="tabFile" style="display:none;">
+        <div class="mb-2">
+          <label class="form-label small fw-semibold">Archivo CSV o Excel</label>
+          <input type="file" name="file" class="form-control form-control-sm" accept=".csv,.xlsx,.xls">
+          <div class="form-text">Columnas requeridas: <strong>sku</strong>, <strong>quantity</strong>. Las demás columnas se ignoran.</div>
+        </div>
+        <div class="alert alert-light border py-2 px-3 mb-0" style="font-size:0.8rem;">
+          <i class="bi bi-table me-1"></i>Ejemplo:
+          <code class="ms-1">sku,quantity<br>ABC-001,10<br>XYZ-002,5</code>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    <button type="submit" class="btn btn-primary px-4">
+      <i class="bi bi-check2-circle me-1"></i>Crear ola de picking
+    </button>
+    <a href="{{ url_for('wms_waves_list') }}" class="btn btn-outline-secondary">Cancelar</a>
+  </div>
+
+</form>
+
+<style>
+  .text-purple { color: #7c3aed; }
+</style>
+
+<script>
+function toggleRefField() {
+  const isWeb = document.getElementById('typeWeb').checked;
+  const req = document.getElementById('refRequired');
+  req.style.display = isWeb ? 'inline' : 'none';
+}
+
+function addLine() {
+  const tbody = document.getElementById('lineBody');
+  const row = document.createElement('tr');
+  row.className = 'line-row';
+  row.innerHTML = `
+    <td><input type="text" name="sku[]" class="form-control form-control-sm" placeholder="SKU del producto" required></td>
+    <td><input type="number" name="qty[]" class="form-control form-control-sm" min="1" placeholder="Uds." required></td>
+    <td><button type="button" class="btn btn-sm btn-outline-danger" onclick="removeLine(this)"><i class="bi bi-trash"></i></button></td>
+  `;
+  tbody.appendChild(row);
+}
+
+function removeLine(btn) {
+  const rows = document.querySelectorAll('#lineBody .line-row');
+  if (rows.length > 1) {
+    btn.closest('tr').remove();
+  }
+}
+
+function showTab(tab) {
+  const manualDiv = document.getElementById('tabManual');
+  const fileDiv = document.getElementById('tabFile');
+  const manualBtn = document.getElementById('tabManualBtn');
+  const fileBtn = document.getElementById('tabFileBtn');
+  if (tab === 'manual') {
+    manualDiv.style.display = '';
+    fileDiv.style.display = 'none';
+    manualBtn.classList.add('active');
+    fileBtn.classList.remove('active');
+  } else {
+    manualDiv.style.display = 'none';
+    fileDiv.style.display = '';
+    manualBtn.classList.remove('active');
+    fileBtn.classList.add('active');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  toggleRefField();
+  document.getElementById('tabManualBtn').classList.add('active');
+});
+</script>
+{% endblock %}
