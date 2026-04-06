@@ -10133,14 +10133,24 @@ def wms_moves():
         for loc in locations
     ]
 
-    recent_runs = (
+    valid_per_page = (25, 50, 100)
+    moves_per_page = request.args.get('per_page', 25, type=int)
+    if moves_per_page not in valid_per_page:
+        moves_per_page = 25
+    moves_total = WmsMoveRun.query.count()
+    moves_total_pages = max(1, (moves_total + moves_per_page - 1) // moves_per_page)
+    moves_page = max(1, min(request.args.get('page', 1, type=int), moves_total_pages))
+    moves_start = (moves_page - 1) * moves_per_page
+
+    recent_runs_q = (
         WmsMoveRun.query
         .order_by(WmsMoveRun.created_at.desc())
-        .limit(50)
+        .offset(moves_start)
+        .limit(moves_per_page)
         .all()
     )
     runs_data = []
-    for run in recent_runs:
+    for run in recent_runs_q:
         user = run.created_by
         runs_data.append({
             'id': run.id,
@@ -10152,7 +10162,17 @@ def wms_moves():
             'status': run.status,
         })
 
-    return render_template('wms_moves.html', locations=location_options, recent_runs=runs_data)
+    return render_template(
+        'wms_moves.html',
+        locations=location_options,
+        recent_runs=runs_data,
+        moves_page=moves_page,
+        moves_per_page=moves_per_page,
+        moves_total=moves_total,
+        moves_total_pages=moves_total_pages,
+        moves_start=moves_start + 1,
+        moves_end=min(moves_start + moves_per_page, moves_total),
+    )
 
 
 @app.route('/wms/moves/create', methods=['POST'])
@@ -10637,11 +10657,32 @@ def wms_waves_list():
         q = q.filter(WmsPickWave.urgency_level == urgency_filter)
     if source_filter:
         q = q.filter(WmsPickWave.wave_source == source_filter)
-    waves = q.limit(100).all()
+
+    valid_per_page = (25, 50, 100)
+    waves_per_page = request.args.get('per_page', 25, type=int)
+    if waves_per_page not in valid_per_page:
+        waves_per_page = 25
+    waves_total = q.count()
+    waves_total_pages = max(1, (waves_total + waves_per_page - 1) // waves_per_page)
+    waves_page = max(1, min(request.args.get('page', 1, type=int), waves_total_pages))
+    waves_start = (waves_page - 1) * waves_per_page
+
+    waves = q.offset(waves_start).limit(waves_per_page).all()
     operators = db.session.query(User).filter(User.role.in_(['WarehouseOps', 'Admin'])).filter(User.is_active == True).all()
-    return render_template('wms_waves.html', waves=waves, operators=operators,
-                           status_filter=status_filter, urgency_filter=urgency_filter,
-                           source_filter=source_filter)
+    return render_template(
+        'wms_waves.html',
+        waves=waves,
+        operators=operators,
+        status_filter=status_filter,
+        urgency_filter=urgency_filter,
+        source_filter=source_filter,
+        waves_page=waves_page,
+        waves_per_page=waves_per_page,
+        waves_total=waves_total,
+        waves_total_pages=waves_total_pages,
+        waves_start=waves_start + 1,
+        waves_end=min(waves_start + waves_per_page, waves_total),
+    )
 
 
 @app.route('/wms/manual-waves/new', methods=['GET', 'POST'])

@@ -1,0 +1,153 @@
+Improve FastWMS usability with:
+A) sticky filters
+B) pagination for Moves
+C) pagination for Waves
+
+GOAL
+FastWMS screens are becoming too long and harder to use operationally.
+We need:
+- sticky filters on the main WMS screens
+- pagination for Moves
+- pagination for Waves
+- preserve current FastDSO style and all existing filters/sorting
+
+PART A — STICKY FILTERS
+
+1) TARGET SCREENS
+Apply sticky filter bars to:
+- /wms/inventory
+- /wms/moves
+- /wms/waves
+
+2) BEHAVIOR
+- The filter card/bar should stay visible near the top when the user scrolls down
+- It must not overlap the main top navbar/header
+- Use CSS position: sticky
+- Add proper top spacing based on existing FastDSO header height
+
+3) STYLE
+- Keep FastDSO visual language:
+  - white/light card
+  - rounded corners
+  - subtle shadow
+  - same spacing and typography
+- When sticky is active, slightly increase shadow so users see it floating above content
+- Keep filters compact and readable
+
+4) RESPONSIVE
+- On mobile/tablet, sticky filters should still work if practical
+- If sticky creates layout issues on very small screens, degrade gracefully to normal static filters
+
+PART B — PAGINATION FOR WMS MOVES
+
+1) ROUTE
+Update /wms/moves
+
+2) DEFAULT PAGE SIZE
+Add page size selector:
+- 25
+- 50
+- 100
+Default:
+- 25
+
+3) QUERY PARAMS
+Use:
+- page
+- per_page
+- preserve existing filters (if any)
+- preserve sorting
+
+4) WHAT TO PAGINATE
+Paginate the recent moves list / move runs table.
+If there is a detail table inside a move detail page, do not paginate that now.
+Paginate the main moves list only.
+
+5) TEMPLATE
+Show controls:
+- “Mostrando X–Y de Z movimientos”
+- Anterior
+- Siguiente
+- Página N de M
+- per_page dropdown
+
+6) SAFETY
+- If page > total_pages, clamp to last page
+- Preserve filters between pages
+- No broken empty state
+
+PART C — PAGINATION FOR WMS WAVES
+
+1) ROUTE
+Update /wms/waves
+
+2) DEFAULT PAGE SIZE
+Add page size selector:
+- 25
+- 50
+- 100
+Default:
+- 25
+
+3) WHAT TO PAGINATE
+Paginate the main waves list/table/cards.
+Include all wave types:
+- PLANNER
+- MANUAL_WEB
+- MANUAL_OTHER
+
+4) FILTER PERSISTENCE
+Preserve:
+- wave_source
+- status
+- urgency
+- assigned operator
+- any search/filter currently in place
+- sorting
+
+5) TEMPLATE
+Show:
+- “Mostrando X–Y de Z waves”
+- Anterior
+- Siguiente
+- Página N de M
+- per_page dropdown
+
+6) UI
+- Keep same FastDSO style
+- Compact pagination controls
+- If waves are shown as cards instead of table, paginate card groups cleanly
+
+PART D — BACKEND IMPLEMENTATION NOTES
+
+1) Use GET query params for all pagination
+Examples:
+- /wms/moves?page=2&per_page=25
+- /wms/waves?page=3&per_page=50&status=ASSIGNED
+- /wms/inventory?page=2&per_page=25&location=A-02
+
+2) Apply filters first, then paginate filtered result
+3) Pass pagination metadata to templates:
+- page
+- per_page
+- total_items
+- total_pages
+- has_prev
+- has_next
+- prev_page
+- next_page
+- start_index
+- end_index
+
+4) If current inventory view is grouped by location, keep paginating by grouped location items as already implemented.
+
+PART E — DELIVERABLES
+
+Deliver:
+- sticky filters on inventory, moves, waves
+- pagination on moves
+- pagination on waves
+- all filters preserved across pages
+- no broken layouts
+- no broken mobile view
+- labels in Spanish

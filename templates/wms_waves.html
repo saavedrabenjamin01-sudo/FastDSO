@@ -13,7 +13,7 @@
   {% endif %}
 </div>
 
-<div class="card mb-4">
+<div class="card mb-4 wms-sticky-bar" id="wmsWavesFilterBar">
   <div class="card-body py-2">
     <form method="get" class="row g-2 align-items-end">
       <div class="col-auto">
@@ -43,6 +43,7 @@
           <option value="MANUAL_OTHER" {% if source_filter == 'MANUAL_OTHER' %}selected{% endif %}>Manual</option>
         </select>
       </div>
+      <input type="hidden" name="per_page" value="{{ waves_per_page }}">
       <div class="col-auto">
         <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-funnel"></i> Filtrar</button>
         <a href="{{ url_for('wms_waves_list') }}" class="btn btn-sm btn-outline-secondary">Limpiar</a>
@@ -138,6 +139,35 @@
   </div>
 </div>
 
+{% if waves_total > 0 %}
+{%- set _wp = waves_page - 1 -%}
+{%- set _wn = waves_page + 1 -%}
+{%- set _wbase -%}{{ url_for('wms_waves_list') }}?status={{ status_filter }}&urgency={{ urgency_filter }}&source={{ source_filter }}&per_page={{ waves_per_page }}{%- endset -%}
+<div class="wms-pagination-bar mt-3">
+  <span class="text-muted small">
+    Mostrando <strong>{{ waves_start }}–{{ waves_end }}</strong> de <strong>{{ waves_total }}</strong> waves
+  </span>
+  <div class="d-flex align-items-center gap-2 flex-wrap">
+    <span class="text-muted small">Por página:</span>
+    {% for pp in [25, 50, 100] %}
+    <a href="{{ url_for('wms_waves_list') }}?status={{ status_filter }}&urgency={{ urgency_filter }}&source={{ source_filter }}&per_page={{ pp }}&page=1"
+       class="btn btn-sm {% if waves_per_page == pp %}btn-primary{% else %}btn-outline-secondary{% endif %}">{{ pp }}</a>
+    {% endfor %}
+    <span class="text-muted small ms-1">Pág. {{ waves_page }} / {{ waves_total_pages }}</span>
+    {% if waves_page > 1 %}
+    <a href="{{ _wbase }}&page={{ _wp }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-chevron-left"></i> Anterior</a>
+    {% else %}
+    <button class="btn btn-sm btn-outline-secondary" disabled><i class="bi bi-chevron-left"></i> Anterior</button>
+    {% endif %}
+    {% if waves_page < waves_total_pages %}
+    <a href="{{ _wbase }}&page={{ _wn }}" class="btn btn-sm btn-outline-secondary">Siguiente <i class="bi bi-chevron-right"></i></a>
+    {% else %}
+    <button class="btn btn-sm btn-outline-secondary" disabled>Siguiente <i class="bi bi-chevron-right"></i></button>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
 {% for w in waves %}
 {% if w.status in ('READY_TO_ASSIGN', 'ASSIGNED') %}
 <div class="modal fade" id="assignModal{{ w.id }}" tabindex="-1">
@@ -170,4 +200,17 @@
 </div>
 {% endif %}
 {% endfor %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+  var bars = document.querySelectorAll('.wms-sticky-bar');
+  if (!bars.length || !window.IntersectionObserver) return;
+  var io = new IntersectionObserver(function(entries) {
+    entries.forEach(function(e) { e.target.classList.toggle('stuck', !e.isIntersecting); });
+  }, { threshold: 1 });
+  bars.forEach(function(b) { io.observe(b); });
+})();
+</script>
 {% endblock %}

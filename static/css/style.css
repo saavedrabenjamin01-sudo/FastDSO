@@ -7883,3 +7883,40 @@ body{
   .wms-loc-stat-val { font-size: 0.85rem; }
   .wms-occ-wrap { min-width: 60px; }
 }
+
+/* =====================================================================
+   WMS STICKY FILTER BAR
+   ===================================================================== */
+.wms-sticky-bar {
+  position: sticky;
+  top: 0;
+  z-index: 120;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08);
+  transition: box-shadow .15s ease;
+}
+.wms-sticky-bar.stuck {
+  box-shadow: 0 4px 16px rgba(11,43,122,.13);
+}
+/* Left-column sticky panel on moves page (desktop) */
+@media (min-width: 992px) {
+  .wms-sticky-panel {
+    position: sticky;
+    top: 0;
+    z-index: 110;
+    max-height: calc(100vh - 24px);
+    overflow-y: auto;
+  }
+}
+/* Compact pagination bar style */
+.wms-pagination-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 4px;
+  font-size: 0.8rem;
+}
+.wms-pagination-bar .btn { font-size: 0.78rem; }

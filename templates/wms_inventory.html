@@ -29,7 +29,7 @@
     </div>
   </div>
 
-  <div class="query-card mb-3">
+  <div class="query-card mb-3 wms-sticky-bar" id="wmsFilterBar">
     <form method="get" action="{{ url_for('wms_inventory') }}" class="query-form">
       <div class="query-field query-field-wide">
         <label class="query-label">Buscar SKU o nombre</label>
@@ -495,6 +495,15 @@ if(expandBtn){
   /* On initial page load: if a location is already selected, the template
      already renders the correct box options server-side, so nothing to do.
      If no location is selected, the select is already disabled server-side. */
+})();
+
+(function() {
+  var bars = document.querySelectorAll('.wms-sticky-bar');
+  if (!bars.length || !window.IntersectionObserver) return;
+  var io = new IntersectionObserver(function(entries) {
+    entries.forEach(function(e) { e.target.classList.toggle('stuck', !e.isIntersecting); });
+  }, { threshold: 1 });
+  bars.forEach(function(b) { io.observe(b); });
 })();
 </script>
 {% endblock %}
