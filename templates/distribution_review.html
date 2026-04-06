@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% block title %}Revisión de Plan {{ plan.folio }} - FastDSO{% endblock %}
+{% block title %}Revisión {{ plan.folio }} - FastDSO{% endblock %}
 {% block page_title %}Revisión de Distribución{% endblock %}
 
 {% block content %}
@@ -23,19 +23,16 @@
         {% if plan.urgency == 'URGENT' %}
         <span class="badge bg-danger ms-1" style="font-size:.7rem;">URGENTE</span>
         {% endif %}
+        {% if plan.source == 'MANUAL' %}
+        <span class="badge bg-dark ms-1" style="font-size:.7rem;">MANUAL</span>
+        {% endif %}
       </h5>
       <small class="text-muted">
-        {% if plan.status == 'DRAFT' %}
-          Revisa y ajusta las cantidades antes de enviar a autorizar
-        {% elif plan.status == 'DRAFT_REVIEW' %}
-          Pendiente de aprobación por un responsable
-        {% else %}
-          Plan confirmado y enviado al FastPlanner
-        {% endif %}
+        {% if plan.status == 'DRAFT' %}Revisa y ajusta las cantidades antes de enviar a autorizar
+        {% elif plan.status == 'DRAFT_REVIEW' %}Pendiente de aprobación por un responsable
+        {% else %}Plan confirmado y enviado al FastPlanner{% endif %}
         &middot; Generado: {{ plan.created_at.strftime('%d/%m/%Y %H:%M') if plan.created_at else '—' }}
-        {% if plan.approved_by %}
-          &middot; Aprobado por {{ plan.approved_by.username }}
-        {% endif %}
+        {% if plan.approved_by %}&middot; Aprobado por {{ plan.approved_by.username }}{% endif %}
       </small>
     </div>
     <div class="d-flex gap-2">
@@ -45,37 +42,45 @@
     </div>
   </div>
 
-  <!-- ── KPI Cards ── -->
-  <div class="row g-3 mb-3">
-    <div class="col-6 col-md-3">
-      <div class="card border-0 shadow-sm text-center py-3">
-        <div class="card-body py-2">
-          <div style="font-size:1.8rem;font-weight:700;color:#1d4ed8;">{{ lines|length }}</div>
-          <div class="text-muted" style="font-size:.78rem;">Líneas totales</div>
+  <!-- ── KPI Cards (5, live) ── -->
+  <div class="row g-2 mb-3">
+    <div class="col-6 col-md col-xl">
+      <div class="card border-0 shadow-sm text-center py-2">
+        <div class="card-body py-1 px-2">
+          <div class="fw-bold" style="font-size:1.5rem;color:#1d4ed8;" id="kpi-visible-lines">{{ lines|length }}</div>
+          <div class="text-muted" style="font-size:.72rem;">Líneas visibles</div>
         </div>
       </div>
     </div>
-    <div class="col-6 col-md-3">
-      <div class="card border-0 shadow-sm text-center py-3">
-        <div class="card-body py-2">
-          <div style="font-size:1.8rem;font-weight:700;color:#059669;" id="kpi-total-units">{{ total_final_units }}</div>
-          <div class="text-muted" style="font-size:.78rem;">Unidades finales</div>
+    <div class="col-6 col-md col-xl">
+      <div class="card border-0 shadow-sm text-center py-2">
+        <div class="card-body py-1 px-2">
+          <div class="fw-bold" style="font-size:1.5rem;color:#059669;" id="kpi-total-units">{{ total_final_units }}</div>
+          <div class="text-muted" style="font-size:.72rem;">Unidades finales</div>
         </div>
       </div>
     </div>
-    <div class="col-6 col-md-3">
-      <div class="card border-0 shadow-sm text-center py-3">
-        <div class="card-body py-2">
-          <div style="font-size:1.8rem;font-weight:700;color:#0369a1;">{{ store_rows|length }}</div>
-          <div class="text-muted" style="font-size:.78rem;">Tiendas destino</div>
+    <div class="col-6 col-md col-xl">
+      <div class="card border-0 shadow-sm text-center py-2">
+        <div class="card-body py-1 px-2">
+          <div class="fw-bold" style="font-size:1.5rem;color:#0369a1;" id="kpi-visible-stores">{{ store_rows|length }}</div>
+          <div class="text-muted" style="font-size:.72rem;">Tiendas visibles</div>
         </div>
       </div>
     </div>
-    <div class="col-6 col-md-3">
-      <div class="card border-0 shadow-sm text-center py-3">
-        <div class="card-body py-2">
-          <div style="font-size:1.8rem;font-weight:700;color:{{ '#b45309' if adjusted_count else '#6b7280' }};" id="kpi-adjusted">{{ adjusted_count }}</div>
-          <div class="text-muted" style="font-size:.78rem;">Líneas ajustadas</div>
+    <div class="col-6 col-md col-xl">
+      <div class="card border-0 shadow-sm text-center py-2">
+        <div class="card-body py-1 px-2">
+          <div class="fw-bold" style="font-size:1.5rem;color:{{ '#b45309' if adjusted_count else '#6b7280' }};" id="kpi-adjusted">{{ adjusted_count }}</div>
+          <div class="text-muted" style="font-size:.72rem;">Líneas ajustadas</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md col-xl">
+      <div class="card border-0 shadow-sm text-center py-2">
+        <div class="card-body py-1 px-2">
+          <div class="fw-bold" style="font-size:1.5rem;color:{{ '#dc2626' if total_warnings else '#6b7280' }};" id="kpi-warnings">{{ total_warnings }}</div>
+          <div class="text-muted" style="font-size:.72rem;">Warnings activos</div>
         </div>
       </div>
     </div>
@@ -84,42 +89,122 @@
   <div class="row g-3">
 
     <!-- ── LEFT: Store summary ── -->
-    <div class="col-lg-4 col-xl-3">
-      <div class="card border-0 shadow-sm h-100">
+    <div class="col-lg-3">
+      <div class="card border-0 shadow-sm">
         <div class="card-header d-flex justify-content-between align-items-center py-2">
-          <h6 class="mb-0 fw-semibold"><i class="bi bi-shop me-1"></i>Resumen por tienda</h6>
-          <span class="badge bg-secondary">{{ store_rows|length }}</span>
+          <h6 class="mb-0 fw-semibold"><i class="bi bi-shop me-1"></i>Por tienda</h6>
+          <span class="badge bg-secondary" id="store-summary-count">{{ store_rows|length }}</span>
         </div>
-        <div class="table-responsive" style="max-height:520px;overflow-y:auto;">
+        <div style="max-height:540px;overflow-y:auto;">
           <table class="table table-sm table-hover mb-0">
-            <thead class="table-light sticky-top">
+            <thead class="table-light sticky-top" style="font-size:.7rem;">
               <tr>
                 <th>Tienda</th>
-                <th class="text-center">SKUs</th>
                 <th class="text-end">Uds</th>
-                <th class="text-end">%</th>
+                <th class="text-center" title="Warnings">⚠</th>
               </tr>
             </thead>
             <tbody id="store-summary-body">
               {% for row in store_rows %}
-              <tr data-store="{{ row.store }}">
-                <td style="font-size:.82rem;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ row.store }}">{{ row.store }}</td>
-                <td class="text-center" style="font-size:.82rem;">{{ row.skus }}</td>
-                <td class="text-end fw-semibold" style="font-size:.82rem;" data-store-units="{{ row.store }}">{{ row.units }}</td>
-                <td class="text-end text-muted" style="font-size:.78rem;" data-store-pct="{{ row.store }}">{{ row.pct }}%</td>
+              <tr data-store-filter="{{ row.store }}"
+                  style="cursor:pointer;"
+                  class="{{ 'table-danger' if row.all_zero else '' }}"
+                  title="Filtrar por {{ row.store }}{% if row.all_zero %} — todas las líneas en 0{% endif %}"
+                  onclick="filterByStore('{{ row.store }}')">
+                <td style="font-size:.78rem;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ row.store }}">
+                  {{ row.store }}
+                  {% if row.all_zero %}
+                  <span class="badge bg-danger ms-1" style="font-size:.6rem;">0</span>
+                  {% endif %}
+                </td>
+                <td class="text-end fw-semibold" style="font-size:.78rem;" data-store-units="{{ row.store }}">{{ row.units }}</td>
+                <td class="text-center" style="font-size:.75rem;">
+                  {% if row.warnings > 0 %}
+                  <span class="badge bg-warning text-dark" style="font-size:.62rem;">{{ row.warnings }}</span>
+                  {% else %}
+                  <span class="text-muted">—</span>
+                  {% endif %}
+                </td>
               </tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
+        <div class="card-footer py-1 px-2 text-center" style="font-size:.72rem;">
+          <a href="#" onclick="clearAllFilters();return false;" class="text-muted">
+            <i class="bi bi-x-circle me-1"></i>Limpiar filtro tienda
+          </a>
+        </div>
       </div>
     </div>
 
-    <!-- ── RIGHT: Editable detail table ── -->
-    <div class="col-lg-8 col-xl-9">
+    <!-- ── RIGHT: Filter bar + Editable table ── -->
+    <div class="col-lg-9">
+
+      <!-- Filter bar -->
+      <div class="card border-0 shadow-sm mb-2">
+        <div class="card-body py-2 px-3">
+          <div class="row g-2 align-items-end">
+            <div class="col-sm-3">
+              <label class="form-label mb-1 fw-semibold" style="font-size:.75rem;">Tienda</label>
+              <select id="filter-store" class="form-select form-select-sm">
+                <option value="">Todas las tiendas</option>
+                {% for s in store_names_list %}
+                <option value="{{ s }}">{{ s }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-sm-2">
+              <label class="form-label mb-1 fw-semibold" style="font-size:.75rem;">SKU</label>
+              <input type="text" id="filter-sku" class="form-control form-control-sm" placeholder="Buscar SKU…">
+            </div>
+            {% if categories_list %}
+            <div class="col-sm-2">
+              <label class="form-label mb-1 fw-semibold" style="font-size:.75rem;">Categoría</label>
+              <select id="filter-cat" class="form-select form-select-sm">
+                <option value="">Todas</option>
+                {% for c in categories_list %}
+                <option value="{{ c }}">{{ c }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            {% else %}
+            <input type="hidden" id="filter-cat" value="">
+            {% endif %}
+            <div class="col-sm-auto">
+              <div class="d-flex flex-wrap gap-2 align-items-center mt-1">
+                <div class="form-check form-check-sm mb-0">
+                  <input class="form-check-input" type="checkbox" id="filter-adjusted">
+                  <label class="form-check-label" for="filter-adjusted" style="font-size:.75rem;">Solo ajustadas</label>
+                </div>
+                <div class="form-check form-check-sm mb-0">
+                  <input class="form-check-input" type="checkbox" id="filter-nonzero">
+                  <label class="form-check-label" for="filter-nonzero" style="font-size:.75rem;">Qty &gt; 0</label>
+                </div>
+                <div class="form-check form-check-sm mb-0">
+                  <input class="form-check-input" type="checkbox" id="filter-warnings">
+                  <label class="form-check-label" for="filter-warnings" style="font-size:.75rem;">Solo warnings</label>
+                </div>
+              </div>
+            </div>
+            <div class="col-sm-auto ms-auto">
+              <button type="button" class="btn btn-sm btn-primary" onclick="applyFilters()">
+                <i class="bi bi-funnel-fill me-1"></i>Aplicar
+              </button>
+              <button type="button" class="btn btn-sm btn-outline-secondary ms-1" onclick="clearAllFilters()">
+                <i class="bi bi-x-lg me-1"></i>Limpiar
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Detail table card -->
       <div class="card border-0 shadow-sm">
         <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2 py-2">
-          <h6 class="mb-0 fw-semibold"><i class="bi bi-table me-1"></i>Detalle de líneas</h6>
+          <h6 class="mb-0 fw-semibold"><i class="bi bi-table me-1"></i>Detalle de líneas
+            <span class="badge bg-secondary ms-1" id="table-count-badge" style="font-size:.65rem;">{{ lines|length }}</span>
+          </h6>
           {% if can_edit %}
           <div class="d-flex gap-2">
             <button type="button" class="btn btn-sm btn-outline-secondary" onclick="resetAllQty()">
@@ -134,49 +219,104 @@
               method="POST">
 
           <div class="table-responsive" style="max-height:560px;overflow-y:auto;">
-            <table class="table table-sm table-hover mb-0 align-middle">
-              <thead class="table-light sticky-top">
+            <table class="table table-sm table-hover mb-0 align-middle" id="reviewTable">
+              <thead class="table-dark sticky-top" style="font-size:.7rem;">
                 <tr>
-                  <th style="min-width:90px;">SKU</th>
-                  <th style="min-width:140px;">Producto</th>
-                  <th style="min-width:80px;">Categoría</th>
+                  <th style="min-width:80px;">SKU</th>
+                  <th style="min-width:130px;">Producto</th>
+                  <th style="min-width:75px;">Categ.</th>
                   <th style="min-width:110px;">Tienda</th>
-                  <th class="text-center" style="min-width:70px;" title="Cantidad sugerida por el motor">Sugerido</th>
-                  <th class="text-center" style="min-width:100px;">
-                    Cant. final
-                    {% if can_edit %}<small class="text-muted fw-normal">(editable)</small>{% endif %}
+                  <th class="text-end" style="min-width:60px;" title="Stock actual en tienda">Stk Tienda</th>
+                  <th class="text-end" style="min-width:55px;" title="Stock disponible en CD (calidad OK)">Stk CD</th>
+                  <th class="text-end" style="min-width:55px;" title="Ventas últimas 4 semanas">Vta 4s</th>
+                  <th class="text-center" style="min-width:58px;" title="Cantidad sugerida por el motor">Suger.</th>
+                  <th class="text-center" style="min-width:85px;">
+                    Qty final{% if can_edit %}<span class="text-muted fw-normal"> ✏</span>{% endif %}
                   </th>
-                  <th class="text-center" style="min-width:80px;">Estado</th>
-                  <th class="text-center" style="min-width:50px;" title="Stock disponible en CD">CD</th>
+                  <th class="text-center" style="min-width:55px;" title="qty_final − qty_sugerida">Delta</th>
+                  <th style="min-width:130px;">Estado</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody id="reviewTbody">
                 {% for line in lines %}
                 {% set sku = line.product.sku if line.product else '—' %}
-                {% set cd_stock = cd_stock_map.get(sku, 0) %}
+                {% set cat = (line.product.category or '') if line.product else '' %}
+                {% set store_name = line.store.name if line.store else '—' %}
+                {% set suggested = (line.qty_suggested or line.qty_planned) %}
                 {% set eff = line.effective_qty() %}
+                {% set cd = cd_stock_map_by_id.get(line.product_id, 0) %}
+                {% set sk = (line.store_id | string) + '_' + (line.product_id | string) %}
+                {% set ss = store_stock_map.get(sk) %}
+                {% set has_ss = sk in store_stock_map %}
+                {% set sales_val = sales_map.get(sk) %}
+                {% set has_sales = sk in sales_map %}
+                {% set delta = eff - suggested %}
+                {# ── Compute warnings ── #}
+                {% set w_quiebre = has_ss and ss <= 0 %}
+                {% set w_sincd = cd == 0 and eff > 0 %}
+                {% set w_sinventa = has_sales and sales_val == 0 %}
+                {% set w_coldstart = not has_sales and eff > 0 %}
+                {% set w_ajustado = line.is_manually_adjusted %}
+                {% set has_warning = w_quiebre or w_sincd or w_sinventa or w_coldstart %}
                 <tr data-line-id="{{ line.id }}"
-                    data-store="{{ line.store.name if line.store else '—' }}"
-                    data-suggested="{{ line.qty_suggested or line.qty_planned }}"
-                    data-adjusted="{{ 'true' if line.is_manually_adjusted else 'false' }}">
+                    data-store="{{ store_name }}"
+                    data-sku="{{ sku|lower }}"
+                    data-category="{{ cat|lower }}"
+                    data-adjusted="{{ 'true' if w_ajustado else 'false' }}"
+                    data-has-warning="{{ 'true' if has_warning else 'false' }}"
+                    data-eff="{{ eff }}">
                   <td>
-                    <code style="font-size:.78rem;">{{ sku }}</code>
+                    <code style="font-size:.76rem;">{{ sku }}</code>
                   </td>
-                  <td style="font-size:.8rem;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+                  <td style="font-size:.78rem;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
                       title="{{ line.product.name if line.product else '' }}">
-                    {{ (line.product.name or '—')[:40] if line.product else '—' }}
+                    {{ (line.product.name or '—')[:38] if line.product else '—' }}
                   </td>
                   <td>
-                    {% if line.product and line.product.category %}
-                    <span class="badge bg-light text-dark border" style="font-size:.68rem;">{{ line.product.category[:14] }}</span>
+                    {% if cat %}
+                    <span class="badge bg-light text-dark border" style="font-size:.64rem;">{{ cat[:12] }}</span>
                     {% else %}
-                    <span class="text-muted" style="font-size:.78rem;">—</span>
+                    <span class="text-muted" style="font-size:.74rem;">—</span>
                     {% endif %}
                   </td>
-                  <td style="font-size:.8rem;">{{ line.store.name if line.store else '—' }}</td>
-                  <td class="text-center text-muted" style="font-size:.85rem;">
-                    {{ line.qty_suggested or line.qty_planned }}
+                  <td style="font-size:.78rem;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ store_name }}">{{ store_name }}</td>
+                  <!-- Stock tienda -->
+                  <td class="text-end" style="font-size:.8rem;">
+                    {% if has_ss %}
+                      {% if ss <= 0 %}
+                      <span class="text-danger fw-semibold" title="Quiebre en tienda">0</span>
+                      {% elif ss <= 5 %}
+                      <span class="text-warning fw-semibold" title="Stock bajo">{{ ss }}</span>
+                      {% else %}
+                      <span class="text-muted">{{ ss }}</span>
+                      {% endif %}
+                    {% else %}
+                    <span class="text-muted" title="Sin datos de stock en tienda">—</span>
+                    {% endif %}
                   </td>
+                  <!-- Stock CD -->
+                  <td class="text-end" style="font-size:.8rem;">
+                    {% if cd > 0 %}
+                    <span class="text-muted" title="Stock CD: {{ cd }}">{{ cd }}</span>
+                    {% else %}
+                    <span class="text-danger fw-semibold" title="Sin stock disponible en CD">0</span>
+                    {% endif %}
+                  </td>
+                  <!-- Ventas 4 semanas -->
+                  <td class="text-end" style="font-size:.8rem;">
+                    {% if has_sales %}
+                      {% if sales_val == 0 %}
+                      <span class="text-muted" title="Sin ventas en últimas 4 semanas">0</span>
+                      {% else %}
+                      <span class="text-muted">{{ sales_val }}</span>
+                      {% endif %}
+                    {% else %}
+                    <span class="text-muted" title="Sin historial de ventas disponible">—</span>
+                    {% endif %}
+                  </td>
+                  <!-- Sugerido -->
+                  <td class="text-center text-muted" style="font-size:.82rem;">{{ suggested }}</td>
+                  <!-- Qty final -->
                   <td class="text-center">
                     {% if can_edit %}
                     <input type="number"
@@ -184,44 +324,61 @@
                            class="form-control form-control-sm qty-input text-center"
                            value="{{ eff }}"
                            min="0"
-                           style="width:72px;margin:0 auto;font-size:.85rem;"
-                           data-suggested="{{ line.qty_suggested or line.qty_planned }}"
+                           style="width:68px;margin:0 auto;font-size:.82rem;"
+                           data-suggested="{{ suggested }}"
                            data-line-id="{{ line.id }}"
-                           data-store="{{ line.store.name if line.store else '—' }}"
+                           data-store="{{ store_name }}"
                            onchange="onQtyChange(this)">
                     {% else %}
-                    <span class="fw-semibold" style="font-size:.85rem;">{{ eff }}</span>
+                    <span class="fw-semibold" style="font-size:.82rem;">{{ eff }}</span>
                     <input type="hidden" name="qty_final_{{ line.id }}" value="{{ eff }}">
                     {% endif %}
                   </td>
+                  <!-- Delta -->
                   <td class="text-center">
-                    <span class="badge status-badge
-                      {% if line.is_manually_adjusted %}bg-warning text-dark{% else %}bg-light text-dark border{% endif %}"
-                      id="badge_{{ line.id }}"
-                      style="font-size:.68rem;">
-                      {{ 'EDITADO' if line.is_manually_adjusted else 'AUTO' }}
+                    <span class="delta-cell
+                      {% if delta > 0 %}text-success fw-semibold
+                      {% elif delta < 0 %}text-danger fw-semibold
+                      {% else %}text-muted{% endif %}"
+                      id="delta_{{ line.id }}"
+                      data-line-id="{{ line.id }}"
+                      style="font-size:.8rem;">
+                      {% if delta > 0 %}+{{ delta }}{% elif delta < 0 %}{{ delta }}{% else %}—{% endif %}
                     </span>
                   </td>
-                  <td class="text-center">
-                    {% if cd_stock > 0 %}
-                    <span class="text-muted" style="font-size:.78rem;" title="Stock CD: {{ cd_stock }}">
-                      {{ cd_stock }}
-                      {% if eff > cd_stock %}
-                      <i class="bi bi-exclamation-triangle-fill text-warning ms-1" title="Qty final supera stock CD disponible"></i>
+                  <!-- Estado / Warnings -->
+                  <td style="font-size:.68rem;">
+                    <div class="d-flex flex-wrap gap-1" id="badges_{{ line.id }}">
+                      {% if w_ajustado %}
+                      <span class="badge bg-warning text-dark" title="Cantidad editada manualmente">AJUSTADO</span>
+                      {% else %}
+                      <span class="badge bg-light text-dark border" title="Cantidad automática del motor" id="badge_auto_{{ line.id }}">AUTO</span>
                       {% endif %}
-                    </span>
-                    {% else %}
-                    <span class="text-danger" style="font-size:.78rem;" title="Sin stock en CD">0</span>
-                    {% endif %}
+                      {% if w_quiebre %}
+                      <span class="badge bg-danger" title="Tienda sin stock disponible">QUIEBRE</span>
+                      {% endif %}
+                      {% if w_sincd %}
+                      <span class="badge bg-danger" title="CD sin stock disponible pero se distribuyó">SIN STOCK CD</span>
+                      {% endif %}
+                      {% if w_sinventa %}
+                      <span class="badge bg-secondary" title="Sin ventas en las últimas 4 semanas">SIN VENTA</span>
+                      {% endif %}
+                      {% if w_coldstart %}
+                      <span class="badge bg-info text-dark" title="Sin historial de ventas disponible">COLD START</span>
+                      {% endif %}
+                    </div>
                   </td>
                 </tr>
                 {% else %}
-                <tr>
-                  <td colspan="8" class="text-center text-muted py-4">Sin líneas en este plan.</td>
-                </tr>
+                <tr><td colspan="11" class="text-center text-muted py-4">Sin líneas en este plan.</td></tr>
                 {% endfor %}
               </tbody>
             </table>
+          </div>
+
+          <!-- No-results row (hidden by default) -->
+          <div id="no-filter-results" class="text-center text-muted py-3" style="display:none;font-size:.85rem;">
+            <i class="bi bi-funnel me-1"></i>No hay líneas que coincidan con los filtros actuales.
           </div>
 
           <!-- ── Action bar ── -->
@@ -256,12 +413,11 @@
             </div>
             {% endif %}
             {% if can('runs:approve') %}
-            <div class="card-footer d-flex justify-content-between align-items-center gap-2 flex-wrap
-                        {% if can_edit %}border-top-0{% endif %}">
+            <div class="card-footer d-flex justify-content-between align-items-center gap-2 flex-wrap {{ 'border-top-0' if can_edit else '' }}">
               <div class="text-muted" style="font-size:.82rem;">
                 <i class="bi bi-clock-history me-1"></i>Pendiente de aprobación de responsable
               </div>
-              <div class="d-flex gap-2">
+              <div>
                 <button type="button" class="btn btn-sm btn-success" onclick="confirmAndSend()">
                   <i class="bi bi-check-circle me-1"></i>Confirmar y enviar al Planner
                 </button>
@@ -324,7 +480,7 @@
   </div>
 </div>
 
-<!-- ── Confirm + Send to Planner modal (DRAFT_REVIEW → APPROVED) ── -->
+<!-- ── Confirmar + enviar al Planner modal (DRAFT_REVIEW → APPROVED) ── -->
 <div class="modal fade" id="confirmModal" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">
@@ -353,60 +509,207 @@
 </div>
 
 <style>
+.qty-input { border-color: #d1d5db; }
 .qty-input:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,.15); }
 .qty-input.changed { border-color: #f59e0b; background: #fffbeb; }
 .sticky-top { position: sticky; top: 0; z-index: 1; }
+#store-summary-body tr:hover td { background: rgba(59,130,246,.06); }
 </style>
 
+{% block extra_js %}
 <script>
-const globalTotalUnits = { value: {{ total_final_units }} };
+/* ─── State ─── */
+const totalLines = {{ lines|length }};
+let activeStoreFilter = '';   // set by sidebar click
 
+/* ─── Filter helpers ─── */
+function getFilterValues() {
+  return {
+    store:    (document.getElementById('filter-store').value || '').trim(),
+    sku:      (document.getElementById('filter-sku').value || '').toLowerCase().trim(),
+    cat:      (document.getElementById('filter-cat') ? document.getElementById('filter-cat').value : '').toLowerCase().trim(),
+    adjusted: document.getElementById('filter-adjusted').checked,
+    nonzero:  document.getElementById('filter-nonzero').checked,
+    warnings: document.getElementById('filter-warnings').checked,
+  };
+}
+
+function applyFilters() {
+  const f = getFilterValues();
+  const tbody = document.getElementById('reviewTbody');
+  const rows = Array.from(tbody.querySelectorAll('tr[data-line-id]'));
+  let visible = 0;
+  const storesSeen = new Set();
+
+  rows.forEach(function(tr) {
+    let show = true;
+    const store = tr.dataset.store || '';
+    const sku   = (tr.dataset.sku || '');
+    const cat   = (tr.dataset.category || '');
+    const adj   = tr.dataset.adjusted === 'true';
+    const warn  = tr.dataset.hasWarning === 'true';
+
+    // Get current qty_final from input or hidden
+    const inp = tr.querySelector('.qty-input');
+    const hid = inp ? null : tr.querySelector('input[type="hidden"][name^="qty_final_"]');
+    const curQty = inp ? (parseInt(inp.value) || 0) : (hid ? (parseInt(hid.value) || 0) : 0);
+
+    if (f.store && store !== f.store) show = false;
+    if (f.sku && !sku.includes(f.sku)) show = false;
+    if (f.cat && !cat.includes(f.cat)) show = false;
+    if (f.adjusted && !adj) show = false;
+    if (f.nonzero && curQty === 0) show = false;
+    if (f.warnings && !warn) show = false;
+
+    tr.style.display = show ? '' : 'none';
+    if (show) {
+      visible++;
+      storesSeen.add(store);
+    }
+  });
+
+  // Update KPI row
+  document.getElementById('kpi-visible-lines').textContent = visible;
+  document.getElementById('table-count-badge').textContent = visible;
+  document.getElementById('kpi-visible-stores').textContent = storesSeen.size;
+  recalcVisibleTotals();
+
+  // No-results message
+  document.getElementById('no-filter-results').style.display = visible === 0 ? '' : 'none';
+}
+
+function clearAllFilters() {
+  document.getElementById('filter-store').value = '';
+  document.getElementById('filter-sku').value = '';
+  if (document.getElementById('filter-cat')) document.getElementById('filter-cat').value = '';
+  document.getElementById('filter-adjusted').checked = false;
+  document.getElementById('filter-nonzero').checked = false;
+  document.getElementById('filter-warnings').checked = false;
+  activeStoreFilter = '';
+  applyFilters();
+}
+
+function filterByStore(storeName) {
+  if (activeStoreFilter === storeName) {
+    // Toggle off
+    activeStoreFilter = '';
+    document.getElementById('filter-store').value = '';
+  } else {
+    activeStoreFilter = storeName;
+    document.getElementById('filter-store').value = storeName;
+  }
+  applyFilters();
+}
+
+/* ─── Qty change ─── */
 function onQtyChange(input) {
   const lineId = input.dataset.lineId;
-  const store = input.dataset.store;
   const suggested = parseInt(input.dataset.suggested) || 0;
   const newVal = Math.max(0, parseInt(input.value) || 0);
   input.value = newVal;
 
-  const badge = document.getElementById('badge_' + lineId);
+  // Mark changed
   if (newVal !== suggested) {
     input.classList.add('changed');
-    if (badge) { badge.className = 'badge bg-warning text-dark'; badge.textContent = 'EDITADO'; }
   } else {
     input.classList.remove('changed');
-    if (badge) { badge.className = 'badge bg-light text-dark border'; badge.textContent = 'AUTO'; }
   }
 
-  recalcTotals();
+  // Update delta cell
+  const delta = newVal - suggested;
+  const deltaEl = document.getElementById('delta_' + lineId);
+  if (deltaEl) {
+    if (delta > 0) {
+      deltaEl.textContent = '+' + delta;
+      deltaEl.className = 'delta-cell text-success fw-semibold';
+    } else if (delta < 0) {
+      deltaEl.textContent = String(delta);
+      deltaEl.className = 'delta-cell text-danger fw-semibold';
+    } else {
+      deltaEl.textContent = '—';
+      deltaEl.className = 'delta-cell text-muted';
+    }
+  }
+
+  // Update AJUSTADO/AUTO badge
+  const badgesDiv = document.getElementById('badges_' + lineId);
+  const autoSpan = document.getElementById('badge_auto_' + lineId);
+  if (badgesDiv) {
+    if (newVal !== suggested) {
+      // Mark AJUSTADO: remove AUTO badge if present, add AJUSTADO if not already there
+      if (autoSpan) autoSpan.remove();
+      if (!badgesDiv.querySelector('.badge-ajustado')) {
+        const b = document.createElement('span');
+        b.className = 'badge bg-warning text-dark badge-ajustado';
+        b.title = 'Cantidad editada manualmente';
+        b.textContent = 'AJUSTADO';
+        badgesDiv.prepend(b);
+      }
+      // Update row data attribute
+      input.closest('tr').dataset.adjusted = 'true';
+    } else {
+      // Revert to AUTO
+      const adj = badgesDiv.querySelector('.badge-ajustado');
+      if (adj) adj.remove();
+      if (!autoSpan) {
+        const b = document.createElement('span');
+        b.className = 'badge bg-light text-dark border';
+        b.id = 'badge_auto_' + lineId;
+        b.title = 'Cantidad automática del motor';
+        b.textContent = 'AUTO';
+        badgesDiv.prepend(b);
+      }
+      input.closest('tr').dataset.adjusted = 'false';
+    }
+  }
+
+  // Update row data-eff so filters (qty > 0) work
+  const tr = input.closest('tr');
+  if (tr) tr.dataset.eff = String(newVal);
+
+  recalcVisibleTotals();
 }
 
-function recalcTotals() {
+function recalcVisibleTotals() {
   let total = 0;
   let adjusted = 0;
   const storeMap = {};
+  const storesSeen = new Set();
+  let warnings = 0;
 
-  document.querySelectorAll('.qty-input').forEach(inp => {
-    const val = Math.max(0, parseInt(inp.value) || 0);
-    const store = inp.dataset.store;
-    const suggested = parseInt(inp.dataset.suggested) || 0;
-    total += val;
-    if (val !== suggested) adjusted++;
-    storeMap[store] = (storeMap[store] || 0) + val;
+  const rows = document.querySelectorAll('#reviewTbody tr[data-line-id]');
+  rows.forEach(function(tr) {
+    const inp = tr.querySelector('.qty-input');
+    const hid = inp ? null : tr.querySelector('input[type="hidden"][name^="qty_final_"]');
+    const val = inp ? (Math.max(0, parseInt(inp.value) || 0)) : (hid ? (parseInt(hid.value) || 0) : 0);
+    const store = inp ? inp.dataset.store : (tr.dataset.store || '');
+    const suggested = inp ? (parseInt(inp.dataset.suggested) || 0) : 0;
+    const isVisible = tr.style.display !== 'none';
+    const hasWarn = tr.dataset.hasWarning === 'true';
+
+    if (isVisible) {
+      total += val;
+      storesSeen.add(store);
+      if (val !== suggested) adjusted++;
+      if (hasWarn) warnings++;
+      storeMap[store] = (storeMap[store] || 0) + val;
+    }
   });
 
-  const kpi = document.getElementById('kpi-total-units');
-  if (kpi) kpi.textContent = total;
+  const kpiUnits = document.getElementById('kpi-total-units');
+  if (kpiUnits) kpiUnits.textContent = total;
   const kpiAdj = document.getElementById('kpi-adjusted');
   if (kpiAdj) kpiAdj.textContent = adjusted;
   const footerAdj = document.getElementById('footer-adjusted-count');
   if (footerAdj) footerAdj.textContent = adjusted;
+  const kpiWarn = document.getElementById('kpi-warnings');
+  if (kpiWarn) kpiWarn.textContent = warnings;
 
+  // Update store summary units
   const grandTotal = total || 1;
   for (const [store, units] of Object.entries(storeMap)) {
     const unitsEl = document.querySelector(`[data-store-units="${store}"]`);
-    const pctEl = document.querySelector(`[data-store-pct="${store}"]`);
     if (unitsEl) unitsEl.textContent = units;
-    if (pctEl) pctEl.textContent = (units / grandTotal * 100).toFixed(1) + '%';
   }
 
   buildZeroWarnings();
@@ -414,9 +717,10 @@ function recalcTotals() {
 
 function buildZeroWarnings() {
   const skuMap = {};
-  document.querySelectorAll('.qty-input').forEach(inp => {
+  document.querySelectorAll('.qty-input').forEach(function(inp) {
     const row = inp.closest('tr');
-    const sku = row ? row.querySelector('code') : null;
+    if (!row || row.style.display === 'none') return;
+    const sku = row.querySelector('code');
     if (!sku) return;
     const skuText = sku.textContent.trim();
     const val = parseInt(inp.value) || 0;
@@ -434,19 +738,36 @@ function buildZeroWarnings() {
 }
 
 function resetAllQty() {
-  document.querySelectorAll('.qty-input').forEach(inp => {
+  document.querySelectorAll('.qty-input').forEach(function(inp) {
     inp.value = inp.dataset.suggested;
     inp.classList.remove('changed');
-    const badge = document.getElementById('badge_' + inp.dataset.lineId);
-    if (badge) { badge.className = 'badge bg-light text-dark border'; badge.textContent = 'AUTO'; }
+    // reset delta
+    const lineId = inp.dataset.lineId;
+    const deltaEl = document.getElementById('delta_' + lineId);
+    if (deltaEl) { deltaEl.textContent = '—'; deltaEl.className = 'delta-cell text-muted'; }
+    // reset badge
+    const badgesDiv = document.getElementById('badges_' + lineId);
+    if (badgesDiv) {
+      const adj = badgesDiv.querySelector('.badge-ajustado');
+      if (adj) adj.remove();
+      if (!document.getElementById('badge_auto_' + lineId)) {
+        const b = document.createElement('span');
+        b.className = 'badge bg-light text-dark border';
+        b.id = 'badge_auto_' + lineId;
+        b.textContent = 'AUTO';
+        badgesDiv.prepend(b);
+      }
+    }
+    const tr = inp.closest('tr');
+    if (tr) tr.dataset.adjusted = 'false';
   });
-  recalcTotals();
+  recalcVisibleTotals();
 }
 
-// ── Enviar a autorizar ──
+/* ─── Auth flow ─── */
 function openSubmitAuthModal() {
   let total = 0;
-  document.querySelectorAll('.qty-input').forEach(inp => { total += Math.max(0, parseInt(inp.value) || 0); });
+  document.querySelectorAll('.qty-input').forEach(function(inp) { total += Math.max(0, parseInt(inp.value) || 0); });
   if (total === 0) {
     alert('No hay unidades con cantidad final > 0. Ajusta antes de enviar a autorizar.');
     return;
@@ -457,11 +778,9 @@ function openSubmitAuthModal() {
 }
 
 function injectQtyInputsIntoAuthForm() {
-  // Copy current qty_final inputs into the auth form so the POST includes them.
   const authForm = document.getElementById('submitAuthForm');
-  // Remove any previously injected hidden inputs to avoid duplicates.
-  authForm.querySelectorAll('input[data-injected]').forEach(el => el.remove());
-  document.querySelectorAll('.qty-input').forEach(inp => {
+  authForm.querySelectorAll('input[data-injected]').forEach(function(el) { el.remove(); });
+  document.querySelectorAll('.qty-input').forEach(function(inp) {
     const hidden = document.createElement('input');
     hidden.type = 'hidden';
     hidden.name = inp.name;
@@ -471,10 +790,9 @@ function injectQtyInputsIntoAuthForm() {
   });
 }
 
-// ── Confirmar y enviar al Planner ──
 function confirmAndSend() {
   let total = 0;
-  document.querySelectorAll('.qty-input').forEach(inp => { total += Math.max(0, parseInt(inp.value) || 0); });
+  document.querySelectorAll('.qty-input').forEach(function(inp) { total += Math.max(0, parseInt(inp.value) || 0); });
   if (total === 0) {
     alert('No hay unidades con cantidad final > 0. Ajusta antes de confirmar.');
     return;
@@ -484,6 +802,21 @@ function confirmAndSend() {
   new bootstrap.Modal(document.getElementById('confirmModal')).show();
 }
 
-document.addEventListener('DOMContentLoaded', buildZeroWarnings);
+/* ─── Live filter on keyup ─── */
+document.getElementById('filter-sku').addEventListener('input', applyFilters);
+document.getElementById('filter-store').addEventListener('change', applyFilters);
+if (document.getElementById('filter-cat')) {
+  document.getElementById('filter-cat').addEventListener('change', applyFilters);
+}
+document.getElementById('filter-adjusted').addEventListener('change', applyFilters);
+document.getElementById('filter-nonzero').addEventListener('change', applyFilters);
+document.getElementById('filter-warnings').addEventListener('change', applyFilters);
+
+document.addEventListener('DOMContentLoaded', function() {
+  buildZeroWarnings();
+  applyFilters();
+});
 </script>
+{% endblock %}
+
 {% endblock %}

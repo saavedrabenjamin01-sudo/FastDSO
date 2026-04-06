@@ -1,0 +1,131 @@
+Upgrade the folio/distribution edit screen in FastDSO to make it a real operational workbench before authorization.
+
+GOAL
+Improve the editable folio review page so users can adjust distribution lines much faster and with better context.
+Keep the existing flow:
+Generate distribution -> review/edit -> save adjustments -> send to authorization -> Planner/WMS sync using qty_final only.
+
+PRIORITY IMPROVEMENTS TO IMPLEMENT
+
+1) FILTERS
+Add a filter bar above the editable detail table with:
+- Store filter (dropdown)  <-- mandatory
+- SKU filter (text input)
+- Category filter (dropdown if categories available)
+- Toggle: show only manually adjusted lines
+- Toggle: show only lines with qty_final > 0
+- Toggle: show only warning lines
+- Button: Aplicar
+- Button: Limpiar
+
+Behavior:
+- Filters work on the current plan lines only
+- Store filter should allow:
+  - Todas las tiendas
+  - Individual store selection
+- Filters should update both:
+  - the editable detail table
+  - the top summary counters
+
+2) EXTRA COLUMNS IN EDITABLE TABLE
+Extend the review/detail table with these columns:
+- Stock tienda actual
+- Stock CD actual
+- Venta reciente (use 7-day sales if available; if not available use a recent demand metric or leave blank)
+- Qty sugerida
+- Qty final (editable)
+- Delta (qty_final - qty_suggested)
+- Estado / Warnings
+
+Required behavior:
+- Stock tienda actual:
+  get from current store stock snapshot for (store, sku)
+- Stock CD actual:
+  get from current CD stock for sku
+- Venta reciente:
+  if recent sales metric exists per (store, sku), show it
+  otherwise use last known weekly quantity or leave as "-"
+- Delta:
+  positive values show green or blue
+  negative values show orange/red
+  zero stays neutral
+
+3) WARNING BADGES PER LINE
+Add visual warning badges in the Estado column.
+Possible badges:
+- QUIEBRE      -> store stock = 0 or very low
+- SIN STOCK CD -> CD stock = 0 and qty_final > 0
+- SIN VENTA    -> recent sales missing/zero
+- AJUSTADO     -> qty_final != qty_suggested
+- COLD START   -> no sales history but qty_final > 0
+- SOBRESTOCK   -> optional if simple to compute, otherwise skip for now
+
+Rules:
+- Allow multiple badges in same row if needed
+- Badges should use FastDSO style pills/colors
+
+4) TOP SUMMARY AREA
+Improve the top summary cards of the review page.
+Keep existing totals and add:
+- Total líneas visibles
+- Total líneas ajustadas
+- Total unidades finales visibles
+- Tiendas visibles
+- Warnings activos
+
+These counters must respond to the current filters.
+
+5) STORE CONSOLIDATED SUMMARY
+Keep the existing store consolidated summary and improve it:
+- Add current store stock total if possible (optional)
+- Add count of warning lines per store
+- Highlight stores where all lines are zero after editing
+- Clicking a store row should auto-apply the store filter to the detail table (recommended)
+
+6) EDITING EXPERIENCE
+Keep inline editing for qty_final, but improve usability:
+- qty_final input must be compact and numeric
+- on change:
+  - update Delta immediately
+  - mark line as AJUSTADO
+  - update top counters
+  - update store consolidated totals
+- no negative numbers allowed
+- zero allowed
+- preserve Save / Send to authorization flow
+
+7) SAVE / AUTHORIZATION RULES
+Do not change business flow:
+- Guardar ajustes only saves qty_final and manual adjustment flags
+- Enviar a autorizar moves plan from DRAFT to READY_FOR_AUTH
+- Planner and WMS must continue to use qty_final only after approval
+
+8) PERFORMANCE
+- Avoid N+1 lookups for stock/sales columns
+- Preload all needed store stock / CD stock / sales data in bulk for the current plan lines
+- Do filtering server-side or lightweight client-side depending on existing page architecture, but keep it responsive
+
+9) UI / STYLE
+- Keep FastDSO visual language
+- No spreadsheet clutter
+- Sticky table header if possible
+- Right-align numeric columns
+- SKU in monospace
+- Product names truncated with tooltip if too long
+- Use same card style as Dashboard / WMS modules
+- Labels must be in Spanish
+
+10) SAFETY
+- Do not break manual distribution review
+- Do not break Planner/WMS synchronization
+- Do not overwrite qty_suggested
+- Always preserve qty_suggested as original engine output
+
+DELIVERABLES
+- Improved review/edit page with filter bar
+- Store filter working
+- Stock tienda and Stock CD columns visible
+- Warning badges per row
+- Delta column
+- Responsive top summary counters
+- No breaking changes to downstream authorization / Planner / WMS flow

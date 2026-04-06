@@ -13063,31 +13063,106 @@ def distribution_review(plan_id):
         .all()
     )
 
+    # ── Collect IDs for bulk lookups (avoid N+1) ─────────────────────────
+    store_ids = list({l.store_id for l in lines if l.store_id})
+    product_ids = list({l.product_id for l in lines if l.product_id})
+
+    # ── CD stock (OK quality only) ────────────────────────────────────────
     cd_stock_raw = (
-        db.session.query(Product.sku, db.func.sum(StockCD.quantity))
+        db.session.query(Product.id, db.func.sum(StockCD.quantity))
         .join(StockCD, StockCD.product_id == Product.id)
-        .group_by(Product.sku)
+        .filter(StockCD.quality_status != 'PROBLEM')
+        .filter(Product.id.in_(product_ids))
+        .group_by(Product.id)
         .all()
     )
-    cd_stock_map = {r[0]: int(r[1] or 0) for r in cd_stock_raw}
+    cd_stock_map_by_id = {r[0]: int(r[1] or 0) for r in cd_stock_raw}
+    # Also keep sku-keyed map for template compatibility
+    cd_stock_map = {}
+    for line in lines:
+        if line.product:
+            cd_stock_map[line.product.sku] = cd_stock_map_by_id.get(line.product_id, 0)
 
+    # ── Store stock (latest StockSnapshot) ────────────────────────────────
+    store_stock_map = {}
+    if store_ids and product_ids:
+        latest_snap = db.session.query(db.func.max(StockSnapshot.as_of_date)).scalar()
+        if latest_snap:
+            snap_rows = (
+                db.session.query(StockSnapshot.store_id, StockSnapshot.product_id, StockSnapshot.quantity)
+                .filter(
+                    StockSnapshot.as_of_date == latest_snap,
+                    StockSnapshot.store_id.in_(store_ids),
+                    StockSnapshot.product_id.in_(product_ids),
+                )
+                .all()
+            )
+            store_stock_map = {f"{r.store_id}_{r.product_id}": int(r.quantity or 0) for r in snap_rows}
+
+    # ── Recent sales (last 4 weeks from SalesWeeklyAgg) ──────────────────
+    sales_map = {}
+    if store_ids and product_ids:
+        latest_week = db.session.query(db.func.max(SalesWeeklyAgg.week_start)).scalar()
+        if latest_week:
+            cutoff = latest_week - timedelta(days=27)
+            sales_rows = (
+                db.session.query(
+                    SalesWeeklyAgg.store_id,
+                    SalesWeeklyAgg.product_id,
+                    db.func.sum(SalesWeeklyAgg.units),
+                )
+                .filter(
+                    SalesWeeklyAgg.week_start >= cutoff,
+                    SalesWeeklyAgg.store_id.in_(store_ids),
+                    SalesWeeklyAgg.product_id.in_(product_ids),
+                )
+                .group_by(SalesWeeklyAgg.store_id, SalesWeeklyAgg.product_id)
+                .all()
+            )
+            sales_map = {f"{r[0]}_{r[1]}": int(r[2] or 0) for r in sales_rows}
+
+    # ── Filter dropdown values ────────────────────────────────────────────
+    store_names_list = sorted({l.store.name for l in lines if l.store})
+    categories_list = sorted({l.product.category for l in lines if l.product and l.product.category})
+
+    # ── Store summary with warnings ───────────────────────────────────────
     store_summary = {}
     for line in lines:
         store_name = line.store.name if line.store else '—'
         eff = line.effective_qty()
+        cd = cd_stock_map_by_id.get(line.product_id, 0)
+        sk = f"{line.store_id}_{line.product_id}"
+        ss = store_stock_map.get(sk)
+        sales = sales_map.get(sk)
+        has_warn = (
+            (ss is not None and ss <= 0) or
+            (cd == 0 and eff > 0) or
+            (sales is None or sales == 0)
+        )
         if store_name not in store_summary:
-            store_summary[store_name] = {'skus': set(), 'units': 0}
+            store_summary[store_name] = {'skus': set(), 'units': 0, 'warnings': 0, 'has_zero': False}
         store_summary[store_name]['skus'].add(line.product_id)
         store_summary[store_name]['units'] += eff
+        if has_warn:
+            store_summary[store_name]['warnings'] += 1
+
     total_final_units = sum(v['units'] for v in store_summary.values())
     store_rows = sorted(
-        [{'store': k, 'skus': len(v['skus']), 'units': v['units'],
-          'pct': round(v['units'] / total_final_units * 100, 1) if total_final_units else 0}
+        [{'store': k,
+          'skus': len(v['skus']),
+          'units': v['units'],
+          'pct': round(v['units'] / total_final_units * 100, 1) if total_final_units else 0,
+          'warnings': v['warnings'],
+          'all_zero': v['units'] == 0,
+         }
          for k, v in store_summary.items()],
         key=lambda x: -x['units']
     )
 
     adjusted_count = sum(1 for l in lines if l.is_manually_adjusted)
+
+    # ── Total warnings across all lines ──────────────────────────────────
+    total_warnings = sum(r['warnings'] for r in store_rows)
 
     return render_template(
         'distribution_review.html',
@@ -13097,6 +13172,12 @@ def distribution_review(plan_id):
         total_final_units=total_final_units,
         adjusted_count=adjusted_count,
         cd_stock_map=cd_stock_map,
+        cd_stock_map_by_id=cd_stock_map_by_id,
+        store_stock_map=store_stock_map,
+        sales_map=sales_map,
+        store_names_list=store_names_list,
+        categories_list=categories_list,
+        total_warnings=total_warnings,
         can_edit=can_edit,
     )
 
