@@ -10,7 +10,7 @@
 {% set fmin_u = filters.get('min_units','') %}
 {% set fmin_p = filters.get('min_pallets','') %}
 
-{% macro qs_params(override={}) %}{% set ns = namespace(parts=[]) %}{% for k in ['q','wh','loc','box','stock','sort','min_units','min_pallets'] %}{% set v = override.get(k, filters.get(k,'')) %}{% if v %}{% set _ = ns.parts.append(k ~ '=' ~ v) %}{% endif %}{% endfor %}{{ ns.parts|join('&') }}{% endmacro %}
+{% macro qs_params(override={}) %}{% set ns = namespace(parts=[]) %}{% for k in ['q','wh','loc','box','stock','sort','min_units','min_pallets','per_page','page'] %}{% set v = override.get(k, filters.get(k,'')) %}{% if v %}{% set _ = ns.parts.append(k ~ '=' ~ v) %}{% endif %}{% endfor %}{{ ns.parts|join('&') }}{% endmacro %}
 
 <div class="query-wrap" style="max-width:1400px;">
 
@@ -86,6 +86,7 @@
         <input type="number" class="form-control form-control-sm" name="min_pallets" value="{{ fmin_p }}" min="0" step="0.1" placeholder="—">
       </div>
       <input type="hidden" name="sort" value="{{ fsort }}">
+      <input type="hidden" name="per_page" value="{{ per_page }}">
       <div class="query-field-btn d-flex gap-2">
         <button type="submit" class="btn btn-primary btn-sm query-btn">
           <i class="bi bi-funnel me-1"></i>Aplicar
@@ -153,13 +154,16 @@
     </div>
   </div>
 
+  {%- set _prev_page = page - 1 -%}
+  {%- set _next_page = page + 1 -%}
+
   <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-    <span class="text-muted small">{{ total }} ítems en {{ loc_groups|length }} ubicaciones</span>
+    <span></span>
     <div class="d-flex gap-1 flex-wrap align-items-center">
       <span class="text-muted small me-1">Ordenar:</span>
       {% set sort_opts = [('rack_asc','Rack A-Z'),('avail_desc','Disponibles ↓'),('avail_asc','Disponibles ↑'),('units_desc','Unidades ↓'),('sku_asc','Ubicación A-Z')] %}
       {% for val, label in sort_opts %}
-      <a href="{{ url_for('wms_inventory') }}?{{ qs_params({'sort': val}) }}"
+      <a href="{{ url_for('wms_inventory') }}?{{ qs_params({'sort': val, 'page': '1'}) }}"
          class="btn btn-sm {% if fsort == val %}btn-primary{% else %}btn-outline-secondary{% endif %}" style="font-size:0.75rem;">
         {{ label }}
       </a>
@@ -170,7 +174,38 @@
     </div>
   </div>
 
-  {% for loc in loc_groups %}
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <span class="text-muted small">
+      Mostrando <strong>{{ start_idx }}–{{ end_idx }}</strong> de <strong>{{ total_locations }}</strong> ubicaciones
+      &nbsp;·&nbsp; {{ total }} ítems
+    </span>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <span class="text-muted small">Por página:</span>
+      {% for pp in [25, 50, 100] %}
+      <a href="{{ url_for('wms_inventory') }}?{{ qs_params({'page': '1', 'per_page': pp|string}) }}"
+         class="btn btn-sm {% if per_page == pp %}btn-primary{% else %}btn-outline-secondary{% endif %}" style="font-size:0.75rem;">{{ pp }}</a>
+      {% endfor %}
+      <span class="text-muted small ms-2">Pág. {{ page }} / {{ total_pages }}</span>
+      {% if page > 1 %}
+      <a href="{{ url_for('wms_inventory') }}?{{ qs_params({'page': _prev_page|string}) }}" class="btn btn-sm btn-outline-secondary" style="font-size:0.75rem;"><i class="bi bi-chevron-left"></i> Anterior</a>
+      {% else %}
+      <button class="btn btn-sm btn-outline-secondary" style="font-size:0.75rem;" disabled><i class="bi bi-chevron-left"></i> Anterior</button>
+      {% endif %}
+      {% if page < total_pages %}
+      <a href="{{ url_for('wms_inventory') }}?{{ qs_params({'page': _next_page|string}) }}" class="btn btn-sm btn-outline-secondary" style="font-size:0.75rem;">Siguiente <i class="bi bi-chevron-right"></i></a>
+      {% else %}
+      <button class="btn btn-sm btn-outline-secondary" style="font-size:0.75rem;" disabled>Siguiente <i class="bi bi-chevron-right"></i></button>
+      {% endif %}
+      <form method="get" action="{{ url_for('wms_inventory') }}" class="d-flex align-items-center gap-1 ms-1">
+        {% for k in ['q','wh','loc','box','stock','sort','min_units','min_pallets','per_page'] %}{% set v = filters.get(k,'') %}{% if v %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endif %}{% endfor %}
+        <input type="number" name="page" min="1" max="{{ total_pages }}" value="{{ page }}"
+               class="form-control form-control-sm text-center" style="width:58px;font-size:0.75rem;" title="Ir a página">
+        <button type="submit" class="btn btn-outline-secondary btn-sm" style="font-size:0.75rem;">Ir</button>
+      </form>
+    </div>
+  </div>
+
+  {% for loc in page_groups %}
   {% set occ = loc.occupancy_pct %}
   {% set occ_color = 'success' if occ < 60 else ('warning' if occ <= 85 else 'danger') %}
   {% set is_overload = loc.max_pallets and loc.max_pallets > 0 and loc.total_pallets > loc.max_pallets %}
@@ -320,6 +355,25 @@
     </div>
   </div>
   {% endfor %}
+
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-3 mb-2">
+    <span class="text-muted small">
+      Mostrando <strong>{{ start_idx }}–{{ end_idx }}</strong> de <strong>{{ total_locations }}</strong> ubicaciones
+    </span>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <span class="text-muted small">Pág. {{ page }} / {{ total_pages }}</span>
+      {% if page > 1 %}
+      <a href="{{ url_for('wms_inventory') }}?{{ qs_params({'page': _prev_page|string}) }}" class="btn btn-sm btn-outline-secondary" style="font-size:0.75rem;"><i class="bi bi-chevron-left"></i> Anterior</a>
+      {% else %}
+      <button class="btn btn-sm btn-outline-secondary" style="font-size:0.75rem;" disabled><i class="bi bi-chevron-left"></i> Anterior</button>
+      {% endif %}
+      {% if page < total_pages %}
+      <a href="{{ url_for('wms_inventory') }}?{{ qs_params({'page': _next_page|string}) }}" class="btn btn-sm btn-outline-secondary" style="font-size:0.75rem;">Siguiente <i class="bi bi-chevron-right"></i></a>
+      {% else %}
+      <button class="btn btn-sm btn-outline-secondary" style="font-size:0.75rem;" disabled>Siguiente <i class="bi bi-chevron-right"></i></button>
+      {% endif %}
+    </div>
+  </div>
 
   {% elif has_any_data %}
   <div class="query-card">

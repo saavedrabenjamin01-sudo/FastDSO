@@ -9982,11 +9982,26 @@ def wms_inventory():
     sort_key = (request.args.get('sort') or 'rack_asc').strip()
     loc_groups = _group_inventory_by_location(inventory, sort_key)
 
+    valid_per_page = (25, 50, 100)
+    per_page = request.args.get('per_page', 25, type=int)
+    if per_page not in valid_per_page:
+        per_page = 25
+
+    total_locations = len(loc_groups)
+    total_pages = max(1, (total_locations + per_page - 1) // per_page)
+    page = request.args.get('page', 1, type=int)
+    page = max(1, min(page, total_pages))
+
+    start_idx = (page - 1) * per_page
+    end_idx = start_idx + per_page
+    page_groups = loc_groups[start_idx:end_idx]
+
     has_any_data = db.session.query(WmsInventory.id).first() is not None
 
     return render_template(
         'wms_inventory.html',
         loc_groups=loc_groups,
+        page_groups=page_groups,
         kpis=kpis,
         total=len(inventory),
         warehouses=warehouses,
@@ -9994,6 +10009,12 @@ def wms_inventory():
         box_values=box_values,
         filters=request.args,
         has_any_data=has_any_data,
+        page=page,
+        per_page=per_page,
+        total_pages=total_pages,
+        total_locations=total_locations,
+        start_idx=start_idx + 1,
+        end_idx=min(end_idx, total_locations),
     )
 
 

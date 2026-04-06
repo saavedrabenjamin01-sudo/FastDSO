@@ -1,0 +1,94 @@
+Add pagination to the FastWMS inventory locations screen so it does not render all locations on one very long page.
+
+GOAL
+The WMS inventory screen currently shows too many locations at once, making the page extremely long and hard to use.
+Add proper pagination while preserving filters, sorting, and grouped-by-location behavior.
+
+REQUIREMENTS
+
+1) PAGINATION TARGET
+Apply pagination to the WMS inventory view.
+If the current view is grouped by location (accordion cards), paginate by LOCATION group, not by individual SKU row.
+This means:
+- one page = N locations
+- each location can still expand to show its SKU rows
+
+2) DEFAULT PAGE SIZE
+Add page size selector with options:
+- 25
+- 50
+- 100
+Default:
+- 25
+
+3) QUERY PARAMS
+Use GET query params:
+- page
+- per_page
+- preserve all existing filters:
+   warehouse
+   location
+   box
+   sku
+   category
+   toggles / warnings / stock filters
+- preserve sorting settings if any
+
+Example:
+ /wms/inventory?page=2&per_page=25&location=A-02
+
+4) BACKEND
+Update the WMS inventory route:
+- apply filters first
+- group by location if current UI uses grouped view
+- paginate the grouped result
+- compute total locations count
+- compute current page slice
+- pass pagination metadata to template:
+   page
+   per_page
+   total_items
+   total_pages
+   has_prev
+   has_next
+   prev_page
+   next_page
+
+5) TEMPLATE
+Update WMS inventory template:
+- show pagination controls at top and bottom of the list
+- display:
+   "Mostrando X–Y de Z ubicaciones"
+- buttons:
+   Anterior
+   Siguiente
+- page indicator:
+   Página N de M
+- add per_page dropdown
+
+6) FILTER PERSISTENCE
+When navigating pages:
+- keep all active filters and sorting
+- keep per_page selection
+
+7) UI / STYLE
+Use FastDSO style:
+- compact pagination controls
+- same button style as other modules
+- keep clean spacing
+- no visual break in accordion/location cards
+
+8) SAFETY
+- If there are no results, show the existing empty state
+- If page is out of range, clamp it safely to the last available page
+- Do not break current WMS inventory filters
+
+OPTIONAL (recommended)
+- If easy, add a small “Ir a página” numeric input
+- If not, skip it for now
+
+DELIVERABLES
+- paginated WMS inventory screen
+- grouped locations remain intact
+- filters persist between pages
+- no more excessively long inventory page
