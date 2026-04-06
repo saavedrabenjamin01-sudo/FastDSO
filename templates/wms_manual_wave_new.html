@@ -76,7 +76,7 @@
       </div>
     </div>
 
-    <!-- Prioridad -->
+    <!-- Configuración -->
     <div class="col-md-4">
       <div class="card h-100">
         <div class="card-header fw-semibold"><i class="bi bi-lightning-charge me-1"></i>Configuración</div>
@@ -88,6 +88,23 @@
               <option value="MEDIUM" {% if (priority or 'MEDIUM') == 'MEDIUM' %}selected{% endif %}>🟡 Media</option>
               <option value="URGENT" {% if priority == 'URGENT' %}selected{% endif %}>🔴 Urgente</option>
             </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small fw-semibold mb-1">
+              Origen de stock <span class="text-danger">*</span>
+            </label>
+            <select name="source_warehouse_code" id="srcWhSelect" class="form-select form-select-sm" required>
+              {% set _cur_src = src_wh if src_wh else '' %}
+              {% if all_warehouses %}
+                {% for wh_code in all_warehouses %}
+                <option value="{{ wh_code }}" {% if _cur_src == wh_code %}selected{% endif %}>{{ wh_code }}</option>
+                {% endfor %}
+              {% else %}
+                <option value="MAIN" {% if _cur_src != 'WEB' %}selected{% endif %}>MAIN</option>
+                <option value="WEB"  {% if _cur_src == 'WEB' %}selected{% endif %}>WEB</option>
+              {% endif %}
+            </select>
+            <div class="form-text">Stock se reservará exclusivamente de este origen.</div>
           </div>
           <div class="alert alert-info py-2 px-3 mb-0" style="font-size:0.8rem;">
             <i class="bi bi-info-circle me-1"></i>
@@ -167,10 +184,19 @@
 </style>
 
 <script>
+var _srcWhUserChanged = false;
+
 function toggleRefField() {
   const isWeb = document.getElementById('typeWeb').checked;
   const req = document.getElementById('refRequired');
   req.style.display = isWeb ? 'inline' : 'none';
+  if (!_srcWhUserChanged) {
+    const sel = document.getElementById('srcWhSelect');
+    const preferred = isWeb ? 'WEB' : 'MAIN';
+    for (var i = 0; i < sel.options.length; i++) {
+      if (sel.options[i].value === preferred) { sel.selectedIndex = i; break; }
+    }
+  }
 }
 
 function addLine() {
@@ -213,6 +239,10 @@ function showTab(tab) {
 document.addEventListener('DOMContentLoaded', function() {
   toggleRefField();
   document.getElementById('tabManualBtn').classList.add('active');
+  var srcSel = document.getElementById('srcWhSelect');
+  if (srcSel) {
+    srcSel.addEventListener('change', function() { _srcWhUserChanged = true; });
+  }
 });
 </script>
 {% endblock %}

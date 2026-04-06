@@ -1075,6 +1075,7 @@ class WmsPickWave(db.Model):
     warehouse_code = db.Column(db.String(20), nullable=False, default='MAIN')
     plan_id = db.Column(db.Integer, db.ForeignKey('distribution_plan.id'), nullable=True, index=True)
     wave_source = db.Column(db.String(20), nullable=False, default='PLANNER')
+    source_warehouse_code = db.Column(db.String(20), nullable=False, default='MAIN')
     external_reference = db.Column(db.String(200), nullable=True)
     customer_name = db.Column(db.String(200), nullable=True)
     channel = db.Column(db.String(50), nullable=True)
@@ -1494,6 +1495,7 @@ def _ensure_wms_defaults(session=None):
             'external_reference': "ALTER TABLE wms_pick_wave ADD COLUMN external_reference VARCHAR(200)",
             'customer_name': "ALTER TABLE wms_pick_wave ADD COLUMN customer_name VARCHAR(200)",
             'channel': "ALTER TABLE wms_pick_wave ADD COLUMN channel VARCHAR(50)",
+            'source_warehouse_code': "ALTER TABLE wms_pick_wave ADD COLUMN source_warehouse_code VARCHAR(20) NOT NULL DEFAULT 'MAIN'",
         }
         for col_name, sql_stmt in _wave_migrations.items():
             if col_name not in wave_cols:
@@ -1501,6 +1503,17 @@ def _ensure_wms_defaults(session=None):
                     conn.execute(text(sql_stmt))
                     conn.commit()
                 print(f"[WMS] Added column wms_pick_wave.{col_name}")
+        if 'source_warehouse_code' not in wave_cols:
+            try:
+                with db.engine.connect() as conn:
+                    conn.execute(text(
+                        "UPDATE wms_pick_wave SET source_warehouse_code='MAIN'"
+                        " WHERE source_warehouse_code IS NULL OR source_warehouse_code=''"
+                    ))
+                    conn.commit()
+                print("[WMS] Backfilled source_warehouse_code=MAIN for existing waves")
+            except Exception as _swce:
+                print(f"[WMS] WARNING: source_warehouse_code backfill failed: {_swce}")
         if 'wave_source' not in wave_cols:
             try:
                 with db.engine.connect() as conn:
@@ -1726,7 +1739,9 @@ def wms_create_pick_wave_for_plan(plan_id, priority='MEDIUM', warehouse_code='MA
     urgency = priority if priority in WMS_URGENCY_RANK else 'MEDIUM'
     wave = WmsPickWave(
         warehouse_code=warehouse_code,
+        source_warehouse_code=warehouse_code,
         plan_id=plan_id,
+        wave_source='PLANNER',
         priority=priority,
         urgency_level=urgency,
         priority_rank=WMS_URGENCY_RANK.get(urgency, 2),
@@ -1857,18 +1872,26 @@ def wms_create_pick_wave_for_plan(plan_id, priority='MEDIUM', warehouse_code='MA
 
 def create_manual_pick_wave(wave_source, lines, priority='MEDIUM',
                             external_reference=None, customer_name=None,
-                            channel=None, note=None, warehouse_code='MAIN', user=None):
+                            channel=None, note=None, warehouse_code='MAIN',
+                            source_warehouse_code=None, user=None):
     """
     Create a manual WMS pick wave (MANUAL_WEB or MANUAL_OTHER) without a Distribution Plan.
     lines: list of {'product_id': int, 'qty': int, 'sku': str, 'product_name': str}
            (already aggregated by the caller)
 
+    source_warehouse_code: the warehouse/store from which stock will be reserved.
+      Defaults to 'WEB' for MANUAL_WEB waves, 'MAIN' otherwise.
+
     Returns (wave, total_requested, total_reserved)
     """
-    print(f"[WMS] manual wave create start source={wave_source} lines={len(lines)} warehouse={warehouse_code}")
-    wh = db.session.query(WmsWarehouse).filter_by(code=warehouse_code).first()
+    if source_warehouse_code is None:
+        source_warehouse_code = 'WEB' if wave_source == 'MANUAL_WEB' else (warehouse_code or 'MAIN')
+    source_warehouse_code = source_warehouse_code.upper()
+    print(f"[WMS] manual wave create start source={wave_source} lines={len(lines)} "
+          f"warehouse={warehouse_code} source_wh={source_warehouse_code}")
+    wh = db.session.query(WmsWarehouse).filter_by(code=source_warehouse_code).first()
     if not wh:
-        raise ValueError(f"Warehouse {warehouse_code} not found")
+        raise ValueError(f"Warehouse {source_warehouse_code} not found")
 
     demand_map = {line['product_id']: line['qty'] for line in lines}
     product_meta = {line['product_id']: line for line in lines}
@@ -1910,6 +1933,7 @@ def create_manual_pick_wave(wave_source, lines, priority='MEDIUM',
     urgency = priority if priority in WMS_URGENCY_RANK else 'MEDIUM'
     wave = WmsPickWave(
         warehouse_code=warehouse_code,
+        source_warehouse_code=source_warehouse_code,
         plan_id=None,
         wave_source=wave_source,
         external_reference=external_reference or None,
@@ -10690,8 +10714,10 @@ def wms_waves_list():
 @require_permission('wms:moves')
 def wms_manual_wave_new():
     """Create a manual WMS pick wave (WEB or MANUAL_OTHER), no Distribution Plan required."""
+    all_warehouses = [r[0] for r in db.session.query(WmsWarehouse.code).order_by(WmsWarehouse.code).all()]
+
     if request.method == 'GET':
-        return render_template('wms_manual_wave_new.html')
+        return render_template('wms_manual_wave_new.html', all_warehouses=all_warehouses)
 
     errors = []
     wave_type = request.form.get('wave_type', 'MANUAL_WEB').strip()
@@ -10699,6 +10725,9 @@ def wms_manual_wave_new():
     priority = request.form.get('priority', 'MEDIUM').strip()
     obs = request.form.get('observation', '').strip()
     customer_name_input = request.form.get('customer_name', '').strip()
+    src_wh = request.form.get('source_warehouse_code', '').strip().upper() or (
+        'WEB' if wave_type == 'MANUAL_WEB' else 'MAIN'
+    )
 
     if wave_type not in ('MANUAL_WEB', 'MANUAL_OTHER'):
         wave_type = 'MANUAL_WEB'
@@ -10754,7 +10783,8 @@ def wms_manual_wave_new():
     if errors:
         return render_template('wms_manual_wave_new.html', errors=errors,
                                wave_type=wave_type, external_ref=external_ref,
-                               priority=priority, obs=obs, customer_name=customer_name_input)
+                               priority=priority, obs=obs, customer_name=customer_name_input,
+                               src_wh=src_wh, all_warehouses=all_warehouses)
 
     resolved_lines = []
     unknown_skus = []
@@ -10784,6 +10814,7 @@ def wms_manual_wave_new():
             customer_name=customer_name_input or None,
             channel=channel,
             note=obs or None,
+            source_warehouse_code=src_wh,
             user=current_user,
         )
         db.session.commit()
@@ -10797,7 +10828,8 @@ def wms_manual_wave_new():
         errors.append(f'Error al crear la ola: {e}')
         return render_template('wms_manual_wave_new.html', errors=errors,
                                wave_type=wave_type, external_ref=external_ref,
-                               priority=priority, obs=obs, customer_name=customer_name_input)
+                               priority=priority, obs=obs, customer_name=customer_name_input,
+                               src_wh=src_wh, all_warehouses=all_warehouses)
 
 
 @app.route('/wms/waves/<int:wave_id>/assign', methods=['POST'])
@@ -10958,7 +10990,7 @@ def wms_wave_finish_picking(wave_id):
         flash(f'No se puede finalizar: {len(pending)} tarea(s) sin registrar. Complete todas las líneas primero.', 'danger')
         return redirect(url_for('wms_wave_pick', wave_id=wave_id))
 
-    wh = db.session.query(WmsWarehouse).filter_by(code=wave.warehouse_code).first()
+    wh = db.session.query(WmsWarehouse).filter_by(code=wave.source_warehouse_code).first()
 
     picked_by_product = {}
     for t in tasks:
@@ -11143,7 +11175,7 @@ def api_wms_task_pick(task_id):
     if picked_qty > remaining_capacity:
         return jsonify({'error': f'picked_qty ({picked_qty}) supera la cantidad pendiente ({remaining_capacity})'}), 400
 
-    wh = db.session.query(WmsWarehouse).filter_by(code=wave.warehouse_code).first()
+    wh = db.session.query(WmsWarehouse).filter_by(code=wave.source_warehouse_code).first()
 
     task_reservations = (
         db.session.query(WmsPickReservation)
@@ -11267,7 +11299,7 @@ def api_wms_task_report_issue(task_id):
         .all()
     )
 
-    wh = db.session.query(WmsWarehouse).filter_by(code=wave.warehouse_code).first()
+    wh = db.session.query(WmsWarehouse).filter_by(code=wave.source_warehouse_code).first()
     qty_to_release = missing_qty
     affected_reservation = open_reservations[0] if open_reservations else None
 
@@ -11659,7 +11691,7 @@ def api_wms_mobile_reservation_pick(res_id):
     if picked_qty > remaining_in_res:
         return jsonify({'error': f'picked_qty ({picked_qty}) supera el pendiente en esta reservación ({remaining_in_res})'}), 400
 
-    wh = db.session.query(WmsWarehouse).filter_by(code=wave.warehouse_code).first()
+    wh = db.session.query(WmsWarehouse).filter_by(code=wave.source_warehouse_code).first()
     res.qty_picked = (res.qty_picked or 0) + picked_qty
     if res.qty_picked >= res.qty_reserved:
         res.status = 'PICKED'
@@ -11750,7 +11782,7 @@ def try_reallocate_shortage_for_reservation(reservation_id, missing_qty):
     wave = db.session.get(WmsPickWave, res.wave_id)
     task = db.session.get(WmsPickTask, res.task_id) if res.task_id else None
 
-    wh = db.session.query(WmsWarehouse).filter_by(code=(wave.warehouse_code if wave else 'MAIN')).first()
+    wh = db.session.query(WmsWarehouse).filter_by(code=(wave.source_warehouse_code if wave else 'MAIN')).first()
     if not wh:
         print(f"[WMS] reallocation search: warehouse not found for reservation={reservation_id}")
         return {'qty_reallocated': 0, 'new_reservation_ids': [], 'remaining_uncovered': missing_qty}
@@ -11881,7 +11913,7 @@ def api_wms_mobile_reservation_issue(res_id):
     if missing_qty <= 0:
         return jsonify({'error': 'No hay cantidad pendiente en esta reservación'}), 400
 
-    wh = db.session.query(WmsWarehouse).filter_by(code=wave.warehouse_code).first()
+    wh = db.session.query(WmsWarehouse).filter_by(code=wave.source_warehouse_code).first()
     if wh:
         inv = (
             db.session.query(WmsInventory)

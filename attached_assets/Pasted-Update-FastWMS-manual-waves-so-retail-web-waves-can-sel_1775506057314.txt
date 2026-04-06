@@ -1,0 +1,70 @@
+Update FastWMS manual waves so retail/web waves can select the source warehouse/store instead of always using MAIN.
+
+GOAL
+Manual picking waves (especially WEB sales) must be able to choose the stock origin.
+They should not always reserve from warehouse MAIN.
+For WEB sales, the default origin should be warehouse/store code WEB.
+
+BUSINESS RULES
+- Planner/distribution waves continue using MAIN by default
+- Manual WEB waves default to source warehouse WEB
+- Manual waves must allow selecting source warehouse/store at creation time
+- Reservation, picking, issue handling, and reallocation must all use the selected source warehouse
+
+MODEL CHANGES
+1) Extend WmsPickWave with:
+- source_warehouse_code (string, required)
+This is the warehouse/store from which stock will be reserved and picked.
+
+2) Keep existing warehouse_code if used for compatibility, but the reservation logic must now use source_warehouse_code as the true stock origin.
+
+WAVE CREATION CHANGES
+1) Planner-created waves:
+- source_warehouse_code defaults to MAIN
+
+2) Manual wave creation form:
+- add dropdown:
+   "Origen de stock"
+- options from WmsWarehouse / warehouse master
+- default:
+   WEB if wave_source == MANUAL_WEB
+   MAIN otherwise
+
+3) Save source_warehouse_code on the wave
+
+RESERVATION / PICKING LOGIC
+Update all relevant WMS services so they use:
+- source_warehouse_code
+instead of hardcoded MAIN
+
+Specifically update:
+- create_pick_wave_from_plan(...)
+- create_manual_pick_wave(...)
+- reservation search queries
+- shortage reallocation search
+- next reservation selection if warehouse filter applies
+
+Rules:
+- only reserve from inventory rows belonging to wave.source_warehouse_code
+- never mix stock origins in one wave
+
+UI
+1) On wave detail pages show:
+- "Origen de stock: WEB" or "Origen de stock: MAIN"
+
+2) On waves list add optional column/badge:
+- Origen
+
+3) On manual wave creation page:
+- source warehouse/store selector visible and required
+
+VALIDATION
+- If selected source warehouse has no stock for any line, still allow wave creation but set status NEEDS_REVIEW
+- Do not break Planner/WMS sync
+- Do not change existing Planner flow beyond setting source_warehouse_code=MAIN
+
+DELIVERABLES
+- manual waves can choose source warehouse
+- WEB waves default to WEB
+- reservations and picking use source_warehouse_code correctly
+- no breaking changes to planner-based MAIN waves

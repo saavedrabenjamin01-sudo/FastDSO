@@ -17,6 +17,8 @@
         <i class="bi bi-pencil-square me-1"></i>Ola manual &nbsp;|&nbsp;
         {% endif %}
         <i class="bi bi-building"></i> {{ wave.warehouse_code }}
+        &nbsp;|&nbsp;
+        <i class="bi bi-box-arrow-in-right"></i> Origen: <strong>{{ wave.source_warehouse_code or wave.warehouse_code }}</strong>
         {% set ws = wave.wave_source or 'PLANNER' %}
         {% if ws != 'PLANNER' %}
         &nbsp;|&nbsp;
@@ -256,7 +258,8 @@
         {% if wave.assigned_at %}<br><small>Asignado: {{ wave.assigned_at.strftime('%d/%m %H:%M') }}</small>{% endif %}
       </div>
       <div class="col-md-3">
-        <i class="bi bi-building"></i> Bodega: {{ wave.warehouse_code }}
+        <i class="bi bi-building"></i> Bodega: {{ wave.warehouse_code }}<br>
+        <i class="bi bi-box-arrow-in-right"></i> Origen de stock: <strong>{{ wave.source_warehouse_code or wave.warehouse_code }}</strong>
         {% if wave.pick_started_at %}<br><small>Inicio pick: {{ wave.pick_started_at.strftime('%d/%m %H:%M') }}</small>{% endif %}
         {% if wave.pick_finished_at %}<br><small>Fin pick: {{ wave.pick_finished_at.strftime('%d/%m %H:%M') }}</small>{% endif %}
         {% if wave.closed_at %}<br><small>Cerrada: {{ wave.closed_at.strftime('%d/%m %H:%M') }}</small>{% endif %}

@@ -83,6 +83,10 @@
               {% else %}
               <span class="badge" style="background:#6b7280;font-size:.72rem;">MANUAL</span>
               {% endif %}
+              {% set swc = w.source_warehouse_code or w.warehouse_code %}
+              {% if swc %}
+              <br><span class="text-muted" style="font-size:.72rem;">{{ swc }}</span>
+              {% endif %}
             </td>
             <td>
               <a href="{{ url_for('wms_wave_detail', wave_id=w.id) }}" class="fw-semibold">
