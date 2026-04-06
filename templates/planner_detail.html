@@ -400,69 +400,125 @@
 
 {% if can_operate and plan.status == 'DISPATCHED' %}
 <div class="modal fade" id="modalCerrarPlan" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-centered">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-check-circle"></i> Cerrar Folio: {{ plan.folio }}</h5>
+        <h5 class="modal-title"><i class="bi bi-check-circle"></i> Cerrar Folio y Generar Envío: {{ plan.folio }}</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <form method="post" action="{{ url_for('planner_close', plan_id=plan.id) }}" enctype="multipart/form-data">
         <div class="modal-body">
 
-          {% if wms_issues %}
-          <div class="alert alert-warning mb-3" style="font-size:0.85rem;">
-            <i class="bi bi-exclamation-triangle-fill"></i>
-            <strong>{{ wms_issues|length }} incidencia(s) WMS</strong> detectadas en el picking.
-            Estas se procesarán automáticamente como <strong>Stock Problema / Hold</strong> al cerrar.
-          </div>
-          <div class="table-responsive mb-3" style="max-height:260px; overflow-y:auto;">
-            <table class="table table-sm table-bordered table-striped mb-0" style="font-size:0.75rem;">
-              <thead class="table-dark sticky-top" style="font-size:0.7rem;">
-                <tr>
-                  <th>SKU</th>
-                  <th>Producto</th>
-                  <th>Faltantes</th>
-                  <th>Motivo</th>
-                  <th>Nota operador</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for issue in wms_issues %}
-                <tr>
-                  <td class="text-nowrap"><code>{{ issue.sku }}</code></td>
-                  <td>{{ issue.product.name if issue.product else '—' }}</td>
-                  <td class="text-center text-danger fw-semibold">{{ issue.missing_qty }}</td>
-                  <td>
-                    {% set rc_map = {'DAMAGED':'Dañado','QUALITY_HOLD':'Calidad','NOT_FOUND':'No encontrado','NO_STOCK':'Sin stock','COUNT_MISMATCH':'Diferencia conteo','MIXED_SKU':'SKU mixto','LOCATION_BLOCKED':'Ubicación bloqueada','OTHER':'Otro'} %}
-                    <span class="badge bg-{{ 'danger' if issue.reason_code in ('DAMAGED','QUALITY_HOLD','NO_STOCK','NOT_FOUND') else 'warning text-dark' }}">
-                      {{ rc_map.get(issue.reason_code, issue.reason_code) }}
-                    </span>
-                  </td>
-                  <td class="text-muted" style="max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ issue.operator_note or '' }}">
-                    {{ issue.operator_note or '—' }}
-                  </td>
-                </tr>
-                {% endfor %}
-              </tbody>
-            </table>
+          {# ── Actual picked summary ── #}
+          {% if actual_picked_by_sku %}
+          <div class="mb-3">
+            <div class="fw-semibold small mb-1"><i class="bi bi-check2-square text-success me-1"></i>Resumen de picking real (WMS)</div>
+            <div class="table-responsive" style="max-height:180px; overflow-y:auto;">
+              <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+                <thead class="table-success sticky-top" style="font-size:0.72rem;">
+                  <tr><th>SKU</th><th class="text-end">Pickeado</th></tr>
+                </thead>
+                <tbody>
+                  {% for sku, qty in actual_picked_by_sku.items() | sort %}
+                  <tr>
+                    <td><code>{{ sku }}</code></td>
+                    <td class="text-end fw-semibold">{{ qty }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
           </div>
           {% else %}
-          <div class="alert alert-success mb-3" style="font-size:0.85rem;">
-            <i class="bi bi-check2-circle"></i> Sin incidencias WMS registradas. El folio se cerrará sin excepciones.
+          <div class="alert alert-warning py-2 mb-3" style="font-size:0.85rem;">
+            <i class="bi bi-exclamation-triangle-fill me-1"></i>
+            No se encontró información de picking real en WMS. La ola debe estar en estado <strong>PICKED</strong> o <strong>CLOSED</strong> para poder cerrar.
           </div>
           {% endif %}
 
-          <hr>
+          {# ── Shortage / WMS incidents ── #}
+          {% if wms_issues %}
           <div class="mb-3">
-            <label class="form-label fw-semibold small">Archivo de excepciones adicional (opcional)</label>
+            <div class="fw-semibold small mb-1"><i class="bi bi-exclamation-triangle-fill text-warning me-1"></i>Incidencias WMS detectadas ({{ wms_issues|length }})</div>
+            <div class="alert alert-warning py-1 px-2 mb-2" style="font-size:0.8rem;">
+              Estas incidencias se procesarán automáticamente como <strong>Stock Problema / Hold</strong> al cerrar.
+            </div>
+            <div class="table-responsive" style="max-height:160px; overflow-y:auto;">
+              <table class="table table-sm table-bordered table-striped mb-0" style="font-size:0.75rem;">
+                <thead class="table-dark sticky-top" style="font-size:0.7rem;">
+                  <tr><th>SKU</th><th>Producto</th><th class="text-center">Faltantes</th><th>Motivo</th><th>Nota</th></tr>
+                </thead>
+                <tbody>
+                  {% set rc_map = {'DAMAGED':'Dañado','QUALITY_HOLD':'Calidad','NOT_FOUND':'No encontrado','NO_STOCK':'Sin stock','COUNT_MISMATCH':'Diferencia conteo','MIXED_SKU':'SKU mixto','LOCATION_BLOCKED':'Ub. bloqueada','OTHER':'Otro'} %}
+                  {% for issue in wms_issues %}
+                  <tr>
+                    <td class="text-nowrap"><code>{{ issue.sku }}</code></td>
+                    <td>{{ issue.product.name if issue.product else '—' }}</td>
+                    <td class="text-center text-danger fw-semibold">{{ issue.missing_qty }}</td>
+                    <td><span class="badge bg-{{ 'danger' if issue.reason_code in ('DAMAGED','QUALITY_HOLD','NO_STOCK','NOT_FOUND') else 'warning text-dark' }}">{{ rc_map.get(issue.reason_code, issue.reason_code) }}</span></td>
+                    <td class="text-muted" style="max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ issue.operator_note or '' }}">{{ issue.operator_note or '—' }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          {% else %}
+          <div class="alert alert-success py-2 mb-3" style="font-size:0.85rem;">
+            <i class="bi bi-check2-circle me-1"></i> Sin incidencias WMS — picking completado sin faltantes.
+          </div>
+          {% endif %}
+
+          {# ── Store shipment preview ── #}
+          {% if store_shipment_preview %}
+          <div class="mb-3">
+            <div class="fw-semibold small mb-1"><i class="bi bi-truck text-primary me-1"></i>Previsualización de envío a tiendas</div>
+            <div class="table-responsive" style="max-height:200px; overflow-y:auto;">
+              <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+                <thead class="table-primary sticky-top" style="font-size:0.72rem;">
+                  <tr><th>Tienda</th><th class="text-center">SKUs</th><th class="text-end">Unidades</th></tr>
+                </thead>
+                <tbody>
+                  {% for row in store_shipment_preview %}
+                  <tr>
+                    <td>{{ row.store_name }}</td>
+                    <td class="text-center">{{ row.sku_count }}</td>
+                    <td class="text-end fw-semibold">{{ row.total_units }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+                <tfoot class="table-light">
+                  <tr>
+                    <td class="fw-semibold">Total</td>
+                    <td></td>
+                    <td class="text-end fw-semibold">{{ store_shipment_preview | sum(attribute='total_units') }}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+            <div class="form-text">
+              <i class="bi bi-info-circle me-1"></i>La distribución se calcula proporcionalmente desde las cantidades realmente pickeadas.
+            </div>
+          </div>
+          {% elif actual_picked_by_sku %}
+          <div class="alert alert-info py-2 mb-3" style="font-size:0.85rem;">
+            <i class="bi bi-info-circle me-1"></i> No hay líneas de destino calculadas (todas las cantidades pickeadas son cero o no hay tiendas asignadas).
+          </div>
+          {% endif %}
+
+          <hr class="my-2">
+
+          {# ── Optional exceptions file ── #}
+          <div class="mb-2">
+            <label class="form-label fw-semibold small mb-1">Archivo de excepciones adicional (opcional)</label>
             <input type="file" name="exceptions_file" class="form-control form-control-sm" accept=".xlsx,.xls,.csv">
             <div class="form-text">Columnas requeridas: <code>sku</code>, <code>quantity</code>. Opcional: <code>observation</code>, <code>product_name</code></div>
           </div>
           {% if not wms_issues %}
-          <div class="form-check">
+          <div class="form-check mb-1">
             <input class="form-check-input" type="checkbox" id="detailNoExceptions" name="no_exceptions" value="1">
-            <label class="form-check-label" for="detailNoExceptions">
-              <i class="bi bi-check2-circle text-success"></i> No hay excepciones — cerrar sin archivo
+            <label class="form-check-label small" for="detailNoExceptions">
+              <i class="bi bi-check2-circle text-success"></i> No hay excepciones adicionales — cerrar sin archivo
             </label>
           </div>
           {% endif %}
@@ -470,12 +526,66 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-          <button type="submit" class="btn btn-secondary">
-            <i class="bi bi-check-circle"></i> Confirmar cierre
+          <button type="submit" class="btn btn-success px-4"
+            {% if not actual_picked_by_sku %}disabled title="La ola WMS debe estar en estado PICKED o CLOSED"{% endif %}>
+            <i class="bi bi-send-check me-1"></i> Cerrar folio y generar envío a tiendas
           </button>
         </div>
       </form>
     </div>
+  </div>
+</div>
+{% endif %}
+
+{# ── Read-only transfer run summary (shown after folio is closed) ── #}
+{% if existing_transfer_run %}
+<div class="card mb-3 border-success">
+  <div class="card-header bg-success text-white d-flex align-items-center gap-2" style="font-size:0.88rem;">
+    <i class="bi bi-send-check-fill"></i>
+    <strong>Envío generado — TransferRun #{{ existing_transfer_run.id }}</strong>
+    <span class="ms-auto badge bg-light text-success">{{ existing_transfer_run.status }}</span>
+  </div>
+  <div class="card-body py-2">
+    <div class="row g-2 mb-2">
+      <div class="col-auto">
+        <span class="text-muted small">Líneas:</span>
+        <strong>{{ existing_transfer_run.total_lines }}</strong>
+      </div>
+      <div class="col-auto">
+        <span class="text-muted small">Unidades enviadas:</span>
+        <strong>{{ existing_transfer_run.total_units }}</strong>
+      </div>
+      <div class="col-auto">
+        <span class="text-muted small">Generado:</span>
+        <strong>{{ existing_transfer_run.created_at.strftime('%d/%m/%Y %H:%M') }}</strong>
+      </div>
+      {% if existing_transfer_run.created_by %}
+      <div class="col-auto">
+        <span class="text-muted small">Por:</span>
+        <strong>{{ existing_transfer_run.created_by.username }}</strong>
+      </div>
+      {% endif %}
+    </div>
+    {% set tr_lines = existing_transfer_run.lines.all() %}
+    {% if tr_lines %}
+    <div class="table-responsive" style="max-height:220px; overflow-y:auto;">
+      <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+        <thead class="table-success sticky-top" style="font-size:0.72rem;">
+          <tr><th>Tienda</th><th>SKU</th><th>Producto</th><th class="text-end">Uds. enviadas</th></tr>
+        </thead>
+        <tbody>
+          {% for tl in tr_lines | sort(attribute='store_id') %}
+          <tr>
+            <td>{{ tl.store.name if tl.store else tl.store_id }}</td>
+            <td><code>{{ tl.sku }}</code></td>
+            <td class="text-muted">{{ tl.product_name or '—' }}</td>
+            <td class="text-end fw-semibold">{{ tl.qty_sent }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
   </div>
 </div>
 {% endif %}

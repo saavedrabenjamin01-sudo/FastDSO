@@ -1,0 +1,149 @@
+Implement final folio closure flow in FastDSO/FastWMS so that closing a folio generates a real stock transfer to destination stores based on what was actually picked.
+
+GOAL
+When a folio is closed in Planner, the system must:
+1) take the quantities actually picked in WMS
+2) convert them into outbound-to-store transfer lines by SKU and destination store
+3) update store stock
+4) mark the folio as fully closed
+This will complete the end-to-end folio lifecycle.
+
+BUSINESS RULES
+- Do NOT use qty_suggested as the final shipment source.
+- Use the actual picked result from WMS as the source of truth.
+- If there were shortages during picking, store transfers must reflect only what was truly picked.
+- Planner should be considered fully closed only after the store transfer is generated successfully.
+
+STEP 1 — CREATE STORE TRANSFER ENTITIES
+
+Add new models/tables:
+
+1) StoreTransferRun
+- id
+- plan_id (FK to folio/distribution plan)
+- created_at
+- created_by_user_id
+- status (POSTED)
+- total_lines
+- total_units
+- note nullable
+
+2) StoreTransferLine
+- id
+- transfer_run_id (FK)
+- store_id
+- product_id
+- sku
+- product_name
+- qty_sent
+- note nullable
+
+OPTIONAL:
+- add relation from plan/folio to transfer_run_id if useful
+
+STEP 2 — DETERMINE REAL PICKED QUANTITY PER SKU
+
+Create helper/service:
+get_actual_picked_qty_by_sku_for_plan(plan_id)
+
+Behavior:
+- use linked WMS wave
+- for each SKU, sum actual picked_qty from WmsPickTask or WmsPickReservation
+- return dict:
+   { sku: actual_picked_qty }
+
+This is the source of truth for dispatchable quantity.
+
+STEP 3 — DISTRIBUTE PICKED QTY BACK TO DESTINATION STORES
+
+Create helper:
+allocate_actual_picked_qty_to_store_lines(plan_id, actual_picked_by_sku)
+
+Input:
+- original plan lines with destination stores and qty_final
+- actual picked qty per SKU
+
+Behavior:
+For each SKU:
+1) get all plan lines for that SKU ordered by plan line id
+2) compute total planned final qty for that SKU
+3) if actual picked qty >= total planned final qty:
+   - each store line gets its full qty_final
+4) if actual picked qty < total planned final qty:
+   - allocate proportionally across destination store lines based on qty_final
+   - use integer-safe distribution:
+      base = floor(actual * line.qty_final / total_planned)
+      distribute remainder by highest fractional parts
+5) produce final store shipment lines:
+   - store_id
+   - product_id
+   - sku
+   - qty_sent
+6) do not create lines with qty_sent = 0
+
+IMPORTANT:
+- this preserves fairness and avoids arbitrary fulfillment order
+- use qty_final as the store allocation basis, but cap to actual picked qty
+
+STEP 4 — UPDATE STORE STOCK
+
+When closing the folio:
+1) validate linked WMS wave exists and is PICKED or CLOSED
+2) compute actual picked per SKU
+3) allocate to store lines
+4) create StoreTransferRun
+5) create StoreTransferLine rows
+6) update store stock snapshot / inventory table:
+   - increase store stock for each (store_id, product_id) by qty_sent
+   - use the current store stock mechanism already present in FastDSO
+   - if no store stock row exists, create it
+7) optionally create inventory event/log:
+   event_type = STORE_INBOUND_FROM_FOLIO
+   ref plan_id / transfer_run_id
+
+STEP 5 — CLOSE PLANNER FOLIO
+
+Only after transfer generation succeeds:
+- set Planner/folio status = CERRADO
+- save transfer_run reference if available
+- write audit/event log:
+   FOLIO_CLOSED_WITH_STORE_TRANSFER
+
+If transfer generation fails:
+- do NOT mark folio closed
+- show controlled error
+
+STEP 6 — UPDATE FOLIO CLOSE SCREEN
+
+When user closes a folio in Planner:
+- remove dependence on the old manual incident checkbox
+- show:
+   - actual picked summary
+   - shortage summary (from WMS issues, if any)
+   - shipment-to-store summary preview:
+      store | sku count | total units
+- confirm button:
+   "Cerrar folio y generar envío a tiendas"
+
+After closing:
+- show success popup:
+   "Folio cerrado y stock de tiendas actualizado correctamente"
+
+STEP 7 — SAFETY
+- Do not update store stock twice if the same folio is closed again accidentally
+  -> block duplicate transfer generation if StoreTransferRun already exists for that plan and status POSTED
+- If no WMS wave linked, allow legacy fallback only if current app needs it; otherwise block close with clear message
+- Keep backward compatibility for older folios if needed
+
+STEP 8 — OPTIONAL BUT RECOMMENDED
+Add a read-only section on folio detail:
+- "Envío generado"
+- show transfer summary and link to transfer details
+
+DELIVERABLES
+- StoreTransferRun / StoreTransferLine models
+- store stock update on folio close
+- proportional allocation from actual picked qty to store lines
+- folio status moves to CERRADO only after successful transfer creation
+- no breaking changes to existing Planner/WMS flows
+- labels/messages in Spanish

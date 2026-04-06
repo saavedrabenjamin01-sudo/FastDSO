@@ -773,6 +773,7 @@ class DistributionPlan(db.Model):
     exceptions_count = db.Column(db.Integer, nullable=False, default=0)
     wms_wave_id = db.Column(db.Integer, nullable=True)
     wms_status = db.Column(db.String(30), nullable=True)
+    store_transfer_run_id = db.Column(db.Integer, nullable=True)
 
     created_by = db.relationship('User', foreign_keys=[created_by_user_id])
     closed_by = db.relationship('User', foreign_keys=[closed_by_user_id])
@@ -872,11 +873,47 @@ PLANNER_WMS_EVENT_TYPES = [
 ]
 
 
+class StoreTransferRun(db.Model):
+    """Records a batch stock transfer to destination stores generated on folio close."""
+    __tablename__ = 'store_transfer_run'
+    id = db.Column(db.Integer, primary_key=True)
+    plan_id = db.Column(db.Integer, db.ForeignKey('distribution_plan.id'), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='POSTED')
+    total_lines = db.Column(db.Integer, nullable=False, default=0)
+    total_units = db.Column(db.Integer, nullable=False, default=0)
+    note = db.Column(db.Text, nullable=True)
+
+    plan = db.relationship('DistributionPlan', foreign_keys=[plan_id])
+    created_by = db.relationship('User', foreign_keys=[created_by_user_id])
+    lines = db.relationship('StoreTransferLine', backref='transfer_run', lazy='dynamic',
+                            cascade='all, delete-orphan')
+
+
+class StoreTransferLine(db.Model):
+    """Individual store/product shipment line within a StoreTransferRun."""
+    __tablename__ = 'store_transfer_line'
+    id = db.Column(db.Integer, primary_key=True)
+    transfer_run_id = db.Column(db.Integer, db.ForeignKey('store_transfer_run.id'),
+                                nullable=False, index=True)
+    store_id = db.Column(db.Integer, db.ForeignKey('store.id'), nullable=False)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    sku = db.Column(db.String(64), nullable=False)
+    product_name = db.Column(db.String(255), nullable=True)
+    qty_sent = db.Column(db.Integer, nullable=False, default=0)
+    note = db.Column(db.Text, nullable=True)
+
+    store = db.relationship('Store')
+    product = db.relationship('Product')
+
+
 # ------------------ Inventory Ledger Models ------------------
 INVENTORY_EVENT_TYPES = [
     'CD_RECEIPT', 'CD_ADJUSTMENT',
     'STORE_SALE', 'STORE_RECEIPT',
-    'PLANNER_INCIDENT_TO_HOLD', 'HOLD_RELEASE_TO_CD'
+    'PLANNER_INCIDENT_TO_HOLD', 'HOLD_RELEASE_TO_CD',
+    'STORE_INBOUND_FROM_FOLIO',
 ]
 
 class InventoryBaseline(db.Model):
@@ -1475,6 +1512,38 @@ def _ensure_wms_defaults(session=None):
                 conn.execute(text("ALTER TABLE distribution_plan ADD COLUMN wms_status VARCHAR(30)"))
                 conn.commit()
             print("[PLANNER-WMS] Added column distribution_plan.wms_status")
+        if 'store_transfer_run_id' not in plan_cols:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE distribution_plan ADD COLUMN store_transfer_run_id INTEGER"))
+                conn.commit()
+            print("[PLANNER] Added column distribution_plan.store_transfer_run_id")
+    with db.engine.connect() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS store_transfer_run (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                plan_id INTEGER NOT NULL REFERENCES distribution_plan(id),
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                created_by_user_id INTEGER REFERENCES user(id),
+                status VARCHAR(20) NOT NULL DEFAULT 'POSTED',
+                total_lines INTEGER NOT NULL DEFAULT 0,
+                total_units INTEGER NOT NULL DEFAULT 0,
+                note TEXT
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS store_transfer_line (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                transfer_run_id INTEGER NOT NULL REFERENCES store_transfer_run(id),
+                store_id INTEGER NOT NULL REFERENCES store(id),
+                product_id INTEGER NOT NULL REFERENCES product(id),
+                sku VARCHAR(64) NOT NULL,
+                product_name VARCHAR(255),
+                qty_sent INTEGER NOT NULL DEFAULT 0,
+                note TEXT
+            )
+        """))
+        conn.commit()
+    print("[PLANNER] store_transfer_run / store_transfer_line tables ensured")
     if 'wms_pick_wave' in inspector.get_table_names():
         wave_cols = [c['name'] for c in inspector.get_columns('wms_pick_wave')]
         _wave_migrations = {
@@ -20144,6 +20213,28 @@ def planner_detail(plan_id):
 
     wms_issues = get_wms_issues_for_plan(plan.id)
 
+    actual_picked_by_sku = {}
+    store_shipment_preview = []
+    existing_transfer_run = None
+
+    if plan.status == 'DISPATCHED' and latest_wave and latest_wave.status in ('PICKED', 'CLOSED'):
+        actual_picked_by_sku = get_actual_picked_qty_by_sku_for_plan(plan.id)
+        raw_lines = allocate_actual_picked_qty_to_store_lines(plan.id, actual_picked_by_sku)
+        store_groups = {}
+        for ln in raw_lines:
+            sn = ln['store_name']
+            if sn not in store_groups:
+                store_groups[sn] = {'sku_count': 0, 'total_units': 0}
+            store_groups[sn]['sku_count'] += 1
+            store_groups[sn]['total_units'] += ln['qty_sent']
+        store_shipment_preview = [
+            {'store_name': k, 'sku_count': v['sku_count'], 'total_units': v['total_units']}
+            for k, v in sorted(store_groups.items(), key=lambda x: -x[1]['total_units'])
+        ]
+
+    if plan.store_transfer_run_id:
+        existing_transfer_run = db.session.get(StoreTransferRun, plan.store_transfer_run_id)
+
     return render_template(
         'planner_detail.html',
         plan=plan,
@@ -20158,6 +20249,9 @@ def planner_detail(plan_id):
         planner_events=planner_events,
         operators=operators,
         wms_issues=wms_issues,
+        actual_picked_by_sku=actual_picked_by_sku,
+        store_shipment_preview=store_shipment_preview,
+        existing_transfer_run=existing_transfer_run,
     )
 
 
@@ -20343,13 +20437,221 @@ def planner_dispatch(plan_id):
     return redirect(url_for('planner'))
 
 
+def get_actual_picked_qty_by_sku_for_plan(plan_id):
+    """
+    Return dict {sku: total_qty_picked} based on WmsPickTask rows linked to the plan's wave.
+    Uses the wave linked to the plan (via WmsPickWave.plan_id).
+    """
+    rows = (
+        db.session.query(WmsPickTask.sku, func.sum(WmsPickTask.qty_picked))
+        .join(WmsPickWave, WmsPickWave.id == WmsPickTask.wave_id)
+        .filter(WmsPickWave.plan_id == plan_id)
+        .group_by(WmsPickTask.sku)
+        .all()
+    )
+    return {sku: (qty or 0) for sku, qty in rows}
+
+
+def allocate_actual_picked_qty_to_store_lines(plan_id, actual_picked_by_sku):
+    """
+    Proportionally distribute actual_picked_by_sku quantities back to destination stores
+    using DistributionPlanLine.effective_qty() as the allocation weight.
+
+    Returns list of dicts:
+        [{store_id, product_id, sku, product_name, qty_sent, store_name}]
+    Only lines with qty_sent > 0 are returned.
+    """
+    import math
+
+    plan_lines = (
+        db.session.query(DistributionPlanLine)
+        .filter_by(plan_id=plan_id)
+        .filter(DistributionPlanLine.store_id.isnot(None))
+        .order_by(DistributionPlanLine.product_id, DistributionPlanLine.id)
+        .all()
+    )
+
+    product_lines = {}
+    for line in plan_lines:
+        product_lines.setdefault(line.product_id, []).append(line)
+
+    result = []
+    for product_id, lines in product_lines.items():
+        if not lines:
+            continue
+        product = lines[0].product
+        sku = product.sku if product else ''
+        product_name = product.name if product else sku
+
+        actual_qty = actual_picked_by_sku.get(sku, 0)
+        if actual_qty <= 0:
+            continue
+
+        effective_qtys = [max(0, ln.effective_qty()) for ln in lines]
+        total_planned = sum(effective_qtys)
+
+        if total_planned <= 0:
+            continue
+
+        if actual_qty >= total_planned:
+            for ln, eq in zip(lines, effective_qtys):
+                if eq > 0:
+                    result.append({
+                        'store_id': ln.store_id,
+                        'product_id': product_id,
+                        'sku': sku,
+                        'product_name': product_name,
+                        'qty_sent': eq,
+                        'store_name': ln.store.name if ln.store else str(ln.store_id),
+                    })
+        else:
+            bases = []
+            fracs = []
+            for eq in effective_qtys:
+                exact = actual_qty * eq / total_planned
+                b = int(math.floor(exact))
+                bases.append(b)
+                fracs.append(exact - b)
+            remainder = actual_qty - sum(bases)
+            order = sorted(range(len(fracs)), key=lambda i: -fracs[i])
+            for i in range(int(remainder)):
+                bases[order[i]] += 1
+            for ln, b in zip(lines, bases):
+                if b > 0:
+                    result.append({
+                        'store_id': ln.store_id,
+                        'product_id': product_id,
+                        'sku': sku,
+                        'product_name': product_name,
+                        'qty_sent': b,
+                        'store_name': ln.store.name if ln.store else str(ln.store_id),
+                    })
+
+    return result
+
+
+def generate_store_transfer_for_plan(plan_id, user=None):
+    """
+    Generate a StoreTransferRun for a folio being closed:
+    1) Get actual picked qty per SKU from WMS
+    2) Proportionally allocate to destination stores
+    3) Create StoreTransferRun + StoreTransferLine rows
+    4) Create InventoryEvent(STORE_INBOUND_FROM_FOLIO) per line
+    5) Update or create StockSnapshot rows for the latest store stock date
+
+    Returns (StoreTransferRun, actual_picked_by_sku, shipment_lines)
+
+    Raises ValueError on safety violations (duplicate run, no wave).
+    """
+    plan = db.session.get(DistributionPlan, plan_id)
+    if not plan:
+        raise ValueError(f"Plan {plan_id} no encontrado")
+
+    existing_run = db.session.query(StoreTransferRun).filter_by(
+        plan_id=plan_id, status='POSTED'
+    ).first()
+    if existing_run:
+        raise ValueError(
+            f"Ya existe un envío a tiendas generado para este folio (TransferRun #{existing_run.id}). "
+            "No se puede cerrar dos veces."
+        )
+
+    wave = None
+    if plan.wms_wave_id:
+        wave = db.session.get(WmsPickWave, plan.wms_wave_id)
+    if not wave:
+        wave = (
+            db.session.query(WmsPickWave)
+            .filter(WmsPickWave.plan_id == plan_id)
+            .order_by(WmsPickWave.created_at.desc())
+            .first()
+        )
+    if not wave:
+        raise ValueError(
+            "Este folio no tiene una ola WMS vinculada. "
+            "No se puede generar el envío a tiendas."
+        )
+    if wave.status not in ('PICKED', 'CLOSED'):
+        raise ValueError(
+            f"La ola WMS debe estar en estado PICKED o CLOSED para cerrar el folio "
+            f"(estado actual: {wave.status})."
+        )
+
+    actual_picked_by_sku = get_actual_picked_qty_by_sku_for_plan(plan_id)
+    shipment_lines = allocate_actual_picked_qty_to_store_lines(plan_id, actual_picked_by_sku)
+
+    transfer_run = StoreTransferRun(
+        plan_id=plan_id,
+        created_by_user_id=user.id if user else None,
+        status='POSTED',
+        total_lines=len(shipment_lines),
+        total_units=sum(ln['qty_sent'] for ln in shipment_lines),
+        note=f'Cierre folio {plan.folio}',
+    )
+    db.session.add(transfer_run)
+    db.session.flush()
+
+    latest_snap_date = (
+        db.session.query(func.max(StockSnapshot.as_of_date)).scalar()
+        or date.today()
+    )
+
+    for ln in shipment_lines:
+        db.session.add(StoreTransferLine(
+            transfer_run_id=transfer_run.id,
+            store_id=ln['store_id'],
+            product_id=ln['product_id'],
+            sku=ln['sku'],
+            product_name=ln['product_name'],
+            qty_sent=ln['qty_sent'],
+        ))
+
+        db.session.add(InventoryEvent(
+            event_type='STORE_INBOUND_FROM_FOLIO',
+            event_date=date.today(),
+            product_id=ln['product_id'],
+            store_id=ln['store_id'],
+            qty_delta=ln['qty_sent'],
+            ref_type='store_transfer_run',
+            ref_id=str(transfer_run.id),
+            note=f"Envío desde folio {plan.folio}",
+            created_by_user_id=user.id if user else None,
+        ))
+
+        snap = (
+            db.session.query(StockSnapshot)
+            .filter_by(
+                as_of_date=latest_snap_date,
+                product_id=ln['product_id'],
+                store_id=ln['store_id'],
+            )
+            .first()
+        )
+        if snap:
+            snap.quantity = max(0, snap.quantity + ln['qty_sent'])
+        else:
+            db.session.add(StockSnapshot(
+                as_of_date=latest_snap_date,
+                product_id=ln['product_id'],
+                store_id=ln['store_id'],
+                quantity=ln['qty_sent'],
+            ))
+
+    print(f"[PLANNER] StoreTransferRun #{transfer_run.id} created: "
+          f"plan={plan.folio} lines={len(shipment_lines)} "
+          f"units={transfer_run.total_units}")
+
+    return transfer_run, actual_picked_by_sku, shipment_lines
+
+
 @app.route('/planner/<int:plan_id>/close', methods=['POST'])
 @login_required
 @require_permission('planner:operate')
 def planner_close(plan_id):
     """Close a plan: move from DISPATCHED to CLOSED.
 
-    Incident sources (processed in order, not mutually exclusive):
+    Flow:
+    0. Generate StoreTransferRun from actual WMS picked qty → update store stock (required).
     1. WMS issues: automatically pulled from the linked pick wave (always processed when present).
     2. Manual exceptions file: optional CSV/XLSX upload (legacy + supplemental path).
     """
@@ -20358,6 +20660,19 @@ def planner_close(plan_id):
     if plan.status != 'DISPATCHED':
         flash('Solo se pueden cerrar planes en estado DESPACHADO', 'warning')
         return redirect(url_for('planner'))
+
+    # ── 0. Generate store transfer (mandatory — blocks close if it fails) ──
+    try:
+        transfer_run, _actual_picked, _shipment_lines = generate_store_transfer_for_plan(
+            plan.id, user=current_user
+        )
+    except ValueError as _ve:
+        flash(str(_ve), 'danger')
+        return redirect(url_for('planner_detail', plan_id=plan.id))
+    except Exception as _ge:
+        db.session.rollback()
+        flash(f'Error al generar el envío a tiendas: {_ge}', 'danger')
+        return redirect(url_for('planner_detail', plan_id=plan.id))
 
     exceptions_count = 0
     exceptions_file_name = None
@@ -20548,8 +20863,10 @@ def planner_close(plan_id):
     plan.closed_by_user_id = current_user.id
     plan.exceptions_count = exceptions_count
     plan.exceptions_file_name = exceptions_file_name
+    plan.store_transfer_run_id = transfer_run.id
     
     comment = f'Plan cerrado por {current_user.username}'
+    comment += f' — Envío a tiendas generado (TransferRun #{transfer_run.id}, {transfer_run.total_units} uds)'
     if exceptions_count > 0:
         comment += f' con {exceptions_count} excepciones (stock problema + hold)'
     elif no_exceptions:
@@ -20567,7 +20884,17 @@ def planner_close(plan_id):
     if exceptions_count > 0:
         print(f"[INVENTORY] Planner close folio={plan.folio}: {exceptions_count} PLANNER_INCIDENT_TO_HOLD events + ProductHold entries")
     
-    flash(f'Plan {plan.folio} cerrado exitosamente' + (f' con {exceptions_count} excepciones' if exceptions_count > 0 else ''), 'success')
+    print(f"[PLANNER] folio={plan.folio} CLOSED — transfer_run={transfer_run.id} "
+          f"units={transfer_run.total_units} lines={transfer_run.total_lines}")
+    
+    msg = (
+        f'Folio {plan.folio} cerrado. '
+        f'Stock de tiendas actualizado correctamente '
+        f'({transfer_run.total_lines} líneas, {transfer_run.total_units} unidades enviadas).'
+    )
+    if exceptions_count > 0:
+        msg += f' {exceptions_count} excepción(es) procesadas como stock problema.'
+    flash(msg, 'success')
     return redirect(url_for('planner'))
 
 
