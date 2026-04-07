@@ -10825,12 +10825,17 @@ def wms_manual_wave_new():
         fname = file.filename.lower()
         print(f"[MANUAL_WAVE] upload received file={file.filename}")
         try:
+            raw_bytes = file.read()
             if fname.endswith('.csv'):
-                df_upload = pd.read_csv(io.BytesIO(file.read()))
+                # dtype=str preserves leading zeros — SKU must never be numeric
+                df_upload = pd.read_csv(io.BytesIO(raw_bytes), dtype=str)
             else:
-                df_upload = pd.read_excel(io.BytesIO(file.read()))
+                df_upload = pd.read_excel(io.BytesIO(raw_bytes), dtype=str)
             df_upload.columns = [c.strip().lower() for c in df_upload.columns]
             print(f"[MANUAL_WAVE] parsed rows={len(df_upload)} columns={list(df_upload.columns)}")
+            # Ensure SKU column is always pure string (belt-and-suspenders after dtype=str)
+            if 'sku' in df_upload.columns:
+                df_upload['sku'] = df_upload['sku'].astype(str).str.strip()
             # Accept 'qty' or 'cantidad' as aliases for 'quantity'
             if 'quantity' not in df_upload.columns:
                 for alias in ('qty', 'cantidad', 'units', 'unidades'):
@@ -10843,13 +10848,18 @@ def wms_manual_wave_new():
             else:
                 skipped = 0
                 for _, row in df_upload.iterrows():
-                    sku_val = str(row.get('sku', '')).strip()
+                    raw_sku = str(row.get('sku', '')).strip()
+                    # normalize_sku handles float-like ("12345.0"→"12345"), sci-notation,
+                    # NaN strings, and preserves leading zeros on valid string SKUs
+                    norm_sku = normalize_sku(raw_sku)
+                    if norm_sku != raw_sku:
+                        print(f"[MANUAL_WAVE] raw sku={raw_sku!r} normalized sku={norm_sku!r}")
                     try:
                         qty_val = int(float(str(row.get('quantity', 0)).replace(',', '.')))
                     except (ValueError, TypeError):
                         qty_val = 0
-                    if sku_val and sku_val.lower() not in ('nan', 'none', '') and qty_val > 0:
-                        lines_raw.append({'sku': sku_val, 'qty': qty_val})
+                    if norm_sku and qty_val > 0:
+                        lines_raw.append({'sku': norm_sku, 'qty': qty_val})
                     else:
                         skipped += 1
                 print(f"[MANUAL_WAVE] valid lines={len(lines_raw)} skipped={skipped}")
