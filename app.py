@@ -11794,22 +11794,42 @@ def wms_mobile_my_waves():
     wave_data = []
     for w in waves:
         plan = w.plan
+        wsrc = (w.wave_source or 'PLANNER').upper()
         progress_pct = 0
         total = (w.total_lines or 0)
         done = (w.picked_lines or 0) + (w.short_lines or 0)
         if total > 0:
             progress_pct = round(100 * done / total)
-        wave_data.append({
+
+        if wsrc == 'PLANNER':
+            ref_label = 'Folio'
+            ref_value = plan.folio if plan else f'Wave #{w.id}'
+        else:
+            ref_label = 'Referencia'
+            ref_value = w.external_reference or f'Wave #{w.id}'
+
+        src_badge = 'PLANNER' if wsrc == 'PLANNER' else ('WEB' if wsrc == 'MANUAL_WEB' else 'MANUAL')
+
+        wd = {
             'id': w.id,
-            'folio': plan.folio if plan else f'#{w.id}',
+            'ref_label': ref_label,
+            'ref_value': ref_value,
             'status': w.status,
             'urgency_level': w.urgency_level or 'MEDIUM',
+            'wave_source': wsrc,
+            'src_badge': src_badge,
+            'source_warehouse_code': w.source_warehouse_code or 'MAIN',
             'total_lines': w.total_lines or 0,
             'total_units': w.total_units or 0,
             'picked_units': w.picked_units or 0,
             'short_units': w.short_units or 0,
             'progress_pct': progress_pct,
-        })
+        }
+        wave_data.append(wd)
+        print(f"[WMS MOBILE] wave id={w.id} source={wsrc} status={w.status} "
+              f"assigned_to={w.assigned_to} ref={ref_value}")
+
+    print(f"[WMS MOBILE] current_user={current_user.username} assigned_waves={len(wave_data)}")
     return render_template('wms_mobile_my_waves.html', waves=wave_data)
 
 

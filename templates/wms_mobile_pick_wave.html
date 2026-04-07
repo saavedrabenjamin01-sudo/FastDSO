@@ -1,6 +1,8 @@
 {% extends 'mobile_base.html' %}
 
-{% block title %}Picking — {{ plan.folio if plan else 'Wave #' ~ wave.id }}{% endblock %}
+{% set _wave_src = wave.wave_source | upper if wave.wave_source else 'PLANNER' %}
+{% set _wave_ref = plan.folio if plan else (wave.external_reference or ('Wave #' ~ wave.id)) %}
+{% block title %}Picking — {{ _wave_ref }}{% endblock %}
 
 {% block topbar_back %}
 <a href="{{ url_for('wms_mobile_my_waves') }}" class="m-topbar-back" title="Mis Waves">
@@ -9,8 +11,11 @@
 {% endblock %}
 
 {% block topbar_title %}
-{{ plan.folio if plan else 'Wave' }}
-<small>Wave #{{ wave.id }}</small>
+{{ _wave_ref }}
+<small>
+  {% if _wave_src == 'PLANNER' %}Folio{% elif _wave_src == 'MANUAL_WEB' %}WEB · Referencia{% else %}Manual · Referencia{% endif %}
+  · Wave #{{ wave.id }}
+</small>
 {% endblock %}
 
 {% block topbar_right %}

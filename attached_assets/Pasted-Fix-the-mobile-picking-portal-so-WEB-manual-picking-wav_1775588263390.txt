@@ -1,0 +1,89 @@
+Fix the mobile picking portal so WEB/manual picking waves appear correctly for assigned operators.
+
+PROBLEM
+Manual/WEB picking waves are not showing in the mobile picking portal, even when they exist and should be operational.
+Currently the mobile portal likely only shows Planner-linked waves or waves with plan_id, which excludes MANUAL_WEB / MANUAL_OTHER waves.
+
+GOAL
+The mobile portal must show ALL assigned operational waves, regardless of source:
+- PLANNER
+- MANUAL_WEB
+- MANUAL_OTHER
+
+REQUIRED FIX
+
+1) Update the route /wms/mobile/my-waves
+Change the query logic so it returns:
+- waves where assigned_to == current_user.id
+- and status in:
+   ASSIGNED
+   IN_PROGRESS
+   NEEDS_REVIEW   (recommended, so operator can still act on reviewed shortages if needed)
+
+Do NOT require:
+- plan_id to be non-null
+- wave_source == PLANNER
+- any planner-linked object to exist
+
+2) Support all wave sources in the mobile card rendering
+For each wave card, render safely:
+- if PLANNER wave:
+   show plan/folio reference
+- if MANUAL_WEB or MANUAL_OTHER:
+   show external_reference if present
+   else fallback to "Wave #<id>"
+
+Also show:
+- source/type badge:
+   PLANNER
+   WEB
+   MANUAL
+- source warehouse:
+   MAIN / WEB
+- urgency badge
+- status
+- progress %
+
+3) Fix card labels in Spanish
+Examples:
+- "Folio" for planner waves
+- "Referencia" for manual/web waves
+- "Origen"
+- "Urgencia"
+- "Estado"
+
+4) Update the mobile wave detail route /wms/mobile/wave/<wave_id>
+Ensure manual/web waves can open correctly:
+- do not assume plan_id exists
+- do not assume planner folio exists
+- load tasks/reservations directly from the wave itself
+
+5) Start / continue actions
+On the mobile portal:
+- ASSIGNED -> button "Iniciar"
+- IN_PROGRESS -> button "Continuar"
+- NEEDS_REVIEW -> button "Continuar" or "Revisar" (choose whichever fits current UI)
+Make sure manual/web waves use the same behavior
+
+6) Safe template rendering
+Audit the mobile templates:
+- remove any hard dependency on wave.plan or planner objects
+- use fallback rendering for manual waves
+- avoid crashes like:
+   wave.plan.folio
+when plan is None
+
+7) Add debug logs
+Add logs:
+[WMS MOBILE] current_user=... assigned_waves=...
+[WMS MOBILE] wave id=... source=... status=... assigned_to=...
+This helps verify manual/web waves are included.
+
+8) Do not break desktop WMS pages
+Only adjust mobile portal and shared helpers as needed.
+
+DELIVERABLES
+- /wms/mobile/my-waves shows assigned PLANNER and WEB/manual waves
+- /wms/mobile/wave/<id> opens both planner and manual waves
+- no planner dependency for manual wave rendering
+- labels in Spanish

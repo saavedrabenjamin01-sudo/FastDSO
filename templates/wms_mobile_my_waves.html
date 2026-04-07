@@ -60,23 +60,41 @@ Mis Waves
 
       <div class="wave-card-top">
         <div class="wave-folio">
-          {{ w.folio }}
-          <small>Wave #{{ w.id }}</small>
+          {{ w.ref_value }}
+          <small>{{ w.ref_label }} · Wave #{{ w.id }}</small>
         </div>
         <div class="wave-badges">
+          {# Source type badge #}
+          {% if w.src_badge == 'WEB' %}
+          <span class="m-badge" style="background:#7c3aed;color:#fff;font-size:.62rem;letter-spacing:.3px;">
+            <i class="bi bi-globe" style="font-size:.6rem;"></i> WEB
+          </span>
+          {% elif w.src_badge == 'MANUAL' %}
+          <span class="m-badge" style="background:#0369a1;color:#fff;font-size:.62rem;letter-spacing:.3px;">
+            <i class="bi bi-pencil" style="font-size:.6rem;"></i> MANUAL
+          </span>
+          {% else %}
+          <span class="m-badge" style="background:#1e40af;color:#fff;font-size:.62rem;letter-spacing:.3px;">
+            <i class="bi bi-kanban" style="font-size:.6rem;"></i> PLANNER
+          </span>
+          {% endif %}
+          {# Urgency badge #}
           <span class="m-badge {% if w.urgency_level == 'URGENT' %}m-badge-urgent{% elif w.urgency_level == 'MEDIUM' %}m-badge-medium{% else %}m-badge-low{% endif %}">
             {% if w.urgency_level == 'URGENT' %}<i class="bi bi-lightning-fill"></i>{% endif %}
             {{ w.urgency_level }}
           </span>
+          {# Status badge #}
           <span class="m-badge {% if w.status == 'NEEDS_REVIEW' %}m-badge-red{% elif w.status == 'IN_PROGRESS' %}m-badge-purple{% else %}m-badge-blue{% endif %}">
-            {{ w.status.replace('_', ' ') }}
+            {% if w.status == 'ASSIGNED' %}Asignada
+            {% elif w.status == 'IN_PROGRESS' %}En curso
+            {% elif w.status == 'NEEDS_REVIEW' %}Revisar
+            {% else %}{{ w.status.replace('_', ' ') }}
+            {% endif %}
           </span>
-          {% if w.source_warehouse_code %}
-          <span class="m-badge" style="background:{% if w.source_warehouse_code == 'WEB' %}#7c3aed{% else %}#1e40af{% endif %};color:#fff;font-size:.62rem;letter-spacing:.3px;">
-            <i class="bi bi-{% if w.source_warehouse_code == 'WEB' %}globe{% else %}building{% endif %}" style="font-size:.6rem;"></i>
-            {{ w.source_warehouse_code }}
+          {# Warehouse badge #}
+          <span class="m-badge" style="background:#64748b;color:#fff;font-size:.62rem;letter-spacing:.3px;">
+            <i class="bi bi-box" style="font-size:.6rem;"></i> {{ w.source_warehouse_code }}
           </span>
-          {% endif %}
         </div>
       </div>
 
