@@ -134,7 +134,7 @@
     </div>
     <div class="card-body">
 
-      <!-- Manual entry -->
+      <!-- Manual entry tab -->
       <div id="tabManual">
         <p class="small text-muted mb-2">Agrega los SKUs y cantidades a preparar. Las cantidades se acumulan si el mismo SKU aparece más de una vez.</p>
         <table class="table table-sm mb-2" id="lineTable" style="font-size:0.85rem;">
@@ -147,8 +147,8 @@
           </thead>
           <tbody id="lineBody">
             <tr class="line-row">
-              <td><input type="text" name="sku[]" class="form-control form-control-sm" placeholder="SKU del producto" required></td>
-              <td><input type="number" name="qty[]" class="form-control form-control-sm" min="1" placeholder="Uds." required></td>
+              <td><input type="text" name="sku[]" class="form-control form-control-sm manual-sku" placeholder="SKU del producto"></td>
+              <td><input type="number" name="qty[]" class="form-control form-control-sm manual-qty" min="1" placeholder="Uds."></td>
               <td><button type="button" class="btn btn-sm btn-outline-danger" onclick="removeLine(this)"><i class="bi bi-trash"></i></button></td>
             </tr>
           </tbody>
@@ -158,16 +158,32 @@
         </button>
       </div>
 
-      <!-- File upload -->
+      <!-- File upload tab -->
       <div id="tabFile" style="display:none;">
-        <div class="mb-2">
+        <div class="mb-3">
           <label class="form-label small fw-semibold">Archivo CSV o Excel</label>
-          <input type="file" name="file" class="form-control form-control-sm" accept=".csv,.xlsx,.xls">
-          <div class="form-text">Columnas requeridas: <strong>sku</strong>, <strong>quantity</strong>. Las demás columnas se ignoran.</div>
+          <input type="file" name="file" id="fileInput" class="form-control form-control-sm" accept=".csv,.xlsx,.xls">
+          <div class="form-text mt-1">
+            Columnas requeridas: <code>sku</code>, <code>quantity</code>.
+            Columnas opcionales: <code>external_reference</code>, <code>note</code>.
+          </div>
         </div>
-        <div class="alert alert-light border py-2 px-3 mb-0" style="font-size:0.8rem;">
+        <div class="alert alert-light border py-2 px-3 mb-2" style="font-size:0.8rem;">
           <i class="bi bi-table me-1"></i>Ejemplo:
-          <code class="ms-1">sku,quantity<br>ABC-001,10<br>XYZ-002,5</code>
+          <code>sku,quantity</code> &nbsp;→&nbsp; <code>ABC-001,10</code>
+        </div>
+        <!-- Upload preview populated by JS after file selection -->
+        <div id="filePreview" style="display:none;">
+          <div id="fileStats" class="d-flex gap-3 mb-2" style="font-size:0.83rem;"></div>
+          <div class="table-responsive" style="max-height:220px; overflow-y:auto;">
+            <table class="table table-sm table-bordered mb-0" style="font-size:0.78rem;">
+              <thead class="table-primary sticky-top" style="font-size:0.72rem;">
+                <tr><th>#</th><th>SKU</th><th class="text-end">Cantidad</th></tr>
+              </thead>
+              <tbody id="previewBody"></tbody>
+            </table>
+          </div>
+          <div class="form-text mt-1"><i class="bi bi-info-circle me-1"></i>Previsualización de las primeras 10 filas válidas. Se enviarán todas al crear la ola.</div>
         </div>
       </div>
 
@@ -175,7 +191,7 @@
   </div>
 
   <div class="d-flex gap-2">
-    <button type="submit" class="btn btn-primary px-4">
+    <button type="submit" id="submitBtn" class="btn btn-primary px-4">
       <i class="bi bi-check2-circle me-1"></i>Crear ola de picking
     </button>
     <a href="{{ url_for('wms_waves_list') }}" class="btn btn-outline-secondary">Cancelar</a>
@@ -189,18 +205,19 @@
 
 <script>
 var _srcWhUserChanged = false;
+var _activeTab = 'manual';
 
+/* ── Warehouse warning ── */
 function _updateWebWarning() {
   const sel = document.getElementById('srcWhSelect');
   const warn = document.getElementById('webWarning');
-  if (sel && warn) {
-    warn.style.display = sel.value === 'WEB' ? '' : 'none';
-  }
+  if (sel && warn) warn.style.display = sel.value === 'WEB' ? '' : 'none';
 }
 
+/* ── Wave type toggle ── */
 function toggleRefField() {
   const isWeb = document.getElementById('typeWeb').checked;
-  const req = document.getElementById('refRequired');
+  const req   = document.getElementById('refRequired');
   req.style.display = isWeb ? 'inline' : 'none';
   if (!_srcWhUserChanged) {
     const sel = document.getElementById('srcWhSelect');
@@ -212,13 +229,24 @@ function toggleRefField() {
   _updateWebWarning();
 }
 
+/* ── Manual entry helpers ── */
+function _setManualInputsRequired(required) {
+  document.querySelectorAll('.manual-sku, .manual-qty').forEach(function(el) {
+    if (required) el.setAttribute('required', '');
+    else          el.removeAttribute('required');
+  });
+}
+
 function addLine() {
   const tbody = document.getElementById('lineBody');
-  const row = document.createElement('tr');
+  const row   = document.createElement('tr');
   row.className = 'line-row';
+  const isManualActive = _activeTab === 'manual';
   row.innerHTML = `
-    <td><input type="text" name="sku[]" class="form-control form-control-sm" placeholder="SKU del producto" required></td>
-    <td><input type="number" name="qty[]" class="form-control form-control-sm" min="1" placeholder="Uds." required></td>
+    <td><input type="text" name="sku[]" class="form-control form-control-sm manual-sku"
+         placeholder="SKU del producto"${isManualActive ? ' required' : ''}></td>
+    <td><input type="number" name="qty[]" class="form-control form-control-sm manual-qty"
+         min="1" placeholder="Uds."${isManualActive ? ' required' : ''}></td>
     <td><button type="button" class="btn btn-sm btn-outline-danger" onclick="removeLine(this)"><i class="bi bi-trash"></i></button></td>
   `;
   tbody.appendChild(row);
@@ -226,32 +254,42 @@ function addLine() {
 
 function removeLine(btn) {
   const rows = document.querySelectorAll('#lineBody .line-row');
-  if (rows.length > 1) {
-    btn.closest('tr').remove();
-  }
+  if (rows.length > 1) btn.closest('tr').remove();
 }
 
+/* ── Tab switching — KEY FIX: disable/enable inputs in hidden tab ── */
 function showTab(tab) {
+  _activeTab = tab;
   const manualDiv = document.getElementById('tabManual');
-  const fileDiv = document.getElementById('tabFile');
+  const fileDiv   = document.getElementById('tabFile');
   const manualBtn = document.getElementById('tabManualBtn');
-  const fileBtn = document.getElementById('tabFileBtn');
+  const fileBtn   = document.getElementById('tabFileBtn');
+  const fileInput = document.getElementById('fileInput');
+
   if (tab === 'manual') {
     manualDiv.style.display = '';
-    fileDiv.style.display = 'none';
+    fileDiv.style.display   = 'none';
     manualBtn.classList.add('active');
     fileBtn.classList.remove('active');
+    _setManualInputsRequired(true);
+    if (fileInput) { fileInput.removeAttribute('required'); fileInput.value = ''; }
+    document.getElementById('filePreview').style.display = 'none';
   } else {
     manualDiv.style.display = 'none';
-    fileDiv.style.display = '';
+    fileDiv.style.display   = '';
     manualBtn.classList.remove('active');
     fileBtn.classList.add('active');
+    _setManualInputsRequired(false);
+    if (fileInput) fileInput.setAttribute('required', '');
   }
 }
 
+/* ── Client-side CSV/Excel preview after file selection ── */
 document.addEventListener('DOMContentLoaded', function() {
+  /* initialise default tab */
+  showTab('manual');
   toggleRefField();
-  document.getElementById('tabManualBtn').classList.add('active');
+
   var srcSel = document.getElementById('srcWhSelect');
   if (srcSel) {
     srcSel.addEventListener('change', function() {
@@ -259,6 +297,87 @@ document.addEventListener('DOMContentLoaded', function() {
       _updateWebWarning();
     });
   }
+
+  var fileInput = document.getElementById('fileInput');
+  if (!fileInput) return;
+  fileInput.addEventListener('change', function() {
+    var file = fileInput.files[0];
+    document.getElementById('filePreview').style.display = 'none';
+    document.getElementById('previewBody').innerHTML = '';
+    document.getElementById('fileStats').innerHTML   = '';
+    if (!file) return;
+
+    var fname = file.name.toLowerCase();
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        var rows = [];
+        if (fname.endsWith('.csv')) {
+          rows = parseCSV(e.target.result);
+        } else {
+          /* xlsx: use SheetJS if available, else skip preview */
+          if (typeof XLSX === 'undefined') {
+            document.getElementById('fileStats').innerHTML =
+              '<span class="text-muted small"><i class="bi bi-file-earmark-excel me-1"></i>Archivo Excel seleccionado. La previsualización solo está disponible para CSV en el navegador.</span>';
+            document.getElementById('filePreview').style.display = '';
+            return;
+          }
+          var wb = XLSX.read(new Uint8Array(e.target.result), {type:'array'});
+          var ws = wb.Sheets[wb.SheetNames[0]];
+          rows  = XLSX.utils.sheet_to_json(ws, {defval:''});
+        }
+        showFilePreview(rows);
+      } catch(ex) {
+        document.getElementById('fileStats').innerHTML =
+          '<span class="text-danger small"><i class="bi bi-exclamation-triangle me-1"></i>No se pudo previsualizar: ' + ex.message + '</span>';
+        document.getElementById('filePreview').style.display = '';
+      }
+    };
+    if (fname.endsWith('.csv')) reader.readAsText(file);
+    else                        reader.readAsArrayBuffer(file);
+  });
 });
+
+function parseCSV(text) {
+  var lines = text.trim().split(/\r?\n/);
+  if (lines.length < 2) return [];
+  var headers = lines[0].split(',').map(function(h){ return h.trim().toLowerCase(); });
+  return lines.slice(1).map(function(line) {
+    var cols = line.split(',');
+    var obj  = {};
+    headers.forEach(function(h, i){ obj[h] = (cols[i] || '').trim(); });
+    return obj;
+  });
+}
+
+function showFilePreview(rows) {
+  var valid = [], skipped = 0;
+  rows.forEach(function(r) {
+    var sku = (r['sku'] || r['SKU'] || '').toString().trim();
+    var qty = parseInt(r['quantity'] || r['qty'] || r['cantidad'] || 0, 10);
+    if (sku && qty > 0) valid.push({sku: sku, qty: qty});
+    else                skipped++;
+  });
+
+  var stats = document.getElementById('fileStats');
+  stats.innerHTML =
+    '<span class="badge bg-success me-1">' + valid.length + ' líneas válidas</span>' +
+    (skipped ? '<span class="badge bg-warning text-dark me-1">' + skipped + ' omitidas (qty=0 o SKU vacío)</span>' : '') +
+    '<span class="text-muted small">Total filas: ' + rows.length + '</span>';
+
+  var tbody  = document.getElementById('previewBody');
+  var preview = valid.slice(0, 10);
+  preview.forEach(function(ln, i) {
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td class="text-muted">' + (i+1) + '</td><td><code>' + ln.sku + '</code></td><td class="text-end fw-semibold">' + ln.qty + '</td>';
+    tbody.appendChild(tr);
+  });
+  if (valid.length > 10) {
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan="3" class="text-muted text-center small">… y ' + (valid.length - 10) + ' líneas más</td>';
+    tbody.appendChild(tr);
+  }
+  document.getElementById('filePreview').style.display = '';
+}
 </script>
 {% endblock %}

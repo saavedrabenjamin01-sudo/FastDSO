@@ -1,0 +1,88 @@
+Fix bulk upload creation for manual picking waves (WEB/manual waves). Right now, uploading a file and clicking "Crear ola de picking" does nothing.
+
+GOAL
+Make sure bulk file upload for manual picking waves actually creates the wave, tasks, and reservations, and gives visible feedback.
+
+PROBLEM TO SOLVE
+When the user uploads a file in the manual picking wave creation screen and clicks "Crear ola de picking", nothing happens:
+- no wave created
+- no redirect
+- no visible error
+- likely silent validation or form wiring issue
+
+REQUIRED DEBUG + FIX
+
+1) FRONTEND FORM CHECK
+Inspect the manual wave creation template.
+Ensure:
+- the upload form uses method="POST"
+- the form includes enctype="multipart/form-data"
+- the file input name matches what backend expects
+- the "Crear ola de picking" button is inside the same form or correctly bound to submit it
+
+2) BACKEND FILE HANDLING CHECK
+Inspect the route that handles manual wave creation.
+Ensure it correctly reads:
+- request.files[...] for uploaded file
+- or request.form[...] for manual lines
+If file upload is provided:
+- parse the file
+- normalize headers
+- build valid line items
+- aggregate duplicate SKUs if needed
+
+3) VALIDATION FEEDBACK
+If file parsing fails or produces zero valid lines:
+- do NOT fail silently
+- show clear flash/error message in Spanish:
+  "No se encontraron líneas válidas en el archivo"
+  or
+  "El archivo no contiene columnas válidas: sku, quantity"
+- return to the same page with the error visible
+
+4) REQUIRED FILE FORMAT
+Ensure the parser accepts for manual WEB picking waves:
+Required columns:
+- sku
+- quantity
+Optional:
+- external_reference
+- note
+If quantity <= 0 or sku missing, skip row and count warning.
+
+5) WAVE CREATION EXECUTION
+If valid lines exist:
+- create the WmsPickWave
+- create tasks
+- run reservation logic
+- commit
+- show success message:
+  "Ola de picking creada correctamente"
+- redirect to wave detail page or wave list
+
+6) DEBUG LOGS
+Add logs:
+- [MANUAL_WAVE] upload received file=...
+- [MANUAL_WAVE] parsed rows=...
+- [MANUAL_WAVE] valid lines=...
+- [MANUAL_WAVE] wave created id=...
+- [MANUAL_WAVE] no valid lines after parsing
+
+7) UI IMPROVEMENT
+On the manual wave creation page:
+- show helper text with expected columns
+- show a simple upload summary after parsing:
+  total rows, valid rows, skipped rows
+- if possible, preview first 10 valid parsed rows before creation
+
+8) SAFETY
+- Do not break manual line-by-line creation
+- Bulk upload and manual line creation should both work
+- If both manual lines and file exist, prefer file upload or merge consistently (choose one and make it explicit)
+
+DELIVERABLES
+- bulk upload form wired correctly
+- backend parses uploaded file
+- wave gets created from uploaded lines
+- visible success/error feedback
+- no silent failures

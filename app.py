@@ -10823,28 +10823,45 @@ def wms_manual_wave_new():
     if file and file.filename:
         import io
         fname = file.filename.lower()
+        print(f"[MANUAL_WAVE] upload received file={file.filename}")
         try:
             if fname.endswith('.csv'):
                 df_upload = pd.read_csv(io.BytesIO(file.read()))
             else:
                 df_upload = pd.read_excel(io.BytesIO(file.read()))
             df_upload.columns = [c.strip().lower() for c in df_upload.columns]
+            print(f"[MANUAL_WAVE] parsed rows={len(df_upload)} columns={list(df_upload.columns)}")
+            # Accept 'qty' or 'cantidad' as aliases for 'quantity'
+            if 'quantity' not in df_upload.columns:
+                for alias in ('qty', 'cantidad', 'units', 'unidades'):
+                    if alias in df_upload.columns:
+                        df_upload = df_upload.rename(columns={alias: 'quantity'})
+                        break
             if 'sku' not in df_upload.columns or 'quantity' not in df_upload.columns:
-                errors.append('El archivo debe tener columnas: sku, quantity')
+                missing = [c for c in ('sku', 'quantity') if c not in df_upload.columns]
+                errors.append(f'El archivo no contiene columnas válidas: {", ".join(missing)}. Columnas encontradas: {", ".join(df_upload.columns.tolist())}')
             else:
+                skipped = 0
                 for _, row in df_upload.iterrows():
                     sku_val = str(row.get('sku', '')).strip()
                     try:
-                        qty_val = int(row.get('quantity', 0))
+                        qty_val = int(float(str(row.get('quantity', 0)).replace(',', '.')))
                     except (ValueError, TypeError):
                         qty_val = 0
-                    if sku_val and qty_val > 0:
+                    if sku_val and sku_val.lower() not in ('nan', 'none', '') and qty_val > 0:
                         lines_raw.append({'sku': sku_val, 'qty': qty_val})
+                    else:
+                        skipped += 1
+                print(f"[MANUAL_WAVE] valid lines={len(lines_raw)} skipped={skipped}")
+                if not lines_raw:
+                    errors.append('No se encontraron líneas válidas en el archivo. Verifica que las columnas sku y quantity tengan datos.')
         except Exception as e:
+            print(f"[MANUAL_WAVE] file parse error: {e}")
             errors.append(f'Error al leer archivo: {e}')
     else:
         skus_form = request.form.getlist('sku[]')
         qtys_form = request.form.getlist('qty[]')
+        print(f"[MANUAL_WAVE] manual entry skus={len(skus_form)}")
         for sku_val, qty_str in zip(skus_form, qtys_form):
             sku_val = sku_val.strip()
             try:
@@ -10861,6 +10878,7 @@ def wms_manual_wave_new():
 
     if not agg_by_sku and not errors:
         errors.append('No hay líneas válidas. Agrega al menos un SKU con cantidad.')
+        print("[MANUAL_WAVE] no valid lines after parsing")
 
     if errors:
         return render_template('wms_manual_wave_new.html', errors=errors,
@@ -10900,7 +10918,8 @@ def wms_manual_wave_new():
             user=current_user,
         )
         db.session.commit()
-        msg = f'Ola manual #{wave.id} creada ({wave_type}). SKUs: {len(resolved_lines)}, unidades solicitadas: {total_req}, reservadas: {total_res}.'
+        print(f"[MANUAL_WAVE] wave created id={wave.id} status={wave.status} source={src_wh} lines={len(resolved_lines)} req={total_req} res={total_res}")
+        msg = f'Ola de picking creada correctamente (#{wave.id}). SKUs: {len(resolved_lines)}, unidades solicitadas: {total_req}, reservadas: {total_res}.'
         if unknown_skus:
             msg += f' SKUs nuevos (stub): {", ".join(unknown_skus[:5])}.'
         flash(msg, 'success' if wave.status != 'NEEDS_REVIEW' else 'warning')
