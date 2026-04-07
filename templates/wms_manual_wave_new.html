@@ -91,24 +91,20 @@
           </div>
           <div class="mb-3">
             <label class="form-label small fw-semibold mb-1">
-              Bodega origen <span class="text-danger">*</span>
+              Bucket de stock <span class="text-danger">*</span>
             </label>
-            <select name="source_warehouse_code" id="srcWhSelect" class="form-select form-select-sm" required>
-              {% set _cur_src = src_wh if src_wh else '' %}
-              {% if all_warehouses %}
-                {% for wh_code in all_warehouses %}
-                <option value="{{ wh_code }}" {% if _cur_src == wh_code %}selected{% endif %}>{{ wh_code }}</option>
-                {% endfor %}
-              {% else %}
-                <option value="MAIN" {% if _cur_src != 'WEB' %}selected{% endif %}>MAIN</option>
-                <option value="WEB"  {% if _cur_src == 'WEB' %}selected{% endif %}>WEB</option>
-              {% endif %}
+            <select name="source_stock_bucket" id="srcBucketSelect" class="form-select form-select-sm" required>
+              {% set _cur_bucket = src_bucket if src_bucket else (src_wh if src_wh else '') %}
+              {% set _buckets = bucket_values if bucket_values else ['MAIN','WEB'] %}
+              {% for bkt in _buckets %}
+              <option value="{{ bkt }}" {% if _cur_bucket == bkt %}selected{% endif %}>{{ bkt }}</option>
+              {% endfor %}
             </select>
-            <div class="form-text">El stock se reservará exclusivamente de esta bodega.</div>
+            <div class="form-text">El stock se reservará del pool lógico seleccionado (MAIN = CD físico, WEB = inventario web).</div>
           </div>
           <div id="webWarning" class="alert alert-warning py-2 px-3 mb-2" style="font-size:0.8rem; display:none;">
             <i class="bi bi-exclamation-triangle-fill me-1"></i>
-            Las olas WEB usan exclusivamente stock de la <strong>bodega WEB</strong>. Si no hay stock suficiente, la ola quedará en <strong>NEEDS_REVIEW</strong>.
+            Las olas WEB usan el bucket <strong>WEB</strong> del CD. Si no hay stock suficiente, la ola quedará en <strong>NEEDS_REVIEW</strong>.
           </div>
           <div class="alert alert-info py-2 px-3 mb-0" style="font-size:0.8rem;">
             <i class="bi bi-info-circle me-1"></i>
@@ -207,9 +203,9 @@
 var _srcWhUserChanged = false;
 var _activeTab = 'manual';
 
-/* ── Warehouse warning ── */
+/* ── Bucket warning ── */
 function _updateWebWarning() {
-  const sel = document.getElementById('srcWhSelect');
+  const sel = document.getElementById('srcBucketSelect');
   const warn = document.getElementById('webWarning');
   if (sel && warn) warn.style.display = sel.value === 'WEB' ? '' : 'none';
 }
@@ -220,7 +216,7 @@ function toggleRefField() {
   const req   = document.getElementById('refRequired');
   req.style.display = isWeb ? 'inline' : 'none';
   if (!_srcWhUserChanged) {
-    const sel = document.getElementById('srcWhSelect');
+    const sel = document.getElementById('srcBucketSelect');
     const preferred = isWeb ? 'WEB' : 'MAIN';
     for (var i = 0; i < sel.options.length; i++) {
       if (sel.options[i].value === preferred) { sel.selectedIndex = i; break; }
@@ -290,7 +286,7 @@ document.addEventListener('DOMContentLoaded', function() {
   showTab('manual');
   toggleRefField();
 
-  var srcSel = document.getElementById('srcWhSelect');
+  var srcSel = document.getElementById('srcBucketSelect');
   if (srcSel) {
     srcSel.addEventListener('change', function() {
       _srcWhUserChanged = true;

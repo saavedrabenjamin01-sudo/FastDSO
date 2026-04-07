@@ -1008,12 +1008,16 @@ class WmsLocation(db.Model):
     )
 
 
+WMS_STOCK_BUCKETS = ('MAIN', 'WEB')
+
+
 class WmsInventory(db.Model):
     __tablename__ = 'wms_inventory'
     id = db.Column(db.Integer, primary_key=True)
     warehouse_id = db.Column(db.Integer, db.ForeignKey('wms_warehouse.id'), nullable=False)
     location_id = db.Column(db.Integer, db.ForeignKey('wms_location.id'), nullable=False)
     product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False, index=True)
+    stock_bucket = db.Column(db.String(10), nullable=False, default='MAIN', index=True)
     on_hand_units = db.Column(db.Integer, nullable=False, default=0)
     allocated_units = db.Column(db.Integer, nullable=False, default=0)
     on_hand_pallets = db.Column(db.Float, nullable=True)
@@ -1024,7 +1028,7 @@ class WmsInventory(db.Model):
     product = db.relationship('Product')
 
     __table_args__ = (
-        db.UniqueConstraint('warehouse_id', 'location_id', 'product_id', name='uq_wms_inv_wh_loc_prod'),
+        db.UniqueConstraint('location_id', 'product_id', 'stock_bucket', name='uq_wms_inv_loc_prod_bucket'),
         db.Index('ix_wms_inventory_location', 'location_id'),
     )
 
@@ -1113,6 +1117,7 @@ class WmsPickWave(db.Model):
     plan_id = db.Column(db.Integer, db.ForeignKey('distribution_plan.id'), nullable=True, index=True)
     wave_source = db.Column(db.String(20), nullable=False, default='PLANNER')
     source_warehouse_code = db.Column(db.String(20), nullable=False, default='MAIN')
+    source_stock_bucket = db.Column(db.String(10), nullable=False, default='MAIN')
     external_reference = db.Column(db.String(200), nullable=True)
     customer_name = db.Column(db.String(200), nullable=True)
     channel = db.Column(db.String(50), nullable=True)
@@ -1194,6 +1199,7 @@ class WmsPickReservation(db.Model):
     product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
     location_id = db.Column(db.Integer, db.ForeignKey('wms_location.id'), nullable=False)
     location_code = db.Column(db.String(100), nullable=True)
+    stock_bucket = db.Column(db.String(10), nullable=False, default='MAIN')
     qty_reserved = db.Column(db.Integer, nullable=False, default=0)
     qty_picked = db.Column(db.Integer, nullable=False, default=0)
     status = db.Column(db.String(20), nullable=False, default='OPEN')
@@ -1475,6 +1481,12 @@ def _ensure_wms_defaults(session=None):
                 conn.execute(text("ALTER TABLE wms_inventory ADD COLUMN updated_at DATETIME"))
                 conn.commit()
             print("[WMS] Added column wms_inventory.updated_at")
+        if 'stock_bucket' not in inv_cols:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE wms_inventory ADD COLUMN stock_bucket VARCHAR(10) NOT NULL DEFAULT 'MAIN'"))
+                conn.execute(text("UPDATE wms_inventory SET stock_bucket='MAIN' WHERE stock_bucket IS NULL OR stock_bucket=''"))
+                conn.commit()
+            print("[WMS] Added column wms_inventory.stock_bucket (backfilled=MAIN)")
     if 'distribution_plan' in inspector.get_table_names():
         plan_cols = [c['name'] for c in inspector.get_columns('distribution_plan')]
         if 'source' not in plan_cols:
@@ -1565,6 +1577,7 @@ def _ensure_wms_defaults(session=None):
             'customer_name': "ALTER TABLE wms_pick_wave ADD COLUMN customer_name VARCHAR(200)",
             'channel': "ALTER TABLE wms_pick_wave ADD COLUMN channel VARCHAR(50)",
             'source_warehouse_code': "ALTER TABLE wms_pick_wave ADD COLUMN source_warehouse_code VARCHAR(20) NOT NULL DEFAULT 'MAIN'",
+            'source_stock_bucket': "ALTER TABLE wms_pick_wave ADD COLUMN source_stock_bucket VARCHAR(10) NOT NULL DEFAULT 'MAIN'",
         }
         for col_name, sql_stmt in _wave_migrations.items():
             if col_name not in wave_cols:
@@ -1593,6 +1606,21 @@ def _ensure_wms_defaults(session=None):
                 print("[WMS] Backfilled wave_source=PLANNER for existing waves")
             except Exception as _wse:
                 print(f"[WMS] WARNING: wave_source backfill failed: {_wse}")
+        if 'source_stock_bucket' not in wave_cols:
+            try:
+                with db.engine.connect() as conn:
+                    conn.execute(text(
+                        "UPDATE wms_pick_wave SET source_stock_bucket='WEB'"
+                        " WHERE wave_source='MANUAL_WEB'"
+                    ))
+                    conn.execute(text(
+                        "UPDATE wms_pick_wave SET source_stock_bucket='MAIN'"
+                        " WHERE source_stock_bucket IS NULL OR source_stock_bucket=''"
+                    ))
+                    conn.commit()
+                print("[WMS] Backfilled source_stock_bucket from wave_source")
+            except Exception as _sse:
+                print(f"[WMS] WARNING: source_stock_bucket backfill failed: {_sse}")
     if 'wms_pick_task' in inspector.get_table_names():
         task_cols = [c['name'] for c in inspector.get_columns('wms_pick_task')]
         _task_migrations = {
@@ -1620,6 +1648,7 @@ def _ensure_wms_defaults(session=None):
             'sequence_order': "ALTER TABLE wms_pick_reservation ADD COLUMN sequence_order INTEGER NOT NULL DEFAULT 0",
             'is_reallocation': "ALTER TABLE wms_pick_reservation ADD COLUMN is_reallocation BOOLEAN NOT NULL DEFAULT 0",
             'reallocated_from_reservation_id': "ALTER TABLE wms_pick_reservation ADD COLUMN reallocated_from_reservation_id INTEGER",
+            'stock_bucket': "ALTER TABLE wms_pick_reservation ADD COLUMN stock_bucket VARCHAR(10) NOT NULL DEFAULT 'MAIN'",
         }
         for col_name, sql_stmt in _res_migrations.items():
             if col_name not in res_cols:
@@ -1637,6 +1666,21 @@ def _ensure_wms_defaults(session=None):
                 print("[WMS] Populated sequence_order for existing reservations")
             except Exception as _se:
                 print(f"[WMS] WARNING: sequence_order backfill failed: {_se}")
+        if 'stock_bucket' not in res_cols:
+            try:
+                with db.engine.connect() as conn:
+                    conn.execute(text("""
+                        UPDATE wms_pick_reservation
+                        SET stock_bucket = COALESCE(
+                            (SELECT source_stock_bucket FROM wms_pick_wave WHERE wms_pick_wave.id = wms_pick_reservation.wave_id),
+                            'MAIN'
+                        )
+                        WHERE stock_bucket IS NULL OR stock_bucket = ''
+                    """))
+                    conn.commit()
+                print("[WMS] Backfilled stock_bucket for existing reservations from wave")
+            except Exception as _rbe:
+                print(f"[WMS] WARNING: reservation stock_bucket backfill failed: {_rbe}")
     if 'wms_location' in inspector.get_table_names():
         loc_cols = [c['name'] for c in inspector.get_columns('wms_location')]
         _loc_migrations = {
@@ -1714,29 +1758,23 @@ def _ensure_wms_defaults(session=None):
         s.add(loc)
         s.flush()
         print("[WMS] Created default location BULK-DEFAULT (MAIN)")
-    # Ensure WEB warehouse exists as a real, separate stock origin
+    # WEB warehouse: keep for backward compat but inventory now uses stock_bucket, not warehouse
     wh_web = s.query(WmsWarehouse).filter_by(code='WEB').first()
     if not wh_web:
-        wh_web = WmsWarehouse(code='WEB', name='Bodega Web (E-commerce)')
+        wh_web = WmsWarehouse(code='WEB', name='Bodega Web (legacy — stock en bucket WEB)')
         s.add(wh_web)
         s.flush()
-        print("[WMS] Created WEB warehouse")
-    loc_web = s.query(WmsLocation).filter_by(warehouse_id=wh_web.id, location_code='BULK-DEFAULT').first()
-    if not loc_web:
-        loc_web = WmsLocation(warehouse_id=wh_web.id, location_code='BULK-DEFAULT', location_type='BULK', is_active=True)
-        s.add(loc_web)
-        s.flush()
-        print("[WMS] Created default location BULK-DEFAULT (WEB)")
-    # WEB-FALLBACK: virtual pick location used when WEB has no real WMS inventory yet
-    loc_web_fallback = s.query(WmsLocation).filter_by(warehouse_id=wh_web.id, location_code='WEB-FALLBACK').first()
+        print("[WMS] Created WEB warehouse (legacy BC)")
+    # WEB-FALLBACK: virtual location in MAIN warehouse for WEB-bucket stock without WMS rows
+    loc_web_fallback = s.query(WmsLocation).filter_by(warehouse_id=wh.id, location_code='WEB-FALLBACK').first()
     if not loc_web_fallback:
         loc_web_fallback = WmsLocation(
-            warehouse_id=wh_web.id, location_code='WEB-FALLBACK',
+            warehouse_id=wh.id, location_code='WEB-FALLBACK',
             location='WEB', box_number='01', location_type='BULK', is_active=True
         )
         s.add(loc_web_fallback)
         s.flush()
-        print("[WMS] Created fallback location WEB-FALLBACK (WEB)")
+        print("[WMS] Created fallback location WEB-FALLBACK (MAIN warehouse, WEB bucket)")
     return wh, loc
 
 
@@ -1805,10 +1843,11 @@ def wms_create_pick_wave_for_plan(plan_id, priority='MEDIUM', warehouse_code='MA
 
     inv_rows = (
         db.session.query(WmsInventory)
-        .filter(WmsInventory.warehouse_id == wh.id)
+        .filter(WmsInventory.stock_bucket == 'MAIN')
         .filter(WmsInventory.product_id.in_(product_ids_needed))
         .all()
     )
+    print(f"[WMS] reserve bucket=MAIN product_ids={len(product_ids_needed)} inv_rows={len(inv_rows)}")
 
     inv_by_product = {}
     for inv in inv_rows:
@@ -1832,6 +1871,7 @@ def wms_create_pick_wave_for_plan(plan_id, priority='MEDIUM', warehouse_code='MA
     wave = WmsPickWave(
         warehouse_code=warehouse_code,
         source_warehouse_code=warehouse_code,
+        source_stock_bucket='MAIN',
         plan_id=plan_id,
         wave_source='PLANNER',
         priority=priority,
@@ -1926,12 +1966,13 @@ def wms_create_pick_wave_for_plan(plan_id, priority='MEDIUM', warehouse_code='MA
                 product_id=pid,
                 location_id=r['location_id'],
                 location_code=r['location_code'],
+                stock_bucket='MAIN',
                 qty_reserved=r['qty_reserved'],
                 qty_picked=0,
                 status='OPEN',
             ))
 
-        print(f"[WMS] reserve sku={sku} required={qty_needed} reserved={task_reserved} remaining={task_short}")
+        print(f"[WMS] reserve sku={sku} bucket=MAIN required={qty_needed} reserved={task_reserved} remaining={task_short}")
 
     wave.status = 'NEEDS_REVIEW' if has_shortage else 'READY_TO_ASSIGN'
     db.session.flush()
@@ -1965,29 +2006,42 @@ def wms_create_pick_wave_for_plan(plan_id, priority='MEDIUM', warehouse_code='MA
 def create_manual_pick_wave(wave_source, lines, priority='MEDIUM',
                             external_reference=None, customer_name=None,
                             channel=None, note=None, warehouse_code='MAIN',
-                            source_warehouse_code=None, user=None):
+                            source_warehouse_code=None, source_stock_bucket=None,
+                            user=None):
     """
     Create a manual WMS pick wave (MANUAL_WEB or MANUAL_OTHER) without a Distribution Plan.
+
     lines: list of {'product_id': int, 'qty': int, 'sku': str, 'product_name': str}
            (already aggregated by the caller)
 
-    source_warehouse_code: the warehouse/store from which stock will be reserved.
-      Defaults to 'WEB' for MANUAL_WEB waves, 'MAIN' otherwise.
+    source_stock_bucket: logical stock pool to pick from ('MAIN' or 'WEB').
+      Defaults to 'WEB' for MANUAL_WEB, 'MAIN' otherwise.
+
+    Physical locations are shared (MAIN warehouse). The bucket distinguishes which
+    logical pool of inventory to consume.
 
     Returns (wave, total_requested, total_reserved)
     """
+    if source_stock_bucket is None:
+        source_stock_bucket = 'WEB' if wave_source == 'MANUAL_WEB' else 'MAIN'
+    source_stock_bucket = source_stock_bucket.upper()
+    if source_stock_bucket not in WMS_STOCK_BUCKETS:
+        source_stock_bucket = 'MAIN'
+
+    # Backward-compat: keep source_warehouse_code aligned
     if source_warehouse_code is None:
-        source_warehouse_code = 'WEB' if wave_source == 'MANUAL_WEB' else (warehouse_code or 'MAIN')
-    source_warehouse_code = source_warehouse_code.upper()
-    print(f"[WMS] manual wave create start source={wave_source} lines={len(lines)} "
-          f"warehouse={warehouse_code} source_wh={source_warehouse_code}")
-    wh = db.session.query(WmsWarehouse).filter_by(code=source_warehouse_code).first()
+        source_warehouse_code = source_stock_bucket
+
+    wh = db.session.query(WmsWarehouse).filter_by(code='MAIN').first()
     if not wh:
-        raise ValueError(f"Warehouse {source_warehouse_code} not found")
+        raise ValueError("MAIN warehouse not found — run _ensure_wms_defaults first")
 
     demand_map = {line['product_id']: line['qty'] for line in lines}
     product_meta = {line['product_id']: line for line in lines}
     product_ids_needed = list(demand_map.keys())
+
+    print(f"[WMS] manual wave create source={wave_source} bucket={source_stock_bucket} "
+          f"lines={len(lines)}")
 
     all_locs = db.session.query(WmsLocation).filter_by(warehouse_id=wh.id).all()
     loc_type_map = {loc.id: loc.location_type or 'BULK' for loc in all_locs}
@@ -2000,10 +2054,13 @@ def create_manual_pick_wave(wave_source, lines, priority='MEDIUM',
 
     inv_rows = (
         db.session.query(WmsInventory)
-        .filter(WmsInventory.warehouse_id == wh.id)
+        .filter(WmsInventory.stock_bucket == source_stock_bucket)
         .filter(WmsInventory.product_id.in_(product_ids_needed))
         .all()
     )
+    print(f"[WMS] reserve bucket={source_stock_bucket} product_ids={len(product_ids_needed)} "
+          f"inv_rows={len(inv_rows)}")
+
     inv_by_product = {}
     for inv in inv_rows:
         if not loc_active_map.get(inv.location_id, False):
@@ -2022,17 +2079,16 @@ def create_manual_pick_wave(wave_source, lines, priority='MEDIUM',
             loc_code_map.get(i.location_id, '')
         ))
 
-    # ── WEB-FALLBACK: store stock lookup when WEB warehouse has no WMS inventory ──
+    # ── WEB-FALLBACK: supplement missing WEB-bucket qty from store stock snapshot ──
     _WEB_FALLBACK_NOTE = 'WEB_FALLBACK_STOCK'
     web_fallback_loc = None
     web_store_stock_map = {}   # {product_id: qty_available}
-    if source_warehouse_code == 'WEB':
+    if source_stock_bucket == 'WEB':
         web_fallback_loc = (
             db.session.query(WmsLocation)
             .filter_by(warehouse_id=wh.id, location_code='WEB-FALLBACK')
             .first()
         )
-        # Find store named with "WEB" (case-insensitive) — user-uploaded stock snapshot
         web_store = (
             db.session.query(Store)
             .filter(Store.name.ilike('%web%'))
@@ -2053,15 +2109,16 @@ def create_manual_pick_wave(wave_source, lines, priority='MEDIUM',
                 if ss.product_id not in seen_pids and (ss.quantity or 0) > 0:
                     web_store_stock_map[ss.product_id] = ss.quantity
                     seen_pids.add(ss.product_id)
-            print(f"[WMS] WEB fallback stock map: store={web_store.name} "
-                  f"products_found={len(web_store_stock_map)} of {len(product_ids_needed)} needed")
+            print(f"[WMS] WEB fallback stock: store={web_store.name} "
+                  f"products_found={len(web_store_stock_map)} of {len(product_ids_needed)}")
         else:
-            print(f"[WMS] WEB fallback: no store with 'WEB' in name found — fallback unavailable")
+            print("[WMS] WEB fallback: no store with 'WEB' in name — fallback unavailable")
 
     urgency = priority if priority in WMS_URGENCY_RANK else 'MEDIUM'
     wave = WmsPickWave(
-        warehouse_code=warehouse_code,
+        warehouse_code='MAIN',
         source_warehouse_code=source_warehouse_code,
+        source_stock_bucket=source_stock_bucket,
         plan_id=None,
         wave_source=wave_source,
         external_reference=external_reference or None,
@@ -2103,7 +2160,12 @@ def create_manual_pick_wave(wave_source, lines, priority='MEDIUM',
             qty_remaining -= to_reserve
             task_reserved += to_reserve
             loc_code = loc_code_map.get(inv.location_id, '')
-            reservations_for_task.append({'location_id': inv.location_id, 'location_code': loc_code, 'qty_reserved': to_reserve})
+            reservations_for_task.append({
+                'location_id': inv.location_id,
+                'location_code': loc_code,
+                'qty_reserved': to_reserve,
+                'stock_bucket': source_stock_bucket,
+            })
             db.session.add(WmsInventoryEvent(
                 event_type='PICK_RESERVE',
                 ref_type='pick_wave',
@@ -2113,11 +2175,11 @@ def create_manual_pick_wave(wave_source, lines, priority='MEDIUM',
                 product_id=pid,
                 delta_units=0,
                 delta_pallets=0,
-                note=f"Reserva manual wave #{wave.id} ({wave_source}): {to_reserve} uds en {loc_code}"
+                note=f"Reserva manual wave #{wave.id} ({wave_source}) bucket={source_stock_bucket}: {to_reserve} uds en {loc_code}"
             ))
 
-        # ── WEB-FALLBACK: supplement missing qty from store stock if no WMS inventory ──
-        if qty_remaining > 0 and source_warehouse_code == 'WEB' and web_fallback_loc:
+        # ── WEB-FALLBACK: supplement missing WEB-bucket qty from store snapshot ──
+        if qty_remaining > 0 and source_stock_bucket == 'WEB' and web_fallback_loc:
             fallback_avail = web_store_stock_map.get(pid, 0)
             if fallback_avail > 0:
                 to_fallback = min(fallback_avail, qty_remaining)
@@ -2125,11 +2187,12 @@ def create_manual_pick_wave(wave_source, lines, priority='MEDIUM',
                     'location_id': web_fallback_loc.id,
                     'location_code': 'WEB-FALLBACK',
                     'qty_reserved': to_fallback,
-                    'is_fallback': True
+                    'stock_bucket': 'WEB',
+                    'is_fallback': True,
                 })
                 qty_remaining -= to_fallback
                 task_reserved += to_fallback
-                print(f"[WMS] WEB reservation fallback to store stock sku={sku} qty={to_fallback}")
+                print(f"[WMS] WEB-FALLBACK sku={sku} qty={to_fallback}")
                 db.session.add(WmsInventoryEvent(
                     event_type='PICK_RESERVE',
                     ref_type='pick_wave',
@@ -2142,16 +2205,15 @@ def create_manual_pick_wave(wave_source, lines, priority='MEDIUM',
                     note=f"Reserva WEB-FALLBACK wave #{wave.id}: {to_fallback} uds ({_WEB_FALLBACK_NOTE})"
                 ))
             else:
-                print(f"[WMS] WEB: no fallback stock available for sku={sku}")
-        elif source_warehouse_code == 'WEB' and task_reserved > 0:
-            print(f"[WMS] WEB reservation using WMS inventory sku={sku} qty={task_reserved}")
+                print(f"[WMS] WEB-FALLBACK: no store stock for sku={sku}")
+        elif source_stock_bucket == 'WEB' and task_reserved > 0:
+            print(f"[WMS] WEB WMS reservation sku={sku} qty={task_reserved}")
 
         total_reserved += task_reserved
         task_short = qty_remaining
         if task_short > 0:
             has_shortage = True
 
-        # Determine task note — flag WEB fallback if any reservation is fallback
         _has_fallback_res = any(r.get('is_fallback') for r in reservations_for_task)
         task_status = 'OPEN' if task_short == 0 else 'SHORT'
         if task_short == 0 and _has_fallback_res:
@@ -2188,13 +2250,15 @@ def create_manual_pick_wave(wave_source, lines, priority='MEDIUM',
                 product_id=pid,
                 location_id=r['location_id'],
                 location_code=r['location_code'],
+                stock_bucket=r.get('stock_bucket', source_stock_bucket),
                 qty_reserved=r['qty_reserved'],
                 qty_picked=0,
                 status='OPEN',
                 sequence_order=task.id,
             ))
 
-        print(f"[WMS] manual reserve sku={sku} required={qty_needed} reserved={task_reserved} short={task_short}")
+        print(f"[WMS] reserve sku={sku} bucket={source_stock_bucket} "
+              f"required={qty_needed} reserved={task_reserved} short={task_short}")
 
     wave.status = 'NEEDS_REVIEW' if has_shortage else 'READY_TO_ASSIGN'
     db.session.flush()
@@ -2208,11 +2272,14 @@ def create_manual_pick_wave(wave_source, lines, priority='MEDIUM',
         product_id=product_ids_needed[0] if product_ids_needed else 0,
         delta_units=0,
         delta_pallets=0,
-        note=f"Ola manual creada: {wave_source} ref={external_reference or ''} wave=#{wave.id} requested={total_requested} reserved={total_reserved}"
+        note=f"Ola manual creada: {wave_source} bucket={source_stock_bucket} "
+             f"ref={external_reference or ''} wave=#{wave.id} "
+             f"requested={total_requested} reserved={total_reserved}"
     ))
 
     print(f"[WMS] manual wave created: wave_id={wave.id} source={wave_source} "
-          f"requested={total_requested} reserved={total_reserved} status={wave.status}")
+          f"bucket={source_stock_bucket} requested={total_requested} "
+          f"reserved={total_reserved} status={wave.status}")
     return wave, total_requested, total_reserved
 
 
@@ -9577,6 +9644,16 @@ def process_stock_cd_upload(job_id, payload):
         has_rack = 'rack' in df.columns
         has_level = 'level' in df.columns
         has_pallet_position = 'pallet_position' in df.columns
+        has_stock_bucket = 'stock_bucket' in df.columns
+        if has_stock_bucket:
+            df['stock_bucket'] = df['stock_bucket'].astype(str).str.strip().str.upper()
+            df['stock_bucket'] = df['stock_bucket'].replace({'': 'MAIN', 'NAN': 'MAIN', 'NONE': 'MAIN'})
+            invalid_buckets = df[~df['stock_bucket'].isin(('MAIN', 'WEB'))]['stock_bucket'].unique()
+            if len(invalid_buckets):
+                print(f"[WMS] WARNING: unknown stock_bucket values {invalid_buckets.tolist()} — defaulting to MAIN")
+                df['stock_bucket'] = df['stock_bucket'].apply(lambda v: v if v in ('MAIN', 'WEB') else 'MAIN')
+        else:
+            print("[WMS] stock_bucket column not in file — defaulting all rows to MAIN")
 
         name_col = None
         for col in ['product_name', 'producto', 'name', 'nombre']:
@@ -9824,8 +9901,10 @@ def process_stock_cd_upload(job_id, payload):
                 if pallets_val is not None and loc.max_pallets and pallets_val > loc.max_pallets:
                     wms_warnings.append(f"SKU {sku} loc {loc.location_code}: pallets ({pallets_val}) > max_pallets ({loc.max_pallets})")
 
+                bucket = _safe_str(row.get('stock_bucket')).upper() if has_stock_bucket else 'MAIN'
+                bucket = bucket if bucket in ('MAIN', 'WEB') else 'MAIN'
                 inv = session.query(WmsInventory).filter_by(
-                    warehouse_id=wh.id, location_id=loc.id, product_id=pid
+                    location_id=loc.id, product_id=pid, stock_bucket=bucket
                 ).first()
                 if inv:
                     inv.on_hand_units += qty
@@ -9835,10 +9914,12 @@ def process_stock_cd_upload(job_id, payload):
                 else:
                     inv = WmsInventory(
                         warehouse_id=wh.id, location_id=loc.id, product_id=pid,
-                        on_hand_units=qty, on_hand_pallets=pallets_val
+                        stock_bucket=bucket, on_hand_units=qty, on_hand_pallets=pallets_val
                     )
                     session.add(inv)
                     wms_created += 1
+                print(f"[WMS] stock load sku={sku} location={loc.location_code} "
+                      f"box={loc.box_number} bucket={bucket} qty={qty}")
 
                 note_val = _safe_str(row.get('note')) if has_note else ''
                 session.add(WmsMovement(
@@ -9907,8 +9988,10 @@ def process_stock_cd_upload(job_id, payload):
                 if pallets_val is not None and loc.max_pallets and pallets_val > loc.max_pallets:
                     wms_warnings.append(f"SKU {sku} loc {loc.location_code}: pallets ({pallets_val}) > max_pallets ({loc.max_pallets})")
 
+                bucket = _safe_str(row.get('stock_bucket')).upper() if has_stock_bucket else 'MAIN'
+                bucket = bucket if bucket in ('MAIN', 'WEB') else 'MAIN'
                 inv = session.query(WmsInventory).filter_by(
-                    warehouse_id=wh.id, location_id=loc.id, product_id=pid
+                    location_id=loc.id, product_id=pid, stock_bucket=bucket
                 ).first()
                 if inv:
                     if modo == 'replace_all':
@@ -9922,10 +10005,12 @@ def process_stock_cd_upload(job_id, payload):
                 else:
                     inv = WmsInventory(
                         warehouse_id=wh.id, location_id=loc.id, product_id=pid,
-                        on_hand_units=qty, on_hand_pallets=pallets_val
+                        stock_bucket=bucket, on_hand_units=qty, on_hand_pallets=pallets_val
                     )
                     session.add(inv)
                     wms_created += 1
+                print(f"[WMS] stock load sku={sku} location={loc.location_code} "
+                      f"box={loc.box_number} bucket={bucket} qty={qty}")
 
                 note_val = _safe_str(row.get('note')) if has_note else ''
                 session.add(WmsMovement(
@@ -10021,6 +10106,7 @@ def _wms_inventory_query(args):
             WmsInventory.allocated_units,
             WmsInventory.on_hand_pallets,
             WmsInventory.id.label('inv_id'),
+            WmsInventory.stock_bucket,
         )
         .join(WmsLocation, WmsInventory.location_id == WmsLocation.id)
         .join(WmsWarehouse, WmsInventory.warehouse_id == WmsWarehouse.id)
@@ -10032,6 +10118,7 @@ def _wms_inventory_query(args):
     f_location = (args.get('loc') or '').strip()
     f_box = (args.get('box') or '').strip()
     f_stock = (args.get('stock') or '').strip()
+    f_bucket = (args.get('bucket') or '').strip().upper()
     f_min_units = args.get('min_units', type=int)
     f_min_pallets = args.get('min_pallets', type=float)
 
@@ -10044,9 +10131,11 @@ def _wms_inventory_query(args):
         q = q.filter(WmsLocation.location == f_location.upper())
     if f_box:
         q = q.filter(WmsLocation.box_number == f_box)
+    if f_bucket and f_bucket in ('MAIN', 'WEB'):
+        q = q.filter(WmsInventory.stock_bucket == f_bucket)
 
     rows = q.order_by(
-        WmsWarehouse.code,
+        WmsInventory.stock_bucket,
         WmsLocation.location,
         WmsLocation.box_number,
         WmsLocation.location_code,
@@ -10095,6 +10184,7 @@ def _wms_inventory_query(args):
             'available_units': avail,
             'on_hand_pallets': pallets,
             'inv_id': r.inv_id,
+            'stock_bucket': r.stock_bucket or 'MAIN',
         })
         total_units += units
         total_available += avail
@@ -10169,6 +10259,7 @@ def wms_inventory():
     warehouses = [r[0] for r in db.session.query(WmsWarehouse.code).order_by(WmsWarehouse.code).all()]
     loc_values = sorted({r[0] for r in db.session.query(WmsLocation.location).filter(WmsLocation.location.isnot(None)).all()})
     box_values = sorted({r[0] for r in db.session.query(WmsLocation.box_number).filter(WmsLocation.box_number.isnot(None)).all()})
+    bucket_values = list(WMS_STOCK_BUCKETS)
 
     sort_key = (request.args.get('sort') or 'rack_asc').strip()
     loc_groups = _group_inventory_by_location(inventory, sort_key)
@@ -10198,6 +10289,7 @@ def wms_inventory():
         warehouses=warehouses,
         loc_values=loc_values,
         box_values=box_values,
+        bucket_values=bucket_values,
         filters=request.args,
         has_any_data=has_any_data,
         page=page,
@@ -10283,14 +10375,17 @@ def wms_inventory_export():
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
-def _get_or_create_wms_inventory(warehouse_id, location_id, product_id):
+def _get_or_create_wms_inventory(warehouse_id, location_id, product_id, stock_bucket='MAIN'):
+    stock_bucket = (stock_bucket or 'MAIN').upper()
+    if stock_bucket not in WMS_STOCK_BUCKETS:
+        stock_bucket = 'MAIN'
     inv = WmsInventory.query.filter_by(
-        warehouse_id=warehouse_id, location_id=location_id, product_id=product_id
+        location_id=location_id, product_id=product_id, stock_bucket=stock_bucket
     ).first()
     if not inv:
         inv = WmsInventory(
             warehouse_id=warehouse_id, location_id=location_id, product_id=product_id,
-            on_hand_units=0, allocated_units=0, on_hand_pallets=0
+            stock_bucket=stock_bucket, on_hand_units=0, allocated_units=0, on_hand_pallets=0
         )
         db.session.add(inv)
         db.session.flush()
@@ -10900,9 +10995,12 @@ def wms_waves_list():
 def wms_manual_wave_new():
     """Create a manual WMS pick wave (WEB or MANUAL_OTHER), no Distribution Plan required."""
     all_warehouses = [r[0] for r in db.session.query(WmsWarehouse.code).order_by(WmsWarehouse.code).all()]
+    bucket_values = list(WMS_STOCK_BUCKETS)
 
     if request.method == 'GET':
-        return render_template('wms_manual_wave_new.html', all_warehouses=all_warehouses)
+        return render_template('wms_manual_wave_new.html',
+                               all_warehouses=all_warehouses,
+                               bucket_values=bucket_values)
 
     errors = []
     wave_type = request.form.get('wave_type', 'MANUAL_WEB').strip()
@@ -10910,9 +11008,13 @@ def wms_manual_wave_new():
     priority = request.form.get('priority', 'MEDIUM').strip()
     obs = request.form.get('observation', '').strip()
     customer_name_input = request.form.get('customer_name', '').strip()
-    src_wh = request.form.get('source_warehouse_code', '').strip().upper() or (
+    src_bucket = request.form.get('source_stock_bucket', '').strip().upper() or (
         'WEB' if wave_type == 'MANUAL_WEB' else 'MAIN'
     )
+    if src_bucket not in ('MAIN', 'WEB'):
+        src_bucket = 'WEB' if wave_type == 'MANUAL_WEB' else 'MAIN'
+    # backward-compat alias — some templates still send source_warehouse_code
+    src_wh = src_bucket
 
     if wave_type not in ('MANUAL_WEB', 'MANUAL_OTHER'):
         wave_type = 'MANUAL_WEB'
@@ -10997,7 +11099,8 @@ def wms_manual_wave_new():
         return render_template('wms_manual_wave_new.html', errors=errors,
                                wave_type=wave_type, external_ref=external_ref,
                                priority=priority, obs=obs, customer_name=customer_name_input,
-                               src_wh=src_wh, all_warehouses=all_warehouses)
+                               src_wh=src_bucket, src_bucket=src_bucket,
+                               all_warehouses=all_warehouses, bucket_values=bucket_values)
 
     resolved_lines = []
     unknown_skus = []
@@ -11028,11 +11131,11 @@ def wms_manual_wave_new():
             customer_name=customer_name_input or None,
             channel=channel,
             note=obs or None,
-            source_warehouse_code=src_wh,
+            source_stock_bucket=src_bucket,
             user=current_user,
         )
         db.session.commit()
-        print(f"[MANUAL_WAVE] wave created id={wave.id} status={wave.status} source={src_wh} lines={len(resolved_lines)} req={total_req} res={total_res}")
+        print(f"[MANUAL_WAVE] wave created id={wave.id} status={wave.status} bucket={src_bucket} lines={len(resolved_lines)} req={total_req} res={total_res}")
         msg = f'Ola de picking creada correctamente (#{wave.id}). SKUs: {len(resolved_lines)}, unidades solicitadas: {total_req}, reservadas: {total_res}.'
         if unknown_skus:
             msg += f' SKUs nuevos (stub): {", ".join(unknown_skus[:5])}.'
@@ -11044,7 +11147,8 @@ def wms_manual_wave_new():
         return render_template('wms_manual_wave_new.html', errors=errors,
                                wave_type=wave_type, external_ref=external_ref,
                                priority=priority, obs=obs, customer_name=customer_name_input,
-                               src_wh=src_wh, all_warehouses=all_warehouses)
+                               src_wh=src_bucket, src_bucket=src_bucket,
+                               all_warehouses=all_warehouses, bucket_values=bucket_values)
 
 
 @app.route('/wms/waves/<int:wave_id>/assign', methods=['POST'])
@@ -11221,7 +11325,8 @@ def wms_wave_finish_picking(wave_id):
         flash(f'No se puede finalizar: {len(pending)} tarea(s) sin registrar. Complete todas las líneas primero.', 'danger')
         return redirect(url_for('wms_wave_pick', wave_id=wave_id))
 
-    wh = db.session.query(WmsWarehouse).filter_by(code=wave.source_warehouse_code).first()
+    wh = (db.session.query(WmsWarehouse).filter_by(code='MAIN').first() or
+          db.session.query(WmsWarehouse).filter_by(code=wave.source_warehouse_code).first())
 
     picked_by_product = {}
     for t in tasks:
@@ -11245,9 +11350,10 @@ def wms_wave_finish_picking(wave_id):
 
             release_back = res.qty_reserved - deduct_from_this
 
+            _res_bucket = (res.stock_bucket or 'MAIN').upper()
             inv = (
                 db.session.query(WmsInventory)
-                .filter_by(warehouse_id=wh.id, location_id=res.location_id, product_id=res.product_id)
+                .filter_by(location_id=res.location_id, product_id=res.product_id, stock_bucket=_res_bucket)
                 .first()
             )
             if inv:
@@ -11406,7 +11512,8 @@ def api_wms_task_pick(task_id):
     if picked_qty > remaining_capacity:
         return jsonify({'error': f'picked_qty ({picked_qty}) supera la cantidad pendiente ({remaining_capacity})'}), 400
 
-    wh = db.session.query(WmsWarehouse).filter_by(code=wave.source_warehouse_code).first()
+    wh = (db.session.query(WmsWarehouse).filter_by(code='MAIN').first() or
+          db.session.query(WmsWarehouse).filter_by(code=wave.source_warehouse_code).first())
 
     task_reservations = (
         db.session.query(WmsPickReservation)
@@ -11432,9 +11539,10 @@ def api_wms_task_pick(task_id):
         qty_to_apply -= apply_here
 
         if wh and apply_here > 0:
+            _res_bucket = (res.stock_bucket or 'MAIN').upper()
             inv = (
                 db.session.query(WmsInventory)
-                .filter_by(warehouse_id=wh.id, location_id=res.location_id, product_id=task.product_id)
+                .filter_by(location_id=res.location_id, product_id=task.product_id, stock_bucket=_res_bucket)
                 .first()
             )
             if inv:
@@ -11450,7 +11558,7 @@ def api_wms_task_pick(task_id):
                 product_id=task.product_id,
                 delta_units=-apply_here,
                 delta_pallets=0,
-                note=f"Pick: -{apply_here} uds en {res.location_code or res.location_id} task #{task.id}"
+                note=f"Pick: -{apply_here} uds en {res.location_code or res.location_id} task #{task.id} bucket={_res_bucket}"
             ))
 
     task.qty_picked = (task.qty_picked or 0) + picked_qty
@@ -11530,7 +11638,8 @@ def api_wms_task_report_issue(task_id):
         .all()
     )
 
-    wh = db.session.query(WmsWarehouse).filter_by(code=wave.source_warehouse_code).first()
+    wh = (db.session.query(WmsWarehouse).filter_by(code='MAIN').first() or
+          db.session.query(WmsWarehouse).filter_by(code=wave.source_warehouse_code).first())
     qty_to_release = missing_qty
     affected_reservation = open_reservations[0] if open_reservations else None
 
@@ -11544,9 +11653,10 @@ def api_wms_task_report_issue(task_id):
         qty_to_release -= release_here
 
         if wh:
+            _res_bucket = (res.stock_bucket or 'MAIN').upper()
             inv = (
                 db.session.query(WmsInventory)
-                .filter_by(warehouse_id=wh.id, location_id=res.location_id, product_id=task.product_id)
+                .filter_by(location_id=res.location_id, product_id=task.product_id, stock_bucket=_res_bucket)
                 .first()
             )
             if inv:
@@ -11942,7 +12052,8 @@ def api_wms_mobile_reservation_pick(res_id):
     if picked_qty > remaining_in_res:
         return jsonify({'error': f'picked_qty ({picked_qty}) supera el pendiente en esta reservación ({remaining_in_res})'}), 400
 
-    wh = db.session.query(WmsWarehouse).filter_by(code=wave.source_warehouse_code).first()
+    wh = (db.session.query(WmsWarehouse).filter_by(code='MAIN').first() or
+          db.session.query(WmsWarehouse).filter_by(code=wave.source_warehouse_code).first())
     res.qty_picked = (res.qty_picked or 0) + picked_qty
     if res.qty_picked >= res.qty_reserved:
         res.status = 'PICKED'
@@ -11967,10 +12078,11 @@ def api_wms_mobile_reservation_pick(res_id):
                 if ss:
                     ss.quantity = max(0, (ss.quantity or 0) - picked_qty)
         else:
-            # Normal WMS inventory decrement
+            # Normal WMS inventory decrement — filter by stock_bucket from reservation
+            _bucket = (res.stock_bucket or 'MAIN').upper()
             inv = (
                 db.session.query(WmsInventory)
-                .filter_by(warehouse_id=wh.id, location_id=res.location_id, product_id=res.product_id)
+                .filter_by(location_id=res.location_id, product_id=res.product_id, stock_bucket=_bucket)
                 .first()
             )
             if inv:
@@ -12050,7 +12162,8 @@ def try_reallocate_shortage_for_reservation(reservation_id, missing_qty):
     wave = db.session.get(WmsPickWave, res.wave_id)
     task = db.session.get(WmsPickTask, res.task_id) if res.task_id else None
 
-    wh = db.session.query(WmsWarehouse).filter_by(code=(wave.source_warehouse_code if wave else 'MAIN')).first()
+    wh = (db.session.query(WmsWarehouse).filter_by(code='MAIN').first() or
+          db.session.query(WmsWarehouse).filter_by(code=(wave.source_warehouse_code if wave else 'MAIN')).first())
     if not wh:
         print(f"[WMS] reallocation search: warehouse not found for reservation={reservation_id}")
         return {'qty_reallocated': 0, 'new_reservation_ids': [], 'remaining_uncovered': missing_qty}
@@ -12063,11 +12176,12 @@ def try_reallocate_shortage_for_reservation(reservation_id, missing_qty):
         else_=1
     )
 
+    _realloc_bucket = (res.stock_bucket or 'MAIN').upper()
     candidates = (
         db.session.query(WmsInventory, WmsLocation)
         .join(WmsLocation, WmsLocation.id == WmsInventory.location_id)
         .filter(
-            WmsInventory.warehouse_id == wh.id,
+            WmsInventory.stock_bucket == _realloc_bucket,
             WmsInventory.product_id == res.product_id,
             WmsLocation.is_active == True,
             WmsInventory.location_id != res.location_id,
@@ -12110,6 +12224,7 @@ def try_reallocate_shortage_for_reservation(reservation_id, missing_qty):
             product_id=res.product_id,
             location_id=loc.id,
             location_code=loc.location_code,
+            stock_bucket=_realloc_bucket,
             qty_reserved=reserve_qty,
             qty_picked=0,
             status='OPEN',
@@ -12181,11 +12296,13 @@ def api_wms_mobile_reservation_issue(res_id):
     if missing_qty <= 0:
         return jsonify({'error': 'No hay cantidad pendiente en esta reservación'}), 400
 
-    wh = db.session.query(WmsWarehouse).filter_by(code=wave.source_warehouse_code).first()
+    wh = (db.session.query(WmsWarehouse).filter_by(code='MAIN').first() or
+          db.session.query(WmsWarehouse).filter_by(code=wave.source_warehouse_code).first())
     if wh:
+        _bucket = (res.stock_bucket or 'MAIN').upper()
         inv = (
             db.session.query(WmsInventory)
-            .filter_by(warehouse_id=wh.id, location_id=res.location_id, product_id=res.product_id)
+            .filter_by(location_id=res.location_id, product_id=res.product_id, stock_bucket=_bucket)
             .first()
         )
         if inv:

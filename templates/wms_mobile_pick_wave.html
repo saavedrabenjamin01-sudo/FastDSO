@@ -192,9 +192,10 @@
       </div>
       {% endif %}
       <div class="mpick-counter" style="margin-left:auto; opacity:.9;">
-        <span style="background:{% if wave.source_warehouse_code == 'WEB' %}rgba(124,58,237,.85){% else %}rgba(255,255,255,.2){% endif %};border-radius:6px;padding:1px 6px;font-size:.7rem;font-weight:700;letter-spacing:.3px;">
-          <i class="bi bi-{% if wave.source_warehouse_code == 'WEB' %}globe{% else %}building{% endif %}" style="font-size:.65rem;"></i>
-          {{ wave.source_warehouse_code or 'MAIN' }}
+        {% set _mbkt = wave.source_stock_bucket or wave.source_warehouse_code or 'MAIN' %}
+        <span style="background:{% if _mbkt == 'WEB' %}rgba(124,58,237,.85){% else %}rgba(255,255,255,.2){% endif %};border-radius:6px;padding:1px 6px;font-size:.7rem;font-weight:700;letter-spacing:.3px;">
+          <i class="bi bi-{% if _mbkt == 'WEB' %}globe{% else %}layers{% endif %}" style="font-size:.65rem;"></i>
+          {{ _mbkt }}
         </span>
       </div>
     </div>

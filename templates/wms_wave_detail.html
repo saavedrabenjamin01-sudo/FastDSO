@@ -19,6 +19,8 @@
         <i class="bi bi-building"></i> {{ wave.warehouse_code }}
         &nbsp;|&nbsp;
         <i class="bi bi-box-arrow-in-right"></i> Origen: <strong>{{ wave.source_warehouse_code or wave.warehouse_code }}</strong>
+        &nbsp;|&nbsp;
+        <i class="bi bi-layers"></i> Bucket: <span class="badge {% if wave.source_stock_bucket == 'WEB' %}bg-info text-dark{% else %}bg-secondary{% endif %}" style="font-size:.72rem;">{{ wave.source_stock_bucket or 'MAIN' }}</span>
         {% set ws = wave.wave_source or 'PLANNER' %}
         {% if ws != 'PLANNER' %}
         &nbsp;|&nbsp;
@@ -309,7 +311,8 @@
       </div>
       <div class="col-md-3">
         <i class="bi bi-building"></i> Bodega: {{ wave.warehouse_code }}<br>
-        <i class="bi bi-box-arrow-in-right"></i> Origen de stock: <strong>{{ wave.source_warehouse_code or wave.warehouse_code }}</strong>
+        <i class="bi bi-box-arrow-in-right"></i> Origen: <strong>{{ wave.source_warehouse_code or wave.warehouse_code }}</strong>
+        &nbsp;| Bucket: <span class="badge {% if wave.source_stock_bucket == 'WEB' %}bg-info text-dark{% else %}bg-secondary{% endif %}" style="font-size:.7rem;">{{ wave.source_stock_bucket or 'MAIN' }}</span>
         {% if wave.pick_started_at %}<br><small>Inicio pick: {{ wave.pick_started_at.strftime('%d/%m %H:%M') }}</small>{% endif %}
         {% if wave.pick_finished_at %}<br><small>Fin pick: {{ wave.pick_finished_at.strftime('%d/%m %H:%M') }}</small>{% endif %}
         {% if wave.closed_at %}<br><small>Cerrada: {{ wave.closed_at.strftime('%d/%m %H:%M') }}</small>{% endif %}

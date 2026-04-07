@@ -6,11 +6,12 @@
 {% set floc = filters.get('loc','') %}
 {% set fbox = filters.get('box','') %}
 {% set fstock = filters.get('stock','') %}
+{% set fbucket = filters.get('bucket','') %}
 {% set fsort = filters.get('sort','rack_asc') %}
 {% set fmin_u = filters.get('min_units','') %}
 {% set fmin_p = filters.get('min_pallets','') %}
 
-{% macro qs_params(override={}) %}{% set ns = namespace(parts=[]) %}{% for k in ['q','wh','loc','box','stock','sort','min_units','min_pallets','per_page','page'] %}{% set v = override.get(k, filters.get(k,'')) %}{% if v %}{% set _ = ns.parts.append(k ~ '=' ~ v) %}{% endif %}{% endfor %}{{ ns.parts|join('&') }}{% endmacro %}
+{% macro qs_params(override={}) %}{% set ns = namespace(parts=[]) %}{% for k in ['q','wh','loc','box','stock','bucket','sort','min_units','min_pallets','per_page','page'] %}{% set v = override.get(k, filters.get(k,'')) %}{% if v %}{% set _ = ns.parts.append(k ~ '=' ~ v) %}{% endif %}{% endfor %}{{ ns.parts|join('&') }}{% endmacro %}
 
 <div class="query-wrap" style="max-width:1400px;">
 
@@ -75,6 +76,15 @@
           <option value="sin_stock" {% if fstock=='sin_stock' %}selected{% endif %}>Sin stock</option>
           <option value="con_pallets" {% if fstock=='con_pallets' %}selected{% endif %}>Con pallets</option>
           <option value="con_alloc" {% if fstock=='con_alloc' %}selected{% endif %}>Con asignaciones</option>
+        </select>
+      </div>
+      <div class="query-field" style="max-width:110px;">
+        <label class="query-label">Bucket</label>
+        <select class="form-select form-select-sm" name="bucket">
+          <option value="">Todos</option>
+          {% for bkt in (bucket_values or ['MAIN','WEB']) %}
+          <option value="{{ bkt }}" {% if fbucket == bkt %}selected{% endif %}>{{ bkt }}</option>
+          {% endfor %}
         </select>
       </div>
       <div class="query-field" style="max-width:100px;">
@@ -296,6 +306,7 @@
           <tr>
             <th>SKU</th>
             <th>Producto</th>
+            <th>Bucket</th>
             <th class="text-end">Unidades</th>
             <th class="text-end">Asignadas</th>
             <th class="text-end">Disponibles</th>
@@ -308,6 +319,7 @@
           <tr{% if item.available_units <= 0 %} class="wms-row-danger"{% endif %}>
             <td><code class="wms-sku">{{ item.sku }}</code></td>
             <td><span class="wms-product-name" title="{{ item.product_name }}">{{ item.product_name }}</span></td>
+            <td><span class="badge {% if item.stock_bucket == 'WEB' %}bg-info text-dark{% else %}bg-secondary{% endif %} text-uppercase" style="font-size:0.7rem;">{{ item.stock_bucket or 'MAIN' }}</span></td>
             <td class="text-end fw-semibold">{{ "{:,}".format(item.on_hand_units) }}</td>
             <td class="text-end">
               {% if item.allocated_units > 0 %}

@@ -87,6 +87,8 @@
               {% if swc %}
               <br><span class="text-muted" style="font-size:.72rem;">{{ swc }}</span>
               {% endif %}
+              {% set _bkt = w.source_stock_bucket or 'MAIN' %}
+              <br><span class="badge {% if _bkt == 'WEB' %}bg-info text-dark{% else %}bg-secondary{% endif %}" style="font-size:.68rem;">{{ _bkt }}</span>
             </td>
             <td>
               <a href="{{ url_for('wms_wave_detail', wave_id=w.id) }}" class="fw-semibold">
