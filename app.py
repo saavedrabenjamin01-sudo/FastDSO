@@ -20145,6 +20145,9 @@ def planner():
     status_filter = request.args.get('status', '')
     urgency_filter = request.args.get('urgency', '')
     folio_search = request.args.get('folio', '').strip()
+    web_source_filter = request.args.get('web_source', '')
+    web_urgency_filter = request.args.get('web_urgency', urgency_filter)
+    web_picker_filter = request.args.get('web_picker', type=int)
 
     plans_by_status = {}
     for status in ['APPROVED', 'IN_PROGRESS', 'PACKED', 'DISPATCHED', 'CLOSED']:
@@ -20164,8 +20167,9 @@ def planner():
     else:
         operators = []
 
+    # ── Plan-level urgency blockers ──
     blocking_statuses = ['APPROVED', 'IN_PROGRESS', 'PACKED']
-    urgent_blockers = DistributionPlan.query.filter(
+    plan_urgent_blockers = DistributionPlan.query.filter(
         DistributionPlan.urgency == 'URGENT',
         DistributionPlan.status.in_(blocking_statuses)
     ).count()
@@ -20173,24 +20177,60 @@ def planner():
         DistributionPlan.urgency == 'MEDIUM',
         DistributionPlan.status.in_(blocking_statuses)
     ).count()
-    
+
+    # ── WEB/manual wave-level urgency blockers (unified global hierarchy) ──
+    web_urgent_active = (
+        WMS_WAVE_ACTIVE_STATUSES + ('NEEDS_REVIEW',)
+    )
+    wave_urgent_blockers = db.session.query(WmsPickWave).filter(
+        WmsPickWave.urgency_level == 'URGENT',
+        WmsPickWave.wave_source.in_(('MANUAL_WEB', 'MANUAL_OTHER')),
+        WmsPickWave.status.in_(web_urgent_active)
+    ).count()
+    urgent_blockers = plan_urgent_blockers + wave_urgent_blockers
+
     can_start_medium = (urgent_blockers == 0)
     can_start_low = (urgent_blockers == 0 and medium_blockers == 0)
 
+    # ── Plan → Wave map ──
     all_plan_ids = []
     for plans in plans_by_status.values():
         all_plan_ids.extend([p.id for p in plans])
     waves_map = {}
     if all_plan_ids:
-        waves = (
+        plan_waves = (
             db.session.query(WmsPickWave)
             .filter(WmsPickWave.plan_id.in_(all_plan_ids))
             .order_by(WmsPickWave.created_at.desc())
             .all()
         )
-        for w in waves:
+        for w in plan_waves:
             if w.plan_id not in waves_map:
                 waves_map[w.plan_id] = w
+
+    # ── WEB / manual waves (no plan linked) ──
+    web_q = db.session.query(WmsPickWave).filter(
+        WmsPickWave.wave_source.in_(('MANUAL_WEB', 'MANUAL_OTHER')),
+        WmsPickWave.status.notin_(('CANCELLED',))
+    )
+    if web_source_filter in ('MANUAL_WEB', 'MANUAL_OTHER'):
+        web_q = web_q.filter(WmsPickWave.wave_source == web_source_filter)
+    if web_urgency_filter in PLAN_URGENCIES:
+        web_q = web_q.filter(WmsPickWave.urgency_level == web_urgency_filter)
+    if web_picker_filter:
+        web_q = web_q.filter(WmsPickWave.assigned_to == web_picker_filter)
+    web_waves_all = web_q.order_by(WmsPickWave.priority_rank, WmsPickWave.created_at.desc()).all()
+
+    # Group into operational buckets for display
+    _web_active_statuses = ('READY_TO_ASSIGN', 'ASSIGNED', 'NEEDS_REVIEW')
+    _web_progress_statuses = ('IN_PROGRESS',)
+    _web_done_statuses = ('PICKED', 'CLOSED')
+    web_waves_pending   = [w for w in web_waves_all if w.status in _web_active_statuses]
+    web_waves_progress  = [w for w in web_waves_all if w.status in _web_progress_statuses]
+    web_waves_done      = [w for w in web_waves_all if w.status in _web_done_statuses]
+
+    print(f"[PLANNER-WMS] rendered WEB/manual waves in planner source={web_source_filter or 'ALL'} "
+          f"pending={len(web_waves_pending)} in_progress={len(web_waves_progress)} done={len(web_waves_done)}")
 
     return render_template(
         'planner.html',
@@ -20206,7 +20246,14 @@ def planner():
         medium_blockers=medium_blockers,
         can_start_medium=can_start_medium,
         can_start_low=can_start_low,
-        waves_map=waves_map
+        waves_map=waves_map,
+        # WEB picking section
+        web_waves_pending=web_waves_pending,
+        web_waves_progress=web_waves_progress,
+        web_waves_done=web_waves_done,
+        web_source_filter=web_source_filter,
+        web_urgency_filter=web_urgency_filter,
+        web_picker_filter=web_picker_filter,
     )
 
 

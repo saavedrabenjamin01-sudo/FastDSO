@@ -1,0 +1,155 @@
+Refactor wave assignment so ALL picking waves are assigned from FastWMS Picking Waves, including WEB/manual waves, and reflect that assignment/status coherently in Planner.
+
+GOAL
+Today picker assignment only works from Planner-linked folios, leaving WEB/manual waves outside the operational assignment flow.
+We need a unified operational model:
+
+- ALL waves must be assignable from FastWMS Picking Waves
+- WEB/manual waves must also be visible/reflected in Planner as operational picking items
+- urgency and hierarchy rules must apply across ALL wave types
+- the visual design must stay aligned with FastDSO/FastWMS
+
+BUSINESS RULES
+
+1) Picking assignment must happen from WMS Waves, not only from Planner.
+2) This applies to:
+   - PLANNER waves
+   - MANUAL_WEB waves
+   - MANUAL_OTHER waves
+3) Planner must reflect assigned picker and execution state for all operational picking work.
+4) WEB/manual waves must appear as WEB picking items in Planner (or equivalent operational board view), clearly differentiated from store distribution folios.
+5) Urgency rules must remain global:
+   - if any URGENT wave exists in READY_TO_ASSIGN / ASSIGNED / IN_PROGRESS,
+     lower-priority waves cannot be assigned or started, regardless of source.
+
+MODEL / DATA CHANGES
+
+1) Ensure WmsPickWave already contains:
+- wave_source (PLANNER, MANUAL_WEB, MANUAL_OTHER)
+- source_warehouse_code
+- external_reference
+- urgency_level
+- priority_rank
+- assigned_to
+- assigned_at
+- status
+
+2) If Planner currently only reflects real folios/plans, add a lightweight operational mirror entity if needed:
+Option A (preferred if simple):
+- reuse the existing Planner board/item model and allow entries without a real distribution folio for WEB/manual waves
+Option B:
+- add a planner-visible synthetic item layer for WMS-only waves
+
+Minimum requirement:
+Planner must be able to render WEB/manual waves in its operational view with:
+- reference
+- type/source
+- assigned picker
+- urgency
+- current WMS status
+
+ASSIGNMENT FLOW
+
+1) WMS Waves becomes the source of truth for assignment
+In /wms/waves:
+- every wave row/card must have "Asignar picker" if status allows it
+- this must work for all wave_source values
+
+2) On assignment from WMS Waves:
+- validate operator role/permission
+- enforce urgency blocking rule
+- set:
+   wave.assigned_to
+   wave.assigned_at
+   wave.status = ASSIGNED (if applicable)
+- write event log:
+   PICKER_ASSIGNED
+
+3) Synchronize to Planner:
+- if wave_source == PLANNER:
+   update the linked folio/planner card with assigned picker and WMS status
+- if wave_source == MANUAL_WEB or MANUAL_OTHER:
+   create/update a Planner-visible operational item representing that wave
+   It must show clearly that it is:
+   - WEB or MANUAL
+   - source warehouse WEB/MAIN
+   - not a store distribution folio
+
+PLANNER VISUALIZATION
+
+1) Planner must show WEB/manual picks in a coherent way
+Recommended:
+- either a dedicated column/section for WEB picking
+- or the same operational columns with a strong type badge
+
+Minimum visual requirements:
+- badge for source/type:
+   WEB (purple)
+   PLANNER (blue)
+   MANUAL (gray)
+- show source warehouse:
+   Origen: WEB / MAIN
+- show assigned picker if any
+- show urgency badge
+- show WMS status
+
+2) Status mapping must still work:
+- READY_TO_ASSIGN / ASSIGNED -> visible as approved/pending execution
+- IN_PROGRESS -> En Progreso
+- PICKED / CLOSED -> Empacado
+- NEEDS_REVIEW -> En Progreso + warning badge
+
+UI / UX
+
+1) In WMS Waves page:
+- add/keep columns or cards:
+   Reference/Folio
+   Tipo
+   Origen
+   Urgencia
+   Estado
+   Pickeador
+   Actions
+- ensure WEB/manual waves look first-class, not hidden edge cases
+
+2) In Planner:
+- WEB/manual items must look visually consistent with the site
+- do not create a separate ugly table
+- use the same card language / kanban language / badges already used in Planner
+
+3) Add filters:
+- by wave_source/type
+- by urgency
+- by assigned picker
+- by source warehouse
+
+OPERATIONAL RULES
+
+1) Assignment from Planner should be deprecated or made read-only mirror behavior
+- If current code still allows assignment from Planner directly, either:
+   a) remove that button
+   or
+   b) make it call the same WMS assignment service under the hood
+But WMS must be the actual assignment source of truth.
+
+2) Starting a WEB/manual wave must also update Planner operational state
+- when operator starts -> Planner reflects En Progreso
+- when operator finishes -> Planner reflects Empacado
+
+3) Manual/WEB waves must never require a Planner folio to exist
+
+AUDIT / LOGGING
+
+Add logs:
+[WMS] picker assigned wave=... source=... picker=...
+[PLANNER-WMS] synced assignment wave=... planner_item=...
+[PLANNER-WMS] rendered WEB/manual wave in planner source=...
+
+DELIVERABLES
+
+- All wave types assignable from /wms/waves
+- WEB/manual waves reflected in Planner
+- urgency hierarchy preserved globally
+- assignment source of truth moved to WMS Waves
+- visual coherence with current FastDSO style
+- no breaking changes to existing PLANNER folio flow

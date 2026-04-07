@@ -10,8 +10,8 @@
 <div class="alert alert-warning d-flex align-items-center mb-3" role="alert">
   <i class="bi bi-exclamation-triangle-fill me-2"></i>
   <div>
-    <strong>Prioridad bloqueante:</strong> {{ urgent_blockers }} folio(s) URGENTE(s) pendientes de despacho. 
-    Las acciones para folios MEDIUM/LOW están deshabilitadas hasta que los urgentes lleguen a DESPACHO.
+    <strong>Prioridad bloqueante global:</strong> {{ urgent_blockers }} ola(s) URGENTE(s) activas (folios + picking WEB/manual).
+    Las acciones para olas de prioridad MEDIUM/LOW están deshabilitadas.
   </div>
 </div>
 {% elif medium_blockers > 0 %}
@@ -165,6 +165,179 @@
 </div>
 {% endif %}
 
+{# ═══════════════════════════════════════════════════════════════════════════
+   WEB PICKING OPERATIVO — Waves manuales y WEB sin folio de distribución
+   ═══════════════════════════════════════════════════════════════════════════ #}
+{% set _all_web = web_waves_pending + web_waves_progress + web_waves_done %}
+<div class="card mt-4" id="webPickingPanel">
+  <div class="card-header d-flex justify-content-between align-items-center py-2"
+       style="background:linear-gradient(90deg,#7c3aed 0%,#4f46e5 100%);color:#fff;cursor:pointer;"
+       data-bs-toggle="collapse" data-bs-target="#webPickingBody" aria-expanded="true">
+    <span class="fw-bold" style="letter-spacing:.02em;">
+      <i class="bi bi-globe2 me-1"></i> Picking WEB &amp; Manual Operativo
+      <span class="badge ms-2" style="background:rgba(255,255,255,.25);font-size:.75rem;">{{ _all_web|length }}</span>
+    </span>
+    <span style="font-size:.78rem;opacity:.85;">Waves sin folio de distribución (Venta Web, Manual)</span>
+  </div>
+  <div id="webPickingBody" class="collapse show">
+    {# ── Filtros WEB ── #}
+    <div class="card-body border-bottom py-2">
+      <form method="get" class="row g-2 align-items-end">
+        {# Preserve main kanban filters #}
+        {% if urgency_filter %}<input type="hidden" name="urgency" value="{{ urgency_filter }}">{% endif %}
+        {% if folio_search %}<input type="hidden" name="folio" value="{{ folio_search }}">{% endif %}
+        <div class="col-auto">
+          <label class="form-label small mb-0">Tipo de ola</label>
+          <select name="web_source" class="form-select form-select-sm" style="width:140px;">
+            <option value="">Todas</option>
+            <option value="MANUAL_WEB" {% if web_source_filter == 'MANUAL_WEB' %}selected{% endif %}>Venta Web</option>
+            <option value="MANUAL_OTHER" {% if web_source_filter == 'MANUAL_OTHER' %}selected{% endif %}>Manual</option>
+          </select>
+        </div>
+        <div class="col-auto">
+          <label class="form-label small mb-0">Urgencia</label>
+          <select name="web_urgency" class="form-select form-select-sm" style="width:120px;">
+            <option value="">Todas</option>
+            {% for u in PLAN_URGENCIES %}
+            <option value="{{ u }}" {% if web_urgency_filter == u %}selected{% endif %}>{{ u }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% if can_manage %}
+        <div class="col-auto">
+          <label class="form-label small mb-0">Operador</label>
+          <select name="web_picker" class="form-select form-select-sm" style="width:140px;">
+            <option value="">Todos</option>
+            {% for op in operators %}
+            <option value="{{ op.id }}" {% if web_picker_filter == op.id %}selected{% endif %}>{{ op.username }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% endif %}
+        <div class="col-auto">
+          <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-funnel"></i> Filtrar</button>
+          <a href="{{ url_for('planner') }}" class="btn btn-sm btn-outline-secondary">Limpiar</a>
+        </div>
+        {% if can('wms:moves') %}
+        <div class="col-auto ms-auto">
+          <a href="{{ url_for('wms_manual_wave_new') }}" class="btn btn-sm btn-outline-light" style="border-color:#7c3aed;color:#7c3aed;">
+            <i class="bi bi-plus-circle"></i> Nueva ola
+          </a>
+        </div>
+        {% endif %}
+      </form>
+    </div>
+
+    <div class="card-body p-3">
+      {% if not _all_web %}
+      <div class="text-center text-muted py-4">
+        <i class="bi bi-inbox" style="font-size:1.8rem;"></i>
+        <p class="mt-2 mb-0">No hay olas WEB/manual activas con los filtros seleccionados.</p>
+      </div>
+      {% else %}
+
+      {# ── Macro for a wave card ── #}
+      {% macro web_wave_card(w) %}
+      {% set ws = w.wave_source or 'MANUAL_OTHER' %}
+      {% set wsc = {'READY_TO_ASSIGN':'#6b7280','ASSIGNED':'#8b5cf6','IN_PROGRESS':'#14b8a6',
+                    'PICKED':'#22c55e','CLOSED':'#374151','NEEDS_REVIEW':'#f59e0b','CANCELLED':'#9ca3af'} %}
+      {% set wms_label = {'READY_TO_ASSIGN':'Sin asignar','ASSIGNED':'Asignado','IN_PROGRESS':'En picking',
+                          'PICKED':'Pickeado','CLOSED':'Cerrada','NEEDS_REVIEW':'Revisión'} %}
+      <div class="kanban-card" style="border-left:3px solid {% if ws == 'MANUAL_WEB' %}#7c3aed{% else %}#6b7280{% endif %};">
+        <div class="kanban-card-header">
+          {% if ws == 'MANUAL_WEB' %}
+          <span class="badge" style="background:#7c3aed;font-size:.65rem;"><i class="bi bi-globe me-1"></i>WEB</span>
+          {% else %}
+          <span class="badge" style="background:#6b7280;font-size:.65rem;">MANUAL</span>
+          {% endif %}
+          <span class="kanban-folio" style="font-size:.8rem;">
+            {% if w.external_reference %}{{ w.external_reference }}{% else %}Wave #{{ w.id }}{% endif %}
+          </span>
+          <span class="urgency-pill urgency-{{ w.urgency_level|lower }}" style="font-size:.62rem;">{{ w.urgency_level }}</span>
+        </div>
+        <div class="kanban-card-chips">
+          <span class="kanban-chip"><i class="bi bi-box-seam"></i> {{ w.total_lines }} líneas</span>
+          <span class="kanban-chip"><i class="bi bi-boxes"></i> {{ "{:,}".format(w.total_units) }} uds</span>
+          {% if w.source_warehouse_code %}
+          <span class="kanban-chip"><i class="bi bi-building"></i> {{ w.source_warehouse_code }}</span>
+          {% endif %}
+        </div>
+        <div class="kanban-card-meta">
+          <span class="badge" style="background:{{ wsc.get(w.status,'#6b7280') }};font-size:.65rem;{% if w.status == 'NEEDS_REVIEW' %}color:#000;{% endif %}">
+            {{ wms_label.get(w.status, w.status) }}
+          </span>
+          {% if w.assigned_operator %}
+          <small class="ms-1"><i class="bi bi-person-badge"></i> {{ w.assigned_operator.username }}</small>
+          {% endif %}
+          {% if w.short_units %}
+          <span class="badge bg-danger ms-1" style="font-size:.62rem;" title="{{ w.short_units }} uds faltantes">
+            <i class="bi bi-exclamation-triangle-fill"></i> {{ w.short_units }}
+          </span>
+          {% endif %}
+          {% if w.created_at %}
+          <small class="text-muted ms-auto" style="font-size:.65rem;">{{ w.created_at.strftime('%d/%m %H:%M') }}</small>
+          {% endif %}
+        </div>
+        <div class="kanban-card-actions mt-1">
+          {% if can_manage and w.status in ('READY_TO_ASSIGN', 'ASSIGNED', 'NEEDS_REVIEW') %}
+          <button type="button" class="btn btn-xs btn-outline-primary"
+            onclick="openWebPickerModal({{ w.id }}, '{% if w.external_reference %}{{ w.external_reference }}{% else %}Wave #{{ w.id }}{% endif %}')">
+            <i class="bi bi-person-plus"></i> Asignar picker
+          </button>
+          {% endif %}
+          {% if w.status == 'PICKED' %}
+          <form method="post" action="{{ url_for('wms_wave_close', wave_id=w.id) }}" class="d-inline">
+            <button class="btn btn-xs btn-outline-dark"><i class="bi bi-check2-square"></i> Cerrar</button>
+          </form>
+          {% endif %}
+          <a href="{{ url_for('wms_wave_detail', wave_id=w.id) }}" class="btn btn-xs btn-outline-secondary">
+            <i class="bi bi-eye"></i> Ver
+          </a>
+        </div>
+      </div>
+      {% endmacro %}
+
+      {# ── Three columns ── #}
+      <div class="row g-3">
+        <div class="col-md-4">
+          <div class="kanban-column-header kanban-header-secondary mb-2 rounded" style="background:#7c3aed;color:#fff;">
+            <span class="kanban-title" style="font-size:.85rem;"><i class="bi bi-hourglass-split me-1"></i> Pendiente</span>
+            <span class="kanban-count">{{ web_waves_pending|length }}</span>
+          </div>
+          {% if web_waves_pending %}
+            {% for w in web_waves_pending %}{{ web_wave_card(w) }}{% endfor %}
+          {% else %}
+            <div class="text-center text-muted py-3 small"><i class="bi bi-inbox"></i> Sin olas pendientes</div>
+          {% endif %}
+        </div>
+        <div class="col-md-4">
+          <div class="kanban-column-header mb-2 rounded" style="background:#14b8a6;color:#fff;">
+            <span class="kanban-title" style="font-size:.85rem;"><i class="bi bi-person-walking me-1"></i> En Picking</span>
+            <span class="kanban-count">{{ web_waves_progress|length }}</span>
+          </div>
+          {% if web_waves_progress %}
+            {% for w in web_waves_progress %}{{ web_wave_card(w) }}{% endfor %}
+          {% else %}
+            <div class="text-center text-muted py-3 small"><i class="bi bi-inbox"></i> Sin olas en curso</div>
+          {% endif %}
+        </div>
+        <div class="col-md-4">
+          <div class="kanban-column-header kanban-header-success mb-2 rounded" style="background:#374151;color:#fff;">
+            <span class="kanban-title" style="font-size:.85rem;"><i class="bi bi-check2-all me-1"></i> Finalizadas</span>
+            <span class="kanban-count">{{ web_waves_done|length }}</span>
+          </div>
+          {% if web_waves_done %}
+            {% for w in web_waves_done %}{{ web_wave_card(w) }}{% endfor %}
+          {% else %}
+            <div class="text-center text-muted py-3 small"><i class="bi bi-inbox"></i> Sin olas finalizadas</div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="closeExceptionsModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
@@ -198,6 +371,36 @@
     </div>
   </div>
 </div>
+
+{# ── WEB Wave Picker Modal (calls wms_wave_assign) ── #}
+{% if can_manage %}
+<div class="modal fade" id="webWavePickerModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-person-plus"></i> Asignar Picker — Ola WEB/Manual</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="webWavePickerForm" method="post">
+        <div class="modal-body">
+          <p class="text-muted small">Wave: <strong id="webWavePickerRef"></strong></p>
+          <label class="form-label fw-semibold">Operador</label>
+          <select name="operator_id" class="form-select" required>
+            <option value="">— Seleccionar operador —</option>
+            {% for op in operators %}
+            <option value="{{ op.id }}">{{ op.username }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-primary"><i class="bi bi-person-check"></i> Asignar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
 
 {% if can_manage %}
 <div class="modal fade" id="kanbanPickerModal" tabindex="-1" aria-labelledby="kanbanPickerModalLabel" aria-hidden="true">
@@ -252,6 +455,13 @@ function openPickerModal(planId, folio, waveId) {
   document.getElementById('kanbanPickerFolio').textContent = folio + ' — Wave #' + waveId;
   document.getElementById('kanbanPickerForm').action = '/planner/' + planId + '/assign-picker';
   var modal = new bootstrap.Modal(document.getElementById('kanbanPickerModal'));
+  modal.show();
+}
+
+function openWebPickerModal(waveId, ref) {
+  document.getElementById('webWavePickerRef').textContent = ref + ' (#' + waveId + ')';
+  document.getElementById('webWavePickerForm').action = '/wms/waves/' + waveId + '/assign';
+  var modal = new bootstrap.Modal(document.getElementById('webWavePickerModal'));
   modal.show();
 }
 </script>
