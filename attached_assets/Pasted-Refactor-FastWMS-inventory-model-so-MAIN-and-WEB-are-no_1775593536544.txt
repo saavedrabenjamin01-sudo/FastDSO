@@ -1,0 +1,205 @@
+Refactor FastWMS inventory model so MAIN and WEB are not treated as separate physical warehouses, but as separate logical stock buckets inside the same physical locations.
+
+BUSINESS CONTEXT
+Physical locations are shared.
+Example:
+- same location: A-02
+- same box: 01
+- same SKU
+- total physical units in that box may belong partly to MAIN and partly to WEB
+
+So:
+- LOCATION / BOX_NUMBER are physical
+- MAIN / WEB are logical stock buckets
+
+GOAL
+Replace the current "WEB as separate warehouse" logic with "WEB as separate stock bucket" logic.
+
+CORE CONCEPTS
+
+1) Physical location
+- warehouse_code (physical warehouse, e.g. MAIN if you want to keep it)
+- location
+- box_number
+- location_code
+- location_type
+
+2) Logical stock bucket
+- stock_bucket
+Allowed values for V1:
+- MAIN
+- WEB
+
+A single physical location can contain the same SKU in multiple stock buckets.
+
+EXAMPLE
+Location A-02 / Box 01 / SKU X
+- 5 units in stock_bucket = MAIN
+- 5 units in stock_bucket = WEB
+
+MODEL CHANGES
+
+1) Update WmsInventory
+Add field:
+- stock_bucket (string, required, indexed)
+
+Unique constraint must become:
+- (location_id, product_id, stock_bucket)
+
+Current fields remain:
+- location_id
+- product_id
+- on_hand_units
+- allocated_units
+- on_hand_pallets
+- updated_at
+
+2) Update WmsPickWave
+Replace the operational stock origin concept:
+- add source_stock_bucket (string, required)
+Allowed values:
+- MAIN
+- WEB
+
+Keep source_warehouse_code only if needed for backward compatibility, but the reservation logic must now use source_stock_bucket as the stock ownership filter.
+Physical warehouse/layout remains shared.
+
+3) Update WmsPickReservation
+Add:
+- stock_bucket (string, required)
+
+4) Update any move or issue models if needed so they preserve stock_bucket context.
+
+UPLOAD / STOCK LOAD CHANGES
+
+1) Update the stock load format to support:
+- SKU
+- PRODUCT_NAME
+- QUANTITY
+- CATEGORY
+- WAREHOUSE
+- LOCATION_CODE
+- LOCATION_TYPE
+- LOCATION
+- BOX_NUMBER
+- STOCK_BUCKET
+- NOTE
+
+2) STOCK_BUCKET is required for new loads
+Allowed values:
+- MAIN
+- WEB
+
+3) If STOCK_BUCKET missing:
+- default to MAIN for backward compatibility
+- log warning
+
+4) When loading stock:
+- create/update WmsInventory by:
+   location_id + product_id + stock_bucket
+- do not merge MAIN and WEB quantities together
+
+RESERVATION LOGIC CHANGES
+
+1) All picking waves must reserve from:
+- physical locations shared as usual
+- but only inventory rows where:
+   WmsInventory.stock_bucket == wave.source_stock_bucket
+
+2) Replace any hardcoded warehouse-based reservation logic:
+- do not treat WEB as a separate warehouse anymore
+- treat WEB as a stock bucket
+- physical location search still uses shared WmsLocation
+
+3) Reservation sort order remains:
+- location_type priority (PICK first, BULK second)
+- available_units ascending
+- location ascending
+- box_number ascending
+
+4) Reallocation logic must also respect stock_bucket:
+- only search alternative stock in the same stock_bucket
+- never reallocate from MAIN to WEB or WEB to MAIN automatically
+
+WAVE CREATION CHANGES
+
+1) Planner/distribution waves:
+- source_stock_bucket = MAIN
+
+2) Manual WEB waves:
+- source_stock_bucket = WEB by default
+
+3) Manual OTHER waves:
+- allow choosing stock bucket:
+   MAIN or WEB
+
+UI CHANGES
+
+1) Manual wave creation page
+Replace/adjust "Origen de stock" so it refers to:
+- stock bucket, not warehouse
+Label in Spanish:
+- "Bucket de stock"
+Options:
+- MAIN
+- WEB
+
+2) WMS Waves list and detail
+Show:
+- Bucket de stock: MAIN / WEB
+- Do not present WEB as a different physical layout
+- Keep physical location logic shared
+
+3) WMS inventory screen
+Allow filtering by:
+- stock_bucket
+Display stock bucket column:
+- MAIN / WEB
+
+4) Mobile picking screen
+Show:
+- Ubicación
+- Caja
+- SKU
+- Bucket de stock
+This tells the operator which logical stock pool is being consumed, even though the physical box is shared.
+
+BACKWARD COMPATIBILITY / MIGRATION
+
+1) Existing WmsInventory rows without stock_bucket:
+- set stock_bucket = MAIN by default
+- do not crash startup
+- use safe migration for sqlite
+
+2) Existing waves:
+- if planner wave -> source_stock_bucket = MAIN
+- if manual web wave -> source_stock_bucket = WEB
+- if unknown -> default MAIN and log warning
+
+3) Existing reservations:
+- populate stock_bucket from linked wave if missing
+
+TESTING / DEBUG LOGS
+
+Add logs:
+- [WMS] stock load sku=... location=... box=... bucket=... qty=...
+- [WMS] reserve sku=... bucket=... required=... reserved=...
+- [WMS] reallocation sku=... bucket=... missing=... candidates=...
+
+REQUIRED OUTCOME
+
+After refactor:
+- WEB and MAIN can coexist in the same physical location/box for the same SKU
+- waves consume stock from the correct stock bucket
+- physical layout remains shared
+- manual WEB waves use WEB bucket by default
+- Planner/distribution waves use MAIN bucket
+- no breaking changes to existing FastDSO/Planner/WMS flow
+
+DELIVERABLES
+- WmsInventory supports stock_bucket
+- wave reservation logic uses source_stock_bucket
+- stock upload supports STOCK_BUCKET
+- WMS inventory view supports filtering/display by bucket
+- mobile and desktop views show stock bucket context
+- no more treating WEB as a separate physical warehouse
