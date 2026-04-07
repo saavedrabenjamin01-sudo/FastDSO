@@ -71,6 +71,12 @@ Mis Waves
           <span class="m-badge {% if w.status == 'NEEDS_REVIEW' %}m-badge-red{% elif w.status == 'IN_PROGRESS' %}m-badge-purple{% else %}m-badge-blue{% endif %}">
             {{ w.status.replace('_', ' ') }}
           </span>
+          {% if w.source_warehouse_code %}
+          <span class="m-badge" style="background:{% if w.source_warehouse_code == 'WEB' %}#7c3aed{% else %}#1e40af{% endif %};color:#fff;font-size:.62rem;letter-spacing:.3px;">
+            <i class="bi bi-{% if w.source_warehouse_code == 'WEB' %}globe{% else %}building{% endif %}" style="font-size:.6rem;"></i>
+            {{ w.source_warehouse_code }}
+          </span>
+          {% endif %}
         </div>
       </div>
 

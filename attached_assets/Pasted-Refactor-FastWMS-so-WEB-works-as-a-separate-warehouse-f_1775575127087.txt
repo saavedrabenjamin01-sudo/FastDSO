@@ -1,0 +1,102 @@
+Refactor FastWMS so WEB works as a separate warehouse from MAIN.
+
+GOAL
+Differentiate stock and picking flows for:
+- MAIN warehouse -> store distribution, folios, wholesale
+- WEB warehouse -> ecommerce/manual retail picking
+
+WEB must behave as a real separate warehouse inside FastWMS, not just as a store.
+
+BUSINESS RULES
+1) MAIN and WEB are separate stock origins
+2) Planner/distribution waves always use MAIN
+3) Manual ecommerce waves use WEB by default
+4) WEB and MAIN inventory must never be mixed automatically
+5) If WEB has no stock, a WEB wave should become NEEDS_REVIEW, not silently reserve from MAIN
+
+MODEL / DATA RULES
+
+1) Use existing warehouse/store master if WEB already exists there
+2) Treat WEB as a valid WMS warehouse/source just like MAIN
+3) Ensure all relevant WMS entities support warehouse/source filtering:
+- WmsLocation
+- WmsInventory
+- WmsPickWave
+- WmsPickReservation
+- WmsMovement
+- WmsPickIssue
+
+4) WmsPickWave must use:
+- source_warehouse_code
+This must be the real stock origin for reservation and picking.
+
+FLOW RULES
+
+1) Planner-created waves:
+- source_warehouse_code = MAIN
+
+2) Manual waves:
+- if wave_source == MANUAL_WEB:
+   source_warehouse_code = WEB by default
+- if wave_source == MANUAL_OTHER:
+   source warehouse can be selected by authorized user
+
+3) Reservation logic:
+- always reserve only from wave.source_warehouse_code
+- never search or reserve from another warehouse automatically
+
+4) Reallocation logic:
+- if a reservation fails and issue reporting triggers reallocation,
+  search only inside the same source_warehouse_code
+- do not cross from WEB to MAIN or MAIN to WEB automatically
+
+UI CHANGES
+
+1) Manual wave creation page
+- add/keep "Origen de stock" selector
+- if wave type/source is MANUAL_WEB:
+   default to WEB
+- if wave type/source is MANUAL_OTHER:
+   allow selection (MAIN / WEB)
+- show clear label in Spanish:
+   "Bodega origen"
+
+2) Waves list
+- add visible badge/column:
+   "Origen"
+- show MAIN or WEB clearly
+
+3) Wave detail page
+- show:
+   "Origen de stock: MAIN" or "Origen de stock: WEB"
+
+4) WMS inventory screens
+- warehouse filter must include WEB
+- allow viewing WEB stock separately from MAIN stock
+
+5) Mobile picking
+- operator should only execute the wave using its assigned source warehouse context
+- no visual ambiguity about origin warehouse
+
+VALIDATION
+1) If a MANUAL_WEB wave is created and WEB has insufficient stock:
+- allow wave creation
+- set status NEEDS_REVIEW
+- do not reserve from MAIN
+
+2) If MAIN wave lacks stock:
+- same behavior, but only inside MAIN
+
+3) Existing MAIN-based Planner waves must continue to work unchanged
+
+OPTIONAL BUT RECOMMENDED
+- Add a small warning text on manual web wave creation:
+  "Las olas WEB usan exclusivamente stock de la bodega WEB"
+
+DELIVERABLES
+- WEB behaves as a true WMS warehouse/source
+- MAIN and WEB stock are operationally separated
+- manual ecommerce waves default to WEB
+- reservation/reallocation logic respects source_warehouse_code
+- no breaking changes to current Planner/MAIN flow
+- labels in Spanish in UI

@@ -1713,7 +1713,20 @@ def _ensure_wms_defaults(session=None):
         loc = WmsLocation(warehouse_id=wh.id, location_code='BULK-DEFAULT', location_type='BULK', is_active=True)
         s.add(loc)
         s.flush()
-        print("[WMS] Created default location BULK-DEFAULT")
+        print("[WMS] Created default location BULK-DEFAULT (MAIN)")
+    # Ensure WEB warehouse exists as a real, separate stock origin
+    wh_web = s.query(WmsWarehouse).filter_by(code='WEB').first()
+    if not wh_web:
+        wh_web = WmsWarehouse(code='WEB', name='Bodega Web (E-commerce)')
+        s.add(wh_web)
+        s.flush()
+        print("[WMS] Created WEB warehouse")
+    loc_web = s.query(WmsLocation).filter_by(warehouse_id=wh_web.id, location_code='BULK-DEFAULT').first()
+    if not loc_web:
+        loc_web = WmsLocation(warehouse_id=wh_web.id, location_code='BULK-DEFAULT', location_type='BULK', is_active=True)
+        s.add(loc_web)
+        s.flush()
+        print("[WMS] Created default location BULK-DEFAULT (WEB)")
     return wh, loc
 
 

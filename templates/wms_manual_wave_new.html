@@ -91,7 +91,7 @@
           </div>
           <div class="mb-3">
             <label class="form-label small fw-semibold mb-1">
-              Origen de stock <span class="text-danger">*</span>
+              Bodega origen <span class="text-danger">*</span>
             </label>
             <select name="source_warehouse_code" id="srcWhSelect" class="form-select form-select-sm" required>
               {% set _cur_src = src_wh if src_wh else '' %}
@@ -104,7 +104,11 @@
                 <option value="WEB"  {% if _cur_src == 'WEB' %}selected{% endif %}>WEB</option>
               {% endif %}
             </select>
-            <div class="form-text">Stock se reservará exclusivamente de este origen.</div>
+            <div class="form-text">El stock se reservará exclusivamente de esta bodega.</div>
+          </div>
+          <div id="webWarning" class="alert alert-warning py-2 px-3 mb-2" style="font-size:0.8rem; display:none;">
+            <i class="bi bi-exclamation-triangle-fill me-1"></i>
+            Las olas WEB usan exclusivamente stock de la <strong>bodega WEB</strong>. Si no hay stock suficiente, la ola quedará en <strong>NEEDS_REVIEW</strong>.
           </div>
           <div class="alert alert-info py-2 px-3 mb-0" style="font-size:0.8rem;">
             <i class="bi bi-info-circle me-1"></i>
@@ -186,6 +190,14 @@
 <script>
 var _srcWhUserChanged = false;
 
+function _updateWebWarning() {
+  const sel = document.getElementById('srcWhSelect');
+  const warn = document.getElementById('webWarning');
+  if (sel && warn) {
+    warn.style.display = sel.value === 'WEB' ? '' : 'none';
+  }
+}
+
 function toggleRefField() {
   const isWeb = document.getElementById('typeWeb').checked;
   const req = document.getElementById('refRequired');
@@ -197,6 +209,7 @@ function toggleRefField() {
       if (sel.options[i].value === preferred) { sel.selectedIndex = i; break; }
     }
   }
+  _updateWebWarning();
 }
 
 function addLine() {
@@ -241,7 +254,10 @@ document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('tabManualBtn').classList.add('active');
   var srcSel = document.getElementById('srcWhSelect');
   if (srcSel) {
-    srcSel.addEventListener('change', function() { _srcWhUserChanged = true; });
+    srcSel.addEventListener('change', function() {
+      _srcWhUserChanged = true;
+      _updateWebWarning();
+    });
   }
 });
 </script>
