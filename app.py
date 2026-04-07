@@ -10894,9 +10894,10 @@ def wms_manual_wave_new():
         ).first()
         if not product:
             unknown_skus.append(sku_norm)
-            product = Product(sku=sku_norm, name=sku_norm, is_active=True)
+            product = Product(sku=sku_norm, name=sku_norm, eligible_for_distribution=True, is_on_hold=False)
             db.session.add(product)
             db.session.flush()
+            print(f"[MANUAL_WAVE] created stub product sku={sku_norm}")
         resolved_lines.append({
             'product_id': product.id,
             'sku': product.sku,
