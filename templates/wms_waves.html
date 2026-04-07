@@ -120,9 +120,9 @@
             </td>
             <td class="text-muted small">{{ w.created_at.strftime('%d/%m %H:%M') if w.created_at else '—' }}</td>
             <td class="text-center">
-              {% if w.status in ('READY_TO_ASSIGN', 'ASSIGNED') %}
+              {% if w.status in ('READY_TO_ASSIGN', 'ASSIGNED', 'NEEDS_REVIEW') %}
               <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#assignModal{{ w.id }}">
-                <i class="bi bi-person-plus"></i> {% if w.status == 'ASSIGNED' %}Re{% endif %}Asignar
+                <i class="bi bi-person-plus"></i> {% if w.status in ('ASSIGNED', 'NEEDS_REVIEW') %}Re{% endif %}Asignar
               </button>
               {% endif %}
               {% if w.status == 'PICKED' %}
@@ -173,7 +173,7 @@
 {% endif %}
 
 {% for w in waves %}
-{% if w.status in ('READY_TO_ASSIGN', 'ASSIGNED') %}
+{% if w.status in ('READY_TO_ASSIGN', 'ASSIGNED', 'NEEDS_REVIEW') %}
 <div class="modal fade" id="assignModal{{ w.id }}" tabindex="-1">
   <div class="modal-dialog modal-sm">
     <div class="modal-content">

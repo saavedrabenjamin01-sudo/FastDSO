@@ -1727,6 +1727,16 @@ def _ensure_wms_defaults(session=None):
         s.add(loc_web)
         s.flush()
         print("[WMS] Created default location BULK-DEFAULT (WEB)")
+    # WEB-FALLBACK: virtual pick location used when WEB has no real WMS inventory yet
+    loc_web_fallback = s.query(WmsLocation).filter_by(warehouse_id=wh_web.id, location_code='WEB-FALLBACK').first()
+    if not loc_web_fallback:
+        loc_web_fallback = WmsLocation(
+            warehouse_id=wh_web.id, location_code='WEB-FALLBACK',
+            location='WEB', box_number='01', location_type='BULK', is_active=True
+        )
+        s.add(loc_web_fallback)
+        s.flush()
+        print("[WMS] Created fallback location WEB-FALLBACK (WEB)")
     return wh, loc
 
 
@@ -2012,6 +2022,42 @@ def create_manual_pick_wave(wave_source, lines, priority='MEDIUM',
             loc_code_map.get(i.location_id, '')
         ))
 
+    # ── WEB-FALLBACK: store stock lookup when WEB warehouse has no WMS inventory ──
+    _WEB_FALLBACK_NOTE = 'WEB_FALLBACK_STOCK'
+    web_fallback_loc = None
+    web_store_stock_map = {}   # {product_id: qty_available}
+    if source_warehouse_code == 'WEB':
+        web_fallback_loc = (
+            db.session.query(WmsLocation)
+            .filter_by(warehouse_id=wh.id, location_code='WEB-FALLBACK')
+            .first()
+        )
+        # Find store named with "WEB" (case-insensitive) — user-uploaded stock snapshot
+        web_store = (
+            db.session.query(Store)
+            .filter(Store.name.ilike('%web%'))
+            .first()
+        )
+        if web_store:
+            snapshots = (
+                db.session.query(StockSnapshot)
+                .filter(
+                    StockSnapshot.store_id == web_store.id,
+                    StockSnapshot.product_id.in_(product_ids_needed)
+                )
+                .order_by(StockSnapshot.as_of_date.desc())
+                .all()
+            )
+            seen_pids = set()
+            for ss in snapshots:
+                if ss.product_id not in seen_pids and (ss.quantity or 0) > 0:
+                    web_store_stock_map[ss.product_id] = ss.quantity
+                    seen_pids.add(ss.product_id)
+            print(f"[WMS] WEB fallback stock map: store={web_store.name} "
+                  f"products_found={len(web_store_stock_map)} of {len(product_ids_needed)} needed")
+        else:
+            print(f"[WMS] WEB fallback: no store with 'WEB' in name found — fallback unavailable")
+
     urgency = priority if priority in WMS_URGENCY_RANK else 'MEDIUM'
     wave = WmsPickWave(
         warehouse_code=warehouse_code,
@@ -2070,15 +2116,54 @@ def create_manual_pick_wave(wave_source, lines, priority='MEDIUM',
                 note=f"Reserva manual wave #{wave.id} ({wave_source}): {to_reserve} uds en {loc_code}"
             ))
 
+        # ── WEB-FALLBACK: supplement missing qty from store stock if no WMS inventory ──
+        if qty_remaining > 0 and source_warehouse_code == 'WEB' and web_fallback_loc:
+            fallback_avail = web_store_stock_map.get(pid, 0)
+            if fallback_avail > 0:
+                to_fallback = min(fallback_avail, qty_remaining)
+                reservations_for_task.append({
+                    'location_id': web_fallback_loc.id,
+                    'location_code': 'WEB-FALLBACK',
+                    'qty_reserved': to_fallback,
+                    'is_fallback': True
+                })
+                qty_remaining -= to_fallback
+                task_reserved += to_fallback
+                print(f"[WMS] WEB reservation fallback to store stock sku={sku} qty={to_fallback}")
+                db.session.add(WmsInventoryEvent(
+                    event_type='PICK_RESERVE',
+                    ref_type='pick_wave',
+                    ref_id=str(wave.id),
+                    warehouse_id=wh.id,
+                    location_id=web_fallback_loc.id,
+                    product_id=pid,
+                    delta_units=0,
+                    delta_pallets=0,
+                    note=f"Reserva WEB-FALLBACK wave #{wave.id}: {to_fallback} uds ({_WEB_FALLBACK_NOTE})"
+                ))
+            else:
+                print(f"[WMS] WEB: no fallback stock available for sku={sku}")
+        elif source_warehouse_code == 'WEB' and task_reserved > 0:
+            print(f"[WMS] WEB reservation using WMS inventory sku={sku} qty={task_reserved}")
+
         total_reserved += task_reserved
         task_short = qty_remaining
         if task_short > 0:
             has_shortage = True
 
+        # Determine task note — flag WEB fallback if any reservation is fallback
+        _has_fallback_res = any(r.get('is_fallback') for r in reservations_for_task)
         task_status = 'OPEN' if task_short == 0 else 'SHORT'
-        task_note = None if task_short == 0 else f'PARTIAL: reservado {task_reserved}/{qty_needed}'
-        if task_reserved == 0:
+        if task_short == 0 and _has_fallback_res:
+            task_note = _WEB_FALLBACK_NOTE
+        elif task_short > 0 and task_reserved > 0:
+            task_note = f'PARTIAL: reservado {task_reserved}/{qty_needed}'
+            if _has_fallback_res:
+                task_note += f' ({_WEB_FALLBACK_NOTE})'
+        elif task_reserved == 0:
             task_note = 'NO_STOCK_AVAILABLE'
+        else:
+            task_note = None
 
         best_loc = reservations_for_task[0]['location_code'] if reservations_for_task else None
         task = WmsPickTask(
@@ -10633,8 +10718,23 @@ def wms_wave_detail(wave_id):
         })
 
     can_operate = current_user.has_permission('planner:operate') or current_user.has_permission('wms:view')
+    can_manage = current_user.has_permission('planner:manage') or current_user.has_permission('admin:users')
     fully_reserved = all(td['shortage'] == 0 for td in tasks_data)
     has_issues = bool(issues_raw)
+
+    # WEB-FALLBACK detection: any reservation in this wave has location_code == WEB-FALLBACK
+    has_web_fallback = any(
+        r['location_code'] == 'WEB-FALLBACK'
+        for task_res in res_by_task.values()
+        for r in task_res
+    )
+
+    # Operators for assignment (users with wms:view)
+    if can_manage:
+        all_active = db.session.query(User).filter(User.is_active.is_(True)).order_by(User.username).all()
+        operators = [u for u in all_active if u.has_permission('wms:view')]
+    else:
+        operators = []
 
     return render_template(
         'wms_wave_detail.html',
@@ -10646,9 +10746,12 @@ def wms_wave_detail(wave_id):
         total_reserved=total_reserved,
         fulfillment_pct=fulfillment_pct,
         can_operate=can_operate,
+        can_manage=can_manage,
         fully_reserved=fully_reserved,
         has_issues=has_issues,
         issue_reasons=WMS_PICK_ISSUE_REASONS,
+        has_web_fallback=has_web_fallback,
+        operators=operators,
     )
 
 
@@ -10952,7 +11055,9 @@ def wms_wave_assign(wave_id):
     if not wave:
         flash('Wave no encontrada.', 'warning')
         return redirect(url_for('wms_waves_list'))
-    if wave.status not in ('READY_TO_ASSIGN', 'ASSIGNED', 'RELEASED'):
+    print(f"[WMS] assign picker requested wave={wave_id} source={wave.wave_source} status={wave.status}")
+    _assignable_statuses = ('READY_TO_ASSIGN', 'ASSIGNED', 'RELEASED', 'NEEDS_REVIEW')
+    if wave.status not in _assignable_statuses:
         flash(f'No se puede asignar wave en estado {wave.status}.', 'warning')
         return redirect(url_for('wms_waves_list'))
     allowed, msg = _wms_check_priority_gating(wave)
@@ -10967,21 +11072,35 @@ def wms_wave_assign(wave_id):
     if not operator:
         flash('Operador no encontrado.', 'danger')
         return redirect(url_for('wms_waves_list'))
+    if not operator.has_permission('wms:view'):
+        flash(f'{operator.username} no tiene permiso para ejecutar operaciones de almacén.', 'danger')
+        return redirect(url_for('wms_waves_list'))
     old_operator = wave.assigned_to
     wave.assigned_to = operator_id
     wave.assigned_at = datetime.utcnow()
-    wave.status = 'ASSIGNED'
+    # Advance to ASSIGNED only for non-exception statuses; preserve NEEDS_REVIEW shortage signal
+    if wave.status in ('READY_TO_ASSIGN', 'RELEASED'):
+        wave.status = 'ASSIGNED'
+    # ASSIGNED stays ASSIGNED (re-assign), NEEDS_REVIEW stays NEEDS_REVIEW (picker change only)
     db.session.commit()
     action_str = 'reasignada' if old_operator else 'asignada'
+    print(f"[WMS] picker assigned wave={wave_id} user={operator.username} "
+          f"source={wave.wave_source} new_status={wave.status}")
     log_audit(action='wms.wave.assign', entity_type='wms_pick_wave', entity_id=wave.id,
-              status='success', message=f'Wave #{wave.id} {action_str} a {operator.username}')
+              status='success',
+              message=f'Wave #{wave.id} ({wave.wave_source}) {action_str} a {operator.username}')
     try:
         event_t = 'PICKER_REASSIGNED' if old_operator else 'PICKER_ASSIGNED'
         sync_plan_from_wave(wave.id, event_type=event_t, actor_user_id=current_user.id,
                             note=f'Asignado desde WMS a {operator.username}')
+        print(f"[PLANNER-WMS] assignment mirrored wave={wave_id} source={wave.wave_source}")
     except Exception as _e:
         print(f"[PLANNER-WMS] WARNING: sync on wave assign failed: {_e}")
     flash(f'Wave #{wave.id} {action_str} a {operator.username}', 'success')
+    # Redirect back to wave detail if that was the referrer, otherwise waves list
+    next_url = request.form.get('next', '')
+    if next_url == 'detail':
+        return redirect(url_for('wms_wave_detail', wave_id=wave_id))
     return redirect(url_for('wms_waves_list'))
 
 
@@ -11811,16 +11930,33 @@ def api_wms_mobile_reservation_pick(res_id):
         res.status = 'PARTIAL'
     res.updated_at = datetime.utcnow()
 
+    _is_web_fallback = (res.location_code == 'WEB-FALLBACK')
+
     if wh and picked_qty > 0:
-        inv = (
-            db.session.query(WmsInventory)
-            .filter_by(warehouse_id=wh.id, location_id=res.location_id, product_id=res.product_id)
-            .first()
-        )
-        if inv:
-            inv.on_hand_units = max(0, (inv.on_hand_units or 0) - picked_qty)
-            inv.allocated_units = max(0, (inv.allocated_units or 0) - picked_qty)
-            inv.updated_at = datetime.utcnow()
+        if _is_web_fallback:
+            # WEB-FALLBACK mode: decrement StockSnapshot for WEB store instead of WmsInventory
+            print(f"[WMS] WEB-FALLBACK pick: -{picked_qty} uds pid={res.product_id} res #{res_id}")
+            web_store = db.session.query(Store).filter(Store.name.ilike('%web%')).first()
+            if web_store:
+                ss = (
+                    db.session.query(StockSnapshot)
+                    .filter_by(store_id=web_store.id, product_id=res.product_id)
+                    .order_by(StockSnapshot.as_of_date.desc())
+                    .first()
+                )
+                if ss:
+                    ss.quantity = max(0, (ss.quantity or 0) - picked_qty)
+        else:
+            # Normal WMS inventory decrement
+            inv = (
+                db.session.query(WmsInventory)
+                .filter_by(warehouse_id=wh.id, location_id=res.location_id, product_id=res.product_id)
+                .first()
+            )
+            if inv:
+                inv.on_hand_units = max(0, (inv.on_hand_units or 0) - picked_qty)
+                inv.allocated_units = max(0, (inv.allocated_units or 0) - picked_qty)
+                inv.updated_at = datetime.utcnow()
         db.session.add(WmsInventoryEvent(
             event_type='PICK_PICK',
             ref_type='pick_reservation',
@@ -11830,7 +11966,7 @@ def api_wms_mobile_reservation_pick(res_id):
             product_id=res.product_id,
             delta_units=-picked_qty,
             delta_pallets=0,
-            note=f"Mobile pick: -{picked_qty} uds en {res.location_code or res.location_id} res #{res_id}"
+            note=f"{'WEB-FALLBACK' if _is_web_fallback else 'Mobile'} pick: -{picked_qty} uds en {res.location_code or res.location_id} res #{res_id}"
         ))
 
     task = db.session.get(WmsPickTask, res.task_id) if res.task_id else None

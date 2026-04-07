@@ -1,0 +1,149 @@
+Fix two critical FastWMS issues:
+
+A) WMS Waves still cannot assign pickers directly (assignment only works from Planner)
+B) WEB-origin waves show zero stock even when the WEB store actually has stock
+
+GOAL
+1) Make /wms/waves the true assignment source for ALL waves
+2) Make MANUAL_WEB waves able to reserve from WEB stock
+3) Preserve Planner as a mirror/reflection of WMS assignment and execution state
+
+--------------------------------------------------
+PART A — ASSIGNMENT MUST WORK FROM /wms/waves
+--------------------------------------------------
+
+PROBLEM
+Currently picker assignment still only works from Planner.
+WMS Waves should be the source of truth for assignment, but the UI/backend is not actually performing the assignment.
+
+REQUIRED FIX
+
+1) In /wms/waves:
+- every wave in READY_TO_ASSIGN / NEEDS_REVIEW / ASSIGNED state must show action:
+  "Asignar picker"
+- this must work for:
+  - PLANNER waves
+  - MANUAL_WEB waves
+  - MANUAL_OTHER waves
+
+2) Wire the action to the real assignment service
+- use the existing service function (or create one if missing):
+  assign_picker_to_plan_wave(...) or a generalized version for any wave
+- for WMS-only waves (WEB/manual, no plan_id), assignment must still work:
+  - set wave.assigned_to
+  - set wave.assigned_at
+  - set wave.status = ASSIGNED if applicable
+  - write event log PICKER_ASSIGNED
+
+3) Planner sync
+- if wave_source == PLANNER:
+   reflect assignment in Planner folio/item
+- if wave_source == MANUAL_WEB or MANUAL_OTHER:
+   reflect assignment in Planner operational item / WEB item if that mirror exists
+- but the assignment source of truth is /wms/waves
+
+4) Add logs:
+[WMS] assign picker requested wave=...
+[WMS] picker assigned wave=... user=...
+[PLANNER-WMS] assignment mirrored wave=...
+
+--------------------------------------------------
+PART B — WEB STOCK FALLBACK / WEB STOCK SOURCE
+--------------------------------------------------
+
+PROBLEM
+MANUAL_WEB wave correctly detects origin warehouse WEB, but reservation logic sees zero stock.
+Reason:
+WEB exists as a store/sucursal, but not necessarily as WMS warehouse inventory with locations.
+The reservation service is looking only at WmsInventory for WEB and finds nothing.
+
+GOAL
+Allow WEB manual picking to use WEB store stock as stock source if WMS inventory for WEB does not yet exist.
+
+REQUIRED FIX
+
+1) Update reservation source logic
+When wave.source_warehouse_code == "WEB":
+
+First try:
+- normal WMS inventory lookup in WmsInventory / WmsLocation for warehouse WEB
+
+If that returns zero rows or zero stock:
+- fallback to WEB store stock source
+- use the current store stock table/snapshot for the WEB store/sucursal
+- identify WEB by its store code/name/id already present in the system
+
+2) Fallback reservation behavior
+If using WEB fallback stock:
+- reserve logically by SKU only (since no true location structure may exist yet)
+- create WmsPickTask as usual
+- create WmsPickReservation rows with:
+   location_code = "WEB-FALLBACK"
+   location = "WEB"
+   box_number = "01"
+   reserved_qty = qty_reserved
+   status = OPEN
+   is_reallocation = false
+- mark wave/task/reservation with a note/flag:
+   "WEB_FALLBACK_STOCK"
+This keeps the flow operational even without real WEB warehouse locations.
+
+3) Quantity source
+Use current WEB store stock for SKU as available quantity.
+Do NOT use MAIN stock.
+Do NOT mix MAIN and WEB automatically.
+
+4) Status logic
+- If WEB fallback stock is enough -> wave can be READY_TO_ASSIGN
+- If WEB fallback stock is partial -> wave NEEDS_REVIEW
+- If WEB fallback stock is zero -> wave NEEDS_REVIEW
+
+5) Picking behavior for fallback reservations
+For now, allow picking from fallback reservations without strict location scan requirement OR use a fixed dummy location token:
+   location_code = WEB-FALLBACK
+This is temporary until WEB is fully modeled as WMS warehouse with real locations.
+Keep note in UI:
+   "Stock WEB operando en modo simplificado"
+
+6) Inventory updates
+When a WEB fallback reservation is picked:
+- decrease WEB store stock by picked_qty
+- do not try to decrement non-existent WmsInventory rows
+- if WEB WMS inventory exists, continue using the normal path
+
+7) Add logs:
+[WMS] WEB reservation using WMS inventory
+or
+[WMS] WEB reservation fallback to store stock sku=... qty=...
+
+--------------------------------------------------
+PART C — UI / VISUAL FEEDBACK
+--------------------------------------------------
+
+1) In WMS Waves list and detail:
+- show source warehouse clearly:
+   Origen: WEB / MAIN
+- if WEB fallback mode is active:
+   show small badge:
+   "WEB simplificado"
+
+2) In wave detail:
+- manual/web waves must still be assignable from WMS Waves
+- show assigned picker clearly
+
+--------------------------------------------------
+PART D — SAFETY
+--------------------------------------------------
+
+- Do not break MAIN warehouse behavior
+- MAIN must continue using full WMS inventory/location logic only
+- WEB fallback must be limited to source_warehouse_code == WEB
+- Do not silently take stock from MAIN for WEB waves
+- Keep Planner synchronization working
+
+DELIVERABLES
+- picker assignment works from /wms/waves for all wave types
+- MANUAL_WEB waves can reserve using WEB stock
+- WEB fallback works if WEB has no WMS location inventory yet
+- Planner remains a mirror, not the source of truth for assignment
+- no breaking changes to MAIN folio flow

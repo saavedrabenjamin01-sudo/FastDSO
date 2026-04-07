@@ -464,11 +464,35 @@ var skuHtml5QrCode = null;
 var cameraActive = false;
 var skuCameraActive = false;
 
+/* ── WEB-FALLBACK: auto-approve virtual location, no scan required ── */
+var IS_WEB_FALLBACK = (EXPECTED_LOC === 'WEB-FALLBACK');
+
 /* ── gate action buttons on both validations ── */
 function updateActionButtons() {
   var enabled = locationValidated && skuValidated;
   document.querySelectorAll('.action-gated').forEach(function(b) { b.disabled = !enabled; });
 }
+
+/* ── Auto-validate WEB-FALLBACK on load ── */
+(function() {
+  if (!IS_WEB_FALLBACK) return;
+  locationValidated = true;
+  var statusEl   = document.getElementById('scan-status');
+  var scanHeader = document.getElementById('scan-header');
+  var scanTitle  = document.getElementById('scan-title');
+  var skuSection = document.getElementById('sku-scan-section');
+  var locCard    = document.querySelector('.mpick-scan-card');
+  if (statusEl) {
+    statusEl.className = 'mpick-scan-status ok';
+    statusEl.innerHTML = '<span class="scan-icon">🌐</span><span><strong>Stock WEB simplificado</strong> — sin escaneo de ubicación requerido</span>';
+  }
+  if (scanHeader) scanHeader.className = 'mpick-scan-header validated';
+  if (scanTitle) {
+    scanTitle.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Paso 1 — Ubicación WEB (auto-verificada)';
+  }
+  if (skuSection) skuSection.style.display = 'block';
+  updateActionButtons();
+})();
 
 /* ── location scan utils ── */
 function parseScanToken(val) {

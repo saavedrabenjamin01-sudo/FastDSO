@@ -88,8 +88,26 @@
   </div>
 </div>
 
+{% if has_web_fallback %}
+<div class="alert alert-info d-flex align-items-start gap-2 mb-3" style="border-left:4px solid #7c3aed;">
+  <i class="bi bi-info-circle-fill mt-1" style="color:#7c3aed;flex-shrink:0;"></i>
+  <div>
+    <strong>Stock WEB operando en modo simplificado</strong><br>
+    <small class="text-muted">
+      Una o más reservaciones de esta ola usan stock de la tienda WEB (WEB-FALLBACK) porque la bodega WEB aún no tiene inventario WMS estructurado.
+      El picking se registrará normalmente; el stock de la tienda WEB se actualizará automáticamente.
+    </small>
+  </div>
+</div>
+{% endif %}
+
 {% if can_operate %}
-<div class="d-flex gap-2 mb-4 flex-wrap">
+<div class="d-flex gap-2 mb-4 flex-wrap align-items-center">
+  {% if wave.status in ('READY_TO_ASSIGN', 'ASSIGNED', 'NEEDS_REVIEW') and can_manage %}
+  <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#detailAssignModal">
+    <i class="bi bi-person-plus"></i> {% if wave.assigned_to %}Reasignar picker{% else %}Asignar picker{% endif %}
+  </button>
+  {% endif %}
   {% if wave.status == 'ASSIGNED' and (wave.assigned_to == current_user.id or current_user.has_permission('admin:users')) %}
   <button class="btn btn-primary" id="btn-start-wave" onclick="apiStartWave({{ wave.id }})">
     <i class="bi bi-play-circle"></i> Iniciar Picking
@@ -107,6 +125,38 @@
     </button>
   </form>
   {% endif %}
+</div>
+{% endif %}
+
+{% if can_manage and wave.status in ('READY_TO_ASSIGN', 'ASSIGNED', 'NEEDS_REVIEW') %}
+<div class="modal fade" id="detailAssignModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-sm modal-dialog-centered">
+    <div class="modal-content">
+      <form method="post" action="{{ url_for('wms_wave_assign', wave_id=wave.id) }}">
+        <input type="hidden" name="next" value="detail">
+        <div class="modal-header">
+          <h6 class="modal-title"><i class="bi bi-person-plus"></i> Asignar Picker — Wave #{{ wave.id }}</h6>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          {% if wave.assigned_operator %}
+          <p class="text-muted small">Picker actual: <strong>{{ wave.assigned_operator.username }}</strong></p>
+          {% endif %}
+          <label class="form-label fw-semibold">Operador</label>
+          <select name="operator_id" class="form-select" required>
+            <option value="">— Seleccionar —</option>
+            {% for op in operators %}
+            <option value="{{ op.id }}" {% if wave.assigned_to == op.id %}selected{% endif %}>{{ op.username }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-check"></i> Asignar</button>
+        </div>
+      </form>
+    </div>
+  </div>
 </div>
 {% endif %}
 
