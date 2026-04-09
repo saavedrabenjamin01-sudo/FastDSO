@@ -1913,6 +1913,10 @@ def wms_create_pick_wave_for_plan(plan_id, priority='MEDIUM', warehouse_code='MA
             task_reserved += to_reserve
 
             loc_code = loc_code_map.get(inv.location_id, '')
+            _loc_str = loc_location_map.get(inv.location_id, '')
+            _box_str = loc_box_map.get(inv.location_id, '')
+            print(f"[WMS] reserve sku={sku} bucket=MAIN "
+                  f"location={_loc_str} box={_box_str} code={loc_code} qty={to_reserve}")
             reservations_for_task.append({
                 'location_id': inv.location_id,
                 'location_code': loc_code,
@@ -2079,40 +2083,7 @@ def create_manual_pick_wave(wave_source, lines, priority='MEDIUM',
             loc_code_map.get(i.location_id, '')
         ))
 
-    # ── WEB-FALLBACK: supplement missing WEB-bucket qty from store stock snapshot ──
     _WEB_FALLBACK_NOTE = 'WEB_FALLBACK_STOCK'
-    web_fallback_loc = None
-    web_store_stock_map = {}   # {product_id: qty_available}
-    if source_stock_bucket == 'WEB':
-        web_fallback_loc = (
-            db.session.query(WmsLocation)
-            .filter_by(warehouse_id=wh.id, location_code='WEB-FALLBACK')
-            .first()
-        )
-        web_store = (
-            db.session.query(Store)
-            .filter(Store.name.ilike('%web%'))
-            .first()
-        )
-        if web_store:
-            snapshots = (
-                db.session.query(StockSnapshot)
-                .filter(
-                    StockSnapshot.store_id == web_store.id,
-                    StockSnapshot.product_id.in_(product_ids_needed)
-                )
-                .order_by(StockSnapshot.as_of_date.desc())
-                .all()
-            )
-            seen_pids = set()
-            for ss in snapshots:
-                if ss.product_id not in seen_pids and (ss.quantity or 0) > 0:
-                    web_store_stock_map[ss.product_id] = ss.quantity
-                    seen_pids.add(ss.product_id)
-            print(f"[WMS] WEB fallback stock: store={web_store.name} "
-                  f"products_found={len(web_store_stock_map)} of {len(product_ids_needed)}")
-        else:
-            print("[WMS] WEB fallback: no store with 'WEB' in name — fallback unavailable")
 
     urgency = priority if priority in WMS_URGENCY_RANK else 'MEDIUM'
     wave = WmsPickWave(
@@ -2160,6 +2131,10 @@ def create_manual_pick_wave(wave_source, lines, priority='MEDIUM',
             qty_remaining -= to_reserve
             task_reserved += to_reserve
             loc_code = loc_code_map.get(inv.location_id, '')
+            _loc_str = loc_location_map.get(inv.location_id, '')
+            _box_str = loc_box_map.get(inv.location_id, '')
+            print(f"[WMS] reserve sku={sku} bucket={source_stock_bucket} "
+                  f"location={_loc_str} box={_box_str} code={loc_code} qty={to_reserve}")
             reservations_for_task.append({
                 'location_id': inv.location_id,
                 'location_code': loc_code,
@@ -2178,36 +2153,8 @@ def create_manual_pick_wave(wave_source, lines, priority='MEDIUM',
                 note=f"Reserva manual wave #{wave.id} ({wave_source}) bucket={source_stock_bucket}: {to_reserve} uds en {loc_code}"
             ))
 
-        # ── WEB-FALLBACK: supplement missing WEB-bucket qty from store snapshot ──
-        if qty_remaining > 0 and source_stock_bucket == 'WEB' and web_fallback_loc:
-            fallback_avail = web_store_stock_map.get(pid, 0)
-            if fallback_avail > 0:
-                to_fallback = min(fallback_avail, qty_remaining)
-                reservations_for_task.append({
-                    'location_id': web_fallback_loc.id,
-                    'location_code': 'WEB-FALLBACK',
-                    'qty_reserved': to_fallback,
-                    'stock_bucket': 'WEB',
-                    'is_fallback': True,
-                })
-                qty_remaining -= to_fallback
-                task_reserved += to_fallback
-                print(f"[WMS] WEB-FALLBACK sku={sku} qty={to_fallback}")
-                db.session.add(WmsInventoryEvent(
-                    event_type='PICK_RESERVE',
-                    ref_type='pick_wave',
-                    ref_id=str(wave.id),
-                    warehouse_id=wh.id,
-                    location_id=web_fallback_loc.id,
-                    product_id=pid,
-                    delta_units=0,
-                    delta_pallets=0,
-                    note=f"Reserva WEB-FALLBACK wave #{wave.id}: {to_fallback} uds ({_WEB_FALLBACK_NOTE})"
-                ))
-            else:
-                print(f"[WMS] WEB-FALLBACK: no store stock for sku={sku}")
-        elif source_stock_bucket == 'WEB' and task_reserved > 0:
-            print(f"[WMS] WEB WMS reservation sku={sku} qty={task_reserved}")
+        if task_reserved == 0 and qty_remaining > 0:
+            print(f"[WMS] fallback used only because no physical location rows exist for sku={sku} bucket={source_stock_bucket}")
 
         total_reserved += task_reserved
         task_short = qty_remaining
@@ -12177,7 +12124,8 @@ def try_reallocate_shortage_for_reservation(reservation_id, missing_qty):
         return {'qty_reallocated': 0, 'new_reservation_ids': [], 'remaining_uncovered': missing_qty}
 
     sku_display = task.sku if task else str(res.product_id)
-    print(f"[WMS] reallocation search sku={sku_display} missing={missing_qty} candidates=searching...")
+    _realloc_bucket_preview = (res.stock_bucket or 'MAIN').upper()
+    print(f"[WMS] reallocation sku={sku_display} bucket={_realloc_bucket_preview} missing={missing_qty} candidates=searching...")
 
     loc_type_priority = db.case(
         (WmsLocation.location_type == 'PICK', 0),

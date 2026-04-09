@@ -1,0 +1,104 @@
+Remove WEB-FALLBACK reservation behavior and make WEB use the same physical locations as MAIN, with stock separated only by stock bucket.
+
+PROBLEM
+WEB/manual picking waves still show reservation location as WEB-FALLBACK during picking.
+This happens because the system is still treating WEB as if it had no real physical locations.
+
+BUSINESS REALITY
+MAIN and WEB share the same physical warehouse layout:
+- same LOCATION
+- same BOX_NUMBER
+- same LOCATION_CODE
+But stock is separated logically by bucket:
+- MAIN bucket
+- WEB bucket
+
+Example:
+Location A-02 / Box 01 / SKU X
+- 5 units in stock_bucket MAIN
+- 5 units in stock_bucket WEB
+
+GOAL
+WEB waves must reserve from the same physical locations as MAIN, but using only inventory rows where stock_bucket = WEB.
+WEB-FALLBACK must be eliminated for normal operation.
+
+REQUIRED FIX
+
+1) Reservation logic
+Update all reservation logic for WEB/manual waves:
+- do NOT look for a separate physical warehouse layout called WEB
+- do NOT generate synthetic location_code = WEB-FALLBACK
+- instead:
+   - use shared WmsLocation physical locations
+   - reserve from WmsInventory rows where:
+       stock_bucket == wave.source_stock_bucket
+   - for WEB waves:
+       stock_bucket = WEB
+   - for Planner/distribution waves:
+       stock_bucket = MAIN
+
+2) Physical location source
+Reservation queries must join:
+- WmsInventory
+- WmsLocation
+using normal shared locations
+and filter by:
+- stock_bucket
+- active location
+- available_units > 0
+
+3) Remove fallback for WEB
+If WEB stock exists in shared physical locations, reservation must use:
+- real location
+- real box
+- real location_code
+Never:
+- WEB-FALLBACK
+
+Only keep fallback if absolutely necessary for legacy data with no physical location rows at all, but normal operation should no longer hit it.
+If fallback is still retained for edge-case legacy rows:
+- only use it when no physical location exists for that SKU+bucket
+- add explicit warning log
+
+4) Picking UI
+In mobile and desktop wave detail:
+- show real physical location:
+   Ubicación
+   Caja
+   Código ubicación
+- also show:
+   Bucket de stock: WEB / MAIN
+This makes it clear that the physical location is shared but the stock bucket is different.
+
+5) Reallocation logic
+When reallocation happens for WEB waves:
+- search other shared physical locations
+- filter by stock_bucket = WEB only
+- do not use MAIN stock
+- do not generate WEB-FALLBACK
+
+6) Data assumptions
+Assume:
+- WmsLocation defines physical shared locations
+- WmsInventory is unique by:
+   location_id + product_id + stock_bucket
+So the same physical location may contain separate MAIN and WEB rows for the same SKU.
+
+7) Debug logs
+Add logs:
+[WMS] reserve sku=... bucket=WEB location=... box=... qty=...
+[WMS] reserve sku=... bucket=MAIN location=... box=... qty=...
+[WMS] fallback used only because no physical location rows exist for sku=... bucket=...
+
+8) Safety
+- Do not break Planner/MAIN waves
+- Do not mix MAIN and WEB buckets
+- Keep physical locations shared
+- Do not overwrite existing location data
+- Avoid synthetic fallback locations in normal flow
+
+DELIVERABLES
+- WEB waves reserve from real shared locations
+- WEB-FALLBACK disappears from normal picking
+- mobile and desktop picking show real locations with stock bucket context
+- no breaking changes to MAIN folio flow
