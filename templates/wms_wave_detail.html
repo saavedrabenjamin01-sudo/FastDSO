@@ -148,7 +148,7 @@
           <select name="operator_id" class="form-select" required>
             <option value="">— Seleccionar —</option>
             {% for op in operators %}
-            <option value="{{ op.id }}" {% if wave.assigned_to == op.id %}selected{% endif %}>{{ op.username }}</option>
+            <option value="{{ op.id }}" {% if wave.assigned_to == op.id %}selected{% endif %}>{{ op.username }} — {{ op.role_display }}</option>
             {% endfor %}
           </select>
         </div>

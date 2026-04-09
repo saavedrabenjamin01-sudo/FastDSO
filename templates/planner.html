@@ -388,7 +388,7 @@
           <select name="operator_id" class="form-select" required>
             <option value="">— Seleccionar operador —</option>
             {% for op in operators %}
-            <option value="{{ op.id }}">{{ op.username }}</option>
+            <option value="{{ op.id }}">{{ op.username }} — {{ op.role_display }}</option>
             {% endfor %}
           </select>
         </div>
@@ -418,7 +418,7 @@
           <select name="picker_user_id" class="form-select" required>
             <option value="">— Seleccionar operador —</option>
             {% for op in operators %}
-            <option value="{{ op.id }}">{{ op.username }}</option>
+            <option value="{{ op.id }}">{{ op.username }} — {{ op.role_display }}</option>
             {% endfor %}
           </select>
         </div>

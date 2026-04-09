@@ -1,0 +1,68 @@
+Fix picker assignment dropdown in WMS Waves so it shows the correct eligible warehouse operators instead of only the admin.
+
+PROBLEM
+When assigning a picking wave, the picker selector only shows the admin user.
+This happens even though warehouse/operator profiles already exist.
+
+GOAL
+The assignment dropdown must list all users who are valid pickers according to the new RBAC system.
+
+REQUIRED FIX
+
+1) Inspect the picker assignment query used in:
+- /wms/waves
+- assignment modal / assignment form
+- any backend route that loads eligible pickers
+
+2) Remove old hardcoded role filtering
+If the code is filtering by old role text or admin-only logic, replace it.
+Examples of wrong patterns:
+- role == 'admin'
+- role == 'warehouse'
+- role text field only
+- role_id assumptions without permission check
+
+3) Use RBAC permission-based filtering
+Eligible pickers should be users who:
+- are active
+- and have permission:
+   wms:pick
+
+Optional:
+- admins may still appear if desired, but warehouse operators with wms:pick must definitely appear
+
+4) Preferred implementation
+Create helper:
+get_assignable_pickers()
+
+Behavior:
+- return active users whose role has permission code 'wms:pick'
+- sort by name/username ascending
+
+5) Backward compatibility
+If some users still use old role text fields and no role_id is set:
+- map them safely if possible
+- but prefer the new RBAC structure
+
+6) UI check
+In the assignment modal/dropdown:
+- show readable display names
+- optionally include role label in smaller text
+Example:
+  "Juan Pérez — Operario bodega"
+
+7) Validation
+When submitting assignment:
+- allow assigning only to users returned by get_assignable_pickers()
+- if selected user lacks wms:pick, block with controlled error
+
+8) Debug logs
+Add logs:
+[WMS] assignable pickers found: X
+[WMS] picker candidate user=... role=...
+This helps confirm RBAC filtering works
+
+DELIVERABLES
+- assignment dropdown shows warehouse operators, not only admin
+- assignment submission validates wms:pick permission
+- no breaking changes to existing WMS/Planner flow

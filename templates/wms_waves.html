@@ -192,7 +192,7 @@
           <select name="operator_id" class="form-select" required>
             <option value="">Seleccione...</option>
             {% for op in operators %}
-            <option value="{{ op.id }}" {% if w.assigned_to == op.id %}selected{% endif %}>{{ op.username }} ({{ op.role }})</option>
+            <option value="{{ op.id }}" {% if w.assigned_to == op.id %}selected{% endif %}>{{ op.username }} — {{ op.role_display }}</option>
             {% endfor %}
           </select>
         </div>

@@ -10824,12 +10824,8 @@ def wms_wave_detail(wave_id):
         for r in task_res
     )
 
-    # Operators for assignment (users with wms:view)
-    if can_manage:
-        all_active = db.session.query(User).filter(User.is_active.is_(True)).order_by(User.username).all()
-        operators = [u for u in all_active if u.has_permission('wms:view')]
-    else:
-        operators = []
+    # Operators for assignment (users with wms:pick)
+    operators = get_assignable_pickers() if can_manage else []
 
     return render_template(
         'wms_wave_detail.html',
@@ -10972,7 +10968,7 @@ def wms_waves_list():
     waves_start = (waves_page - 1) * waves_per_page
 
     waves = q.offset(waves_start).limit(waves_per_page).all()
-    operators = db.session.query(User).filter(User.role.in_(['WarehouseOps', 'Admin'])).filter(User.is_active == True).all()
+    operators = get_assignable_pickers()
     return render_template(
         'wms_waves.html',
         waves=waves,
@@ -11151,6 +11147,18 @@ def wms_manual_wave_new():
                                all_warehouses=all_warehouses, bucket_values=bucket_values)
 
 
+def get_assignable_pickers():
+    """Return active users whose role grants the wms:pick permission, sorted by username.
+    Uses RBAC permission check — not legacy role text fields.
+    """
+    all_active = db.session.query(User).filter(User.is_active.is_(True)).order_by(User.username).all()
+    pickers = [u for u in all_active if u.has_permission('wms:pick')]
+    print(f"[WMS] assignable pickers found: {len(pickers)}")
+    for u in pickers:
+        print(f"[WMS] picker candidate user={u.username} role={u.role_display}")
+    return pickers
+
+
 @app.route('/wms/waves/<int:wave_id>/assign', methods=['POST'])
 @login_required
 @require_permission('wms:view')
@@ -11176,8 +11184,8 @@ def wms_wave_assign(wave_id):
     if not operator:
         flash('Operador no encontrado.', 'danger')
         return redirect(url_for('wms_waves_list'))
-    if not operator.has_permission('wms:view'):
-        flash(f'{operator.username} no tiene permiso para ejecutar operaciones de almacén.', 'danger')
+    if not operator.has_permission('wms:pick'):
+        flash(f'{operator.username} no tiene el permiso de picking requerido (wms:pick).', 'danger')
         return redirect(url_for('wms_waves_list'))
     old_operator = wave.assigned_to
     wave.assigned_to = operator_id
@@ -11879,7 +11887,7 @@ def wms_kpis():
         })
     operator_rows.sort(key=lambda r: r['uph'], reverse=True)
 
-    operators = db.session.query(User).filter(User.role.in_(['WarehouseOps', 'Admin'])).filter(User.is_active == True).all()
+    operators = get_assignable_pickers()
 
     return render_template('wms_kpis.html',
                            from_date=from_date.isoformat(), to_date=to_date.isoformat(),
@@ -20434,11 +20442,7 @@ def planner():
     can_operate = current_user.has_permission('planner:operate')
     can_manage = current_user.has_permission('planner:manage') or current_user.has_permission('admin:users')
 
-    if can_manage:
-        all_active = db.session.query(User).filter(User.is_active.is_(True)).order_by(User.username).all()
-        operators = [u for u in all_active if u.has_permission('wms:view')]
-    else:
-        operators = []
+    operators = get_assignable_pickers() if can_manage else []
 
     # ── Plan-level urgency blockers ──
     blocking_statuses = ['APPROVED', 'IN_PROGRESS', 'PACKED']
@@ -20568,11 +20572,7 @@ def planner_detail(plan_id):
         .all()
     )
 
-    if can_manage:
-        all_active = db.session.query(User).filter(User.is_active.is_(True)).order_by(User.username).all()
-        operators = [u for u in all_active if u.has_permission('wms:view')]
-    else:
-        operators = []
+    operators = get_assignable_pickers() if can_manage else []
 
     wms_issues = get_wms_issues_for_plan(plan.id)
 
@@ -20691,8 +20691,8 @@ def planner_assign_picker(plan_id):
     if not picker or not picker.is_active:
         flash('Operador no válido o inactivo', 'danger')
         return redirect(url_for('planner') if next_dest == 'planner' else url_for('planner_detail', plan_id=plan_id))
-    if not picker.has_permission('wms:view'):
-        flash(f'{picker.username} no tiene permiso para ejecutar operaciones de almacén', 'danger')
+    if not picker.has_permission('wms:pick'):
+        flash(f'{picker.username} no tiene el permiso de picking requerido (wms:pick)', 'danger')
         return redirect(url_for('planner') if next_dest == 'planner' else url_for('planner_detail', plan_id=plan_id))
     try:
         wave = assign_picker_to_plan_wave(plan_id, picker_user_id, manager_user_id=current_user.id)
