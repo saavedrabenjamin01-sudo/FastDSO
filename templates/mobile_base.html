@@ -283,17 +283,22 @@
   <a href="{{ url_for('wms_mobile_my_waves') }}"
      class="m-nav-item {% block nav_waves_active %}{% endblock %}">
     <i class="bi bi-list-task"></i>
-    Mis Waves
+    Waves
   </a>
-  <a href="{{ url_for('wms_mobile_my_waves') }}"
-     class="m-nav-item {% block nav_pick_active %}{% endblock %}">
-    <i class="bi bi-hand-index-thumb"></i>
-    Picking
-  </a>
-  <a href="{{ url_for('wms_waves_list') }}"
+  <a href="{{ url_for('wms_mobile_issues') }}"
      class="m-nav-item {% block nav_issues_active %}{% endblock %}">
     <i class="bi bi-exclamation-triangle"></i>
-    Incidencias
+    Incid.
+  </a>
+  <a href="{{ url_for('wms_mobile_moves') }}"
+     class="m-nav-item {% block nav_moves_active %}{% endblock %}">
+    <i class="bi bi-arrow-left-right"></i>
+    Movim.
+  </a>
+  <a href="{{ url_for('wms_mobile_inventory') }}"
+     class="m-nav-item {% block nav_inventory_active %}{% endblock %}">
+    <i class="bi bi-boxes"></i>
+    Inv.
   </a>
   <a href="{{ url_for('logout') }}" class="m-nav-item danger">
     <i class="bi bi-box-arrow-right"></i>

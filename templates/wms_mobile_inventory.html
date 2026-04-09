@@ -1,0 +1,213 @@
+{% extends "mobile_base.html" %}
+{% block title %}Inventario{% endblock %}
+{% block topbar_back %}{% endblock %}
+{% block topbar_logo %}<div class="m-topbar-logo"><i class="bi bi-boxes"></i></div>{% endblock %}
+{% block topbar_title %}Inventario<small>Consulta por ubicación / SKU</small>{% endblock %}
+{% block topbar_right %}
+<a href="{{ url_for('wms_inventory') }}" class="m-topbar-icon-btn" title="Vista escritorio">
+  <i class="bi bi-display"></i>
+</a>
+{% endblock %}
+{% block nav_inventory_active %}active{% endblock %}
+
+{% block head %}
+<style>
+  .inv-search-bar {
+    position: sticky; top: 0; z-index: 50;
+    background: var(--m-blue-deep); padding: 10px 12px 10px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.18);
+  }
+  .inv-search-input {
+    width: 100%; padding: 11px 14px; border-radius: 12px;
+    border: none; font-size: .95rem; background: rgba(255,255,255,.97);
+    color: var(--m-text); margin-bottom: 8px;
+  }
+  .inv-search-input:focus { outline: none; }
+  .inv-filter-row { display: flex; gap: 6px; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
+  .inv-filter-row::-webkit-scrollbar { display: none; }
+  .inv-filter-select {
+    flex-shrink: 0; padding: 7px 10px; border-radius: 9px;
+    border: none; background: rgba(255,255,255,.18); color: #fff;
+    font-size: .78rem; font-weight: 600; cursor: pointer;
+    -webkit-appearance: none;
+  }
+  .inv-filter-select option { color: #0f172a; background: #fff; }
+  .inv-search-btn {
+    flex-shrink: 0; padding: 7px 14px; border-radius: 9px;
+    border: none; background: rgba(255,255,255,.95); color: var(--m-blue);
+    font-size: .82rem; font-weight: 700; cursor: pointer;
+  }
+
+  /* Stats bar */
+  .inv-stats {
+    display: flex; gap: 0; background: #fff;
+    border-bottom: 1px solid var(--m-border);
+  }
+  .inv-stat { flex: 1; text-align: center; padding: 9px 4px; border-right: 1px solid var(--m-border); }
+  .inv-stat:last-child { border-right: none; }
+  .inv-stat-val { font-size: .95rem; font-weight: 800; color: var(--m-text); }
+  .inv-stat-lbl { font-size: .58rem; color: var(--m-muted); text-transform: uppercase; letter-spacing: .4px; margin-top: 1px; }
+
+  /* Inventory cards */
+  .inv-card {
+    background: #fff; border-radius: 14px; margin: 10px 12px 0;
+    box-shadow: 0 1px 8px rgba(14,30,80,.08); overflow: hidden;
+    border-left: 4px solid #e2e8f0;
+  }
+  .inv-card.bucket-web { border-left-color: var(--m-purple); }
+  .inv-card.bucket-main { border-left-color: var(--m-blue-lt); }
+  .inv-card-top {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: 10px 12px 8px; border-bottom: 1px solid var(--m-border);
+  }
+  .inv-loc { font-size: 1rem; font-weight: 800; color: var(--m-text); font-family: monospace; }
+  .inv-loc-sub { font-size: .7rem; color: var(--m-muted); margin-top: 1px; }
+  .inv-card-body { padding: 8px 12px; }
+  .inv-sku  { font-size: .77rem; font-weight: 700; color: var(--m-muted); font-family: monospace; }
+  .inv-name { font-size: .9rem; font-weight: 600; color: var(--m-text); margin-top: 1px; }
+  .inv-units-row { display: flex; gap: 8px; margin-top: 8px; }
+  .inv-unit-box { flex: 1; text-align: center; background: var(--m-bg); border-radius: 9px; padding: 6px 4px; }
+  .inv-unit-val { font-size: 1rem; font-weight: 800; color: var(--m-text); }
+  .inv-unit-val.zero { color: #94a3b8; }
+  .inv-unit-val.avail { color: var(--m-green); }
+  .inv-unit-val.alloc { color: var(--m-orange); }
+  .inv-unit-lbl { font-size: .62rem; color: var(--m-muted); text-transform: uppercase; letter-spacing: .4px; margin-top: 2px; }
+  .inv-card-footer {
+    padding: 8px 12px 10px; border-top: 1px solid var(--m-border);
+    display: flex; gap: 8px; background: #f8fafc;
+  }
+  .inv-action-btn {
+    flex: 1; padding: 8px; border-radius: 9px; border: 1.5px solid var(--m-border);
+    background: #fff; color: var(--m-blue); font-size: .78rem; font-weight: 700;
+    text-align: center; cursor: pointer; text-decoration: none;
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+    -webkit-tap-highlight-color: transparent;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Sticky search bar -->
+<form method="GET" action="{{ url_for('wms_mobile_inventory') }}">
+  <div class="inv-search-bar">
+    <input type="text" name="q" class="inv-search-input"
+           placeholder="🔍  Buscar SKU o producto…"
+           value="{{ q }}"
+           autocomplete="off" spellcheck="false" />
+    <div class="inv-filter-row">
+      <input type="text" name="loc" class="inv-filter-select"
+             placeholder="Ubicación" value="{{ f_loc }}" style="min-width:90px;" />
+      <input type="text" name="box" class="inv-filter-select"
+             placeholder="Caja" value="{{ f_box }}" style="min-width:60px;" />
+      <select name="bucket" class="inv-filter-select">
+        <option value="" {% if not f_bucket %}selected{% endif %}>Bucket</option>
+        <option value="MAIN" {% if f_bucket == 'MAIN' %}selected{% endif %}>MAIN</option>
+        <option value="WEB"  {% if f_bucket == 'WEB'  %}selected{% endif %}>WEB</option>
+      </select>
+      <select name="stock" class="inv-filter-select">
+        <option value="" {% if not f_stock %}selected{% endif %}>Stock</option>
+        <option value="con_stock" {% if f_stock == 'con_stock' %}selected{% endif %}>Con stock</option>
+        <option value="sin_stock" {% if f_stock == 'sin_stock' %}selected{% endif %}>Sin stock</option>
+      </select>
+      <button type="submit" class="inv-search-btn"><i class="bi bi-search"></i> Buscar</button>
+    </div>
+  </div>
+</form>
+
+{% if has_filter %}
+<!-- Stats -->
+<div class="inv-stats">
+  <div class="inv-stat">
+    <div class="inv-stat-val">{{ stats.location_count }}</div>
+    <div class="inv-stat-lbl">Ubic.</div>
+  </div>
+  <div class="inv-stat">
+    <div class="inv-stat-val">{{ stats.product_count }}</div>
+    <div class="inv-stat-lbl">SKUs</div>
+  </div>
+  <div class="inv-stat">
+    <div class="inv-stat-val">{{ stats.total_units }}</div>
+    <div class="inv-stat-lbl">Total uds</div>
+  </div>
+  <div class="inv-stat">
+    <div class="inv-stat-val" style="color:var(--m-green);">{{ stats.total_available }}</div>
+    <div class="inv-stat-lbl">Disponibles</div>
+  </div>
+</div>
+
+<div class="m-page-wrap" style="padding: 4px 0 16px;">
+  {% if inventory %}
+  <div class="m-section-label">{{ inventory|length }}{% if inventory|length == 80 %}+ {% endif %} resultado{{ 's' if inventory|length != 1 }}</div>
+  {% for row in inventory %}
+  {% set bkt = row.stock_bucket or 'MAIN' %}
+  <div class="inv-card bucket-{{ bkt|lower }}">
+    <div class="inv-card-top">
+      <div>
+        <div class="inv-loc">
+          {{ row.location or row.rack or '—' }}
+          {% if row.box_number or row.pallet_position %}
+          <span style="color:var(--m-muted);font-weight:400;"> / Caja {{ row.box_number or row.pallet_position }}</span>
+          {% endif %}
+        </div>
+        <div class="inv-loc-sub"><i class="bi bi-upc me-1"></i>{{ row.location_code }}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+        <span class="m-badge {% if bkt == 'WEB' %}m-badge-purple{% else %}m-badge-gray{% endif %}">
+          <i class="bi bi-{% if bkt == 'WEB' %}globe{% else %}layers{% endif %}" style="font-size:.65rem;"></i>
+          {{ bkt }}
+        </span>
+        <span class="m-badge {% if row.location_type == 'PICK' %}m-badge-pick{% else %}m-badge-bulk{% endif %}" style="font-size:.65rem;">{{ row.location_type or 'BULK' }}</span>
+      </div>
+    </div>
+
+    <div class="inv-card-body">
+      <div class="inv-sku">{{ row.sku }}</div>
+      <div class="inv-name">{{ row.product_name }}</div>
+
+      <div class="inv-units-row">
+        <div class="inv-unit-box">
+          <div class="inv-unit-val {{ 'zero' if row.on_hand_units == 0 else '' }}">{{ row.on_hand_units }}</div>
+          <div class="inv-unit-lbl">Total</div>
+        </div>
+        <div class="inv-unit-box">
+          <div class="inv-unit-val alloc {{ 'zero' if row.allocated_units == 0 else '' }}">{{ row.allocated_units }}</div>
+          <div class="inv-unit-lbl">Asignadas</div>
+        </div>
+        <div class="inv-unit-box">
+          <div class="inv-unit-val avail {{ 'zero' if row.available_units == 0 else '' }}">{{ row.available_units }}</div>
+          <div class="inv-unit-lbl">Disponibles</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="inv-card-footer">
+      <a href="{{ url_for('wms_mobile_moves') }}" class="inv-action-btn">
+        <i class="bi bi-arrow-left-right"></i> Mover
+      </a>
+      <a href="{{ url_for('wms_mobile_inventory') }}?q={{ row.sku|urlencode }}" class="inv-action-btn">
+        <i class="bi bi-search"></i> Más del SKU
+      </a>
+    </div>
+  </div>
+  {% endfor %}
+
+  {% else %}
+  <div class="m-empty" style="padding: 40px 20px;">
+    <div class="m-empty-icon"><i class="bi bi-search"></i></div>
+    <p><strong>Sin resultados</strong></p>
+    <p>Prueba cambiando los filtros o el SKU buscado.</p>
+  </div>
+  {% endif %}
+</div>
+
+{% else %}
+<!-- No filter applied yet -->
+<div class="m-empty" style="margin-top:40px; padding: 40px 24px;">
+  <div class="m-empty-icon"><i class="bi bi-boxes"></i></div>
+  <p><strong>Consulta tu inventario</strong></p>
+  <p>Ingresa un SKU, ubicación o caja para comenzar.</p>
+</div>
+{% endif %}
+
+{% endblock %}

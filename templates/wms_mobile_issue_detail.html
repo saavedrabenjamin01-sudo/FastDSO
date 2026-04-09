@@ -1,0 +1,136 @@
+{% extends "mobile_base.html" %}
+{% block title %}Incidencia #{{ issue.id }}{% endblock %}
+{% block topbar_title %}Incidencia #{{ issue.id }}<small>Detalle completo</small>{% endblock %}
+{% block topbar_back %}
+<a href="{{ url_for('wms_mobile_issues') }}" class="m-topbar-back" title="Incidencias">
+  <i class="bi bi-arrow-left"></i>
+</a>
+{% endblock %}
+{% block nav_issues_active %}active{% endblock %}
+
+{% block head %}
+<style>
+  .detail-section { margin: 12px 12px 0; }
+  .detail-section-title {
+    font-size: .7rem; font-weight: 700; color: var(--m-muted);
+    text-transform: uppercase; letter-spacing: .5px;
+    padding: 10px 0 5px;
+  }
+  .detail-card { background: #fff; border-radius: 14px; box-shadow: var(--m-shadow); overflow: hidden; }
+  .detail-row {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: 11px 14px; border-bottom: 1px solid var(--m-border); font-size: .88rem;
+  }
+  .detail-row:last-child { border-bottom: none; }
+  .detail-label { color: var(--m-muted); flex-shrink: 0; margin-right: 12px; }
+  .detail-val { font-weight: 600; color: var(--m-text); text-align: right; font-family: monospace; font-size: .85rem; word-break: break-all; }
+  .detail-note {
+    background: #f8fafc; padding: 12px 14px; border-top: 1px solid var(--m-border);
+    font-size: .85rem; color: #374151; line-height: 1.5;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="m-page-wrap" style="padding: 0 0 16px;">
+
+  <!-- Resumen -->
+  <div class="detail-section">
+    <div class="m-card" style="border-left: 5px solid var(--m-orange); border-radius: 16px;">
+      <div class="m-card-body">
+        <div style="font-size:.78rem;color:var(--m-muted);margin-bottom:2px;">SKU</div>
+        <div style="font-size:.95rem;font-weight:700;font-family:monospace;margin-bottom:4px;">{{ issue.sku }}</div>
+        <div style="font-size:1rem;font-weight:700;color:var(--m-text);margin-bottom:10px;">{{ issue.product_name }}</div>
+        {% if issue.product_category %}
+        <span class="m-badge m-badge-gray" style="font-size:.68rem;">{{ issue.product_category }}</span>
+        {% endif %}
+        <span class="m-badge m-badge-red ms-1" style="font-size:.68rem;">
+          <i class="bi bi-dash-circle-fill me-1"></i>{{ issue.missing_qty }} uds faltantes
+        </span>
+        <span class="m-badge m-badge-urgent ms-1" style="font-size:.68rem;">{{ issue.reason_code.replace('_',' ') }}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ubicación -->
+  <div class="detail-section">
+    <div class="detail-section-title"><i class="bi bi-geo-alt me-1"></i>Ubicación física</div>
+    <div class="detail-card">
+      <div class="detail-row">
+        <span class="detail-label">Ubicación</span>
+        <span class="detail-val">{{ issue.location or '—' }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Caja</span>
+        <span class="detail-val">{{ issue.box_number or '—' }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Código</span>
+        <span class="detail-val">{{ issue.location_code or '—' }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Tipo</span>
+        <span class="m-badge {% if issue.location_type == 'PICK' %}m-badge-pick{% else %}m-badge-bulk{% endif %}">{{ issue.location_type }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Bucket</span>
+        <span class="m-badge {% if issue.bucket == 'WEB' %}m-badge-purple{% else %}m-badge-gray{% endif %}">{{ issue.bucket }}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tarea asociada -->
+  {% if issue.task_requested %}
+  <div class="detail-section">
+    <div class="detail-section-title"><i class="bi bi-clipboard me-1"></i>Tarea de picking</div>
+    <div class="detail-card">
+      <div class="detail-row">
+        <span class="detail-label">Pedidas (total)</span>
+        <span class="detail-val">{{ issue.task_requested }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Picadas</span>
+        <span class="detail-val" style="color:var(--m-green);">{{ issue.task_picked }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Faltantes</span>
+        <span class="detail-val" style="color:var(--m-red);">{{ issue.missing_qty }}</span>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Meta -->
+  <div class="detail-section">
+    <div class="detail-section-title"><i class="bi bi-info-circle me-1"></i>Datos del reporte</div>
+    <div class="detail-card">
+      <div class="detail-row">
+        <span class="detail-label">Fecha</span>
+        <span class="detail-val">{{ issue.created_at }}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Wave</span>
+        <span class="detail-val">#{{ issue.wave_id }}</span>
+      </div>
+      {% if issue.operator_note %}
+      <div class="detail-note">
+        <div style="font-size:.72rem;color:var(--m-muted);font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px;">Nota del operador</div>
+        {{ issue.operator_note }}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Actions -->
+  <div style="margin: 14px 12px 0;">
+    {% if wave %}
+    <a href="{{ url_for('wms_mobile_pick_wave', wave_id=issue.wave_id) }}" class="m-btn m-btn-ghost" style="margin-bottom:8px;">
+      <i class="bi bi-arrow-right-circle"></i> Ir a la wave
+    </a>
+    {% endif %}
+    <a href="{{ url_for('wms_mobile_issues') }}" class="m-btn m-btn-ghost">
+      <i class="bi bi-arrow-left"></i> Volver a incidencias
+    </a>
+  </div>
+</div>
+{% endblock %}

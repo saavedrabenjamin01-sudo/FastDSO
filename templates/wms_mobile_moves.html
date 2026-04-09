@@ -1,0 +1,175 @@
+{% extends "mobile_base.html" %}
+{% block title %}Movimientos{% endblock %}
+{% block topbar_back %}{% endblock %}
+{% block topbar_logo %}<div class="m-topbar-logo"><i class="bi bi-arrow-left-right"></i></div>{% endblock %}
+{% block topbar_title %}Movimientos<small>Traslados de stock</small>{% endblock %}
+{% block topbar_right %}
+<a href="{{ url_for('wms_moves') }}" class="m-topbar-icon-btn" title="Vista escritorio">
+  <i class="bi bi-display"></i>
+</a>
+{% endblock %}
+{% block nav_moves_active %}active{% endblock %}
+
+{% block head %}
+<style>
+  .move-form-card {
+    background: #fff; border-radius: 16px; margin: 12px 12px 0;
+    box-shadow: var(--m-shadow); overflow: hidden;
+  }
+  .mform-header {
+    padding: 10px 14px 9px;
+    background: linear-gradient(135deg, #eff6ff, #dbeafe);
+    border-bottom: 1px solid #bfdbfe;
+  }
+  .mform-header-title { font-size: .78rem; font-weight: 700; color: var(--m-blue); text-transform: uppercase; letter-spacing: .4px; }
+  .mform-body { padding: 14px; }
+  .mform-field { margin-bottom: 12px; }
+  .mform-label { display: block; font-size: .82rem; font-weight: 600; color: #374151; margin-bottom: 5px; }
+  .mform-req { color: #dc2626; }
+  .mform-input, .mform-select, .mform-textarea {
+    width: 100%; padding: 12px; border-radius: 10px; border: 1.5px solid #cbd5e1;
+    font-size: .9rem; background: #fff; color: var(--m-text);
+    -webkit-appearance: none;
+  }
+  .mform-input:focus, .mform-select:focus, .mform-textarea:focus {
+    outline: none; border-color: var(--m-blue);
+  }
+  .mform-input[type="number"] { font-size: 1.1rem; font-weight: 700; text-align: center; }
+  .mform-separator {
+    display: flex; align-items: center; gap: 10px; margin: 14px 0 10px;
+  }
+  .mform-separator hr { flex: 1; border: none; border-top: 1px solid var(--m-border); }
+  .mform-separator span { font-size: .72rem; font-weight: 700; color: var(--m-muted); text-transform: uppercase; letter-spacing: .4px; }
+
+  /* Recent moves cards */
+  .move-run-card {
+    background: #fff; border-radius: 14px; margin: 10px 12px 0;
+    box-shadow: 0 1px 6px rgba(14,30,80,.08);
+    border-left: 4px solid var(--m-blue-lt); overflow: hidden;
+  }
+  .move-run-body { padding: 10px 14px; }
+  .move-run-meta { font-size: .72rem; color: var(--m-muted); margin-bottom: 5px; }
+  .move-run-route {
+    display: flex; align-items: center; gap: 8px; font-size: .88rem;
+    font-weight: 700; font-family: monospace; color: var(--m-text);
+  }
+  .move-run-route i { color: var(--m-blue-lt); }
+  .move-run-stats { display: flex; gap: 12px; margin-top: 7px; font-size: .78rem; color: var(--m-muted); }
+  .move-run-stats strong { color: var(--m-text); font-weight: 700; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="m-page-wrap" style="padding-bottom: 16px;">
+
+  <!-- CREATE MOVE FORM -->
+  <div class="m-section-label"><i class="bi bi-plus-circle me-1"></i>Nuevo movimiento</div>
+  <div class="move-form-card">
+    <div class="mform-header">
+      <div class="mform-header-title"><i class="bi bi-arrow-left-right me-1"></i>Crear traslado de stock</div>
+    </div>
+    <div class="mform-body">
+      <form method="POST" action="{{ url_for('wms_moves_create') }}">
+
+        <div class="mform-field">
+          <label class="mform-label">SKU <span class="mform-req">*</span></label>
+          <input type="text" name="sku" class="mform-input"
+                 placeholder="p. ej. ABC-001"
+                 autocomplete="off" autocapitalize="characters" spellcheck="false" required />
+        </div>
+
+        <div class="mform-separator">
+          <hr /><span>Origen</span><hr />
+        </div>
+
+        <div class="mform-field">
+          <label class="mform-label">Ubicación origen <span class="mform-req">*</span></label>
+          <select name="from_location_id" class="mform-select" required>
+            <option value="">— Seleccionar —</option>
+            {% for loc in location_options %}
+            <option value="{{ loc.id }}">{{ loc.label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="mform-separator">
+          <hr /><span>Destino</span><hr />
+        </div>
+
+        <div class="mform-field">
+          <label class="mform-label">Ubicación destino <span class="mform-req">*</span></label>
+          <select name="to_location_id" class="mform-select" required>
+            <option value="">— Seleccionar —</option>
+            {% for loc in location_options %}
+            <option value="{{ loc.id }}">{{ loc.label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="mform-separator">
+          <hr /><span>Cantidad</span><hr />
+        </div>
+
+        <div class="mform-field">
+          <label class="mform-label">Unidades <span class="mform-req">*</span></label>
+          <input type="number" name="units" class="mform-input" min="1" placeholder="0" required />
+        </div>
+
+        <div class="mform-field">
+          <label class="mform-label">Pallets (opcional)</label>
+          <input type="number" name="pallets" class="mform-input" min="0" step="0.5" placeholder="0" />
+        </div>
+
+        <div class="mform-field">
+          <label class="mform-label">Motivo (opcional)</label>
+          <select name="reason" class="mform-select">
+            <option value="">— Sin motivo —</option>
+            <option value="REBALANCING">Rebalanceo</option>
+            <option value="PICK_REPLENISHMENT">Reponer PICK</option>
+            <option value="QUALITY_HOLD">Cuarentena</option>
+            <option value="DAMAGE">Daño</option>
+            <option value="CORRECTION">Corrección</option>
+            <option value="OTHER">Otro</option>
+          </select>
+        </div>
+
+        <button type="submit" class="m-btn m-btn-primary mt-2">
+          <i class="bi bi-check2-circle"></i> Confirmar movimiento
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- RECENT MOVES -->
+  {% if recent_runs %}
+  <div class="m-section-label" style="margin-top:16px;"><i class="bi bi-clock-history me-1"></i>Movimientos recientes</div>
+  {% for run in recent_runs %}
+  <div class="move-run-card">
+    <div class="move-run-body">
+      <div class="move-run-meta">{{ run.created_at }} · {{ run.user }}</div>
+      <div class="move-run-route">
+        <span>{{ run.from_loc }}</span>
+        <i class="bi bi-arrow-right"></i>
+        <span>{{ run.to_loc }}</span>
+      </div>
+      {% if run.first_sku and run.first_sku != '?' %}
+      <div style="font-size:.75rem;color:var(--m-muted);margin-top:3px;font-family:monospace;">{{ run.first_sku }}{% if run.total_lines > 1 %} +{{ run.total_lines - 1 }} más{% endif %}</div>
+      {% endif %}
+      <div class="move-run-stats">
+        <span><strong>{{ run.total_units }}</strong> uds</span>
+        <span><strong>{{ run.total_lines }}</strong> línea{{ 's' if run.total_lines != 1 }}</span>
+        <span class="m-badge m-badge-green" style="font-size:.65rem;padding:2px 7px;">{{ run.status }}</span>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+  {% else %}
+  <div class="m-empty" style="margin-top:20px; padding:32px 20px;">
+    <div class="m-empty-icon"><i class="bi bi-clock-history"></i></div>
+    <p>Sin movimientos recientes.</p>
+  </div>
+  {% endif %}
+
+  <div style="height:16px;"></div>
+</div>
+{% endblock %}

@@ -1,0 +1,85 @@
+{% extends "mobile_base.html" %}
+{% block title %}Incidencias{% endblock %}
+{% block topbar_back %}{% endblock %}
+{% block topbar_logo %}<div class="m-topbar-logo"><i class="bi bi-exclamation-triangle"></i></div>{% endblock %}
+{% block topbar_title %}Incidencias<small>Mis waves — reportadas</small>{% endblock %}
+{% block nav_issues_active %}active{% endblock %}
+
+{% block head %}
+<style>
+  .issue-card {
+    background: #fff; border-radius: 16px; margin: 12px 12px 0;
+    box-shadow: 0 2px 10px rgba(14,30,80,.10);
+    border-left: 5px solid var(--m-orange); overflow: hidden;
+  }
+  .issue-card-top {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: 12px 14px 10px; border-bottom: 1px solid var(--m-border);
+  }
+  .issue-sku  { font-size: .78rem; font-weight: 700; color: var(--m-muted); font-family: monospace; }
+  .issue-name { font-size: .95rem; font-weight: 700; color: var(--m-text); margin-top: 1px; }
+  .issue-body { padding: 10px 14px; display: flex; flex-direction: column; gap: 7px; }
+  .issue-row  { display: flex; justify-content: space-between; align-items: center; font-size: .84rem; }
+  .issue-label{ color: var(--m-muted); }
+  .issue-val  { font-weight: 600; color: var(--m-text); font-family: monospace; font-size: .82rem; }
+  .issue-note { font-size: .8rem; color: #64748b; background: #f8fafc; padding: 8px 10px; border-radius: 8px; margin-top: 2px; }
+  .issue-footer { padding: 10px 14px; border-top: 1px solid var(--m-border); background: #f8fafc; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="m-page-wrap">
+  {% if not issues %}
+  <div class="m-empty" style="margin-top:32px;">
+    <div class="m-empty-icon"><i class="bi bi-check-circle"></i></div>
+    <p><strong>Sin incidencias</strong></p>
+    <p>No tienes incidencias registradas en tus waves.</p>
+  </div>
+  {% else %}
+  <div class="m-section-label"><i class="bi bi-exclamation-triangle me-1"></i>{{ issues|length }} incidencia{{ 's' if issues|length != 1 }}</div>
+
+  {% for iss in issues %}
+  <div class="issue-card">
+    <div class="issue-card-top">
+      <div>
+        <div class="issue-sku">{{ iss.sku }}</div>
+        <div class="issue-name">{{ iss.product_name }}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;">
+        <span class="m-badge m-badge-urgent" style="font-size:.68rem;">
+          <i class="bi bi-dash-circle-fill me-1"></i>-{{ iss.missing_qty }} uds
+        </span>
+        <span class="m-badge m-badge-gray" style="font-size:.67rem;">{{ iss.created_at }}</span>
+      </div>
+    </div>
+
+    <div class="issue-body">
+      <div class="issue-row">
+        <span class="issue-label"><i class="bi bi-geo-alt me-1"></i>Ubicación</span>
+        <span class="issue-val">{{ iss.location or '—' }}{% if iss.box_number %} / Caja {{ iss.box_number }}{% endif %}</span>
+      </div>
+      <div class="issue-row">
+        <span class="issue-label"><i class="bi bi-upc me-1"></i>Código</span>
+        <span class="issue-val">{{ iss.location_code or '—' }}</span>
+      </div>
+      <div class="issue-row">
+        <span class="issue-label"><i class="bi bi-tag me-1"></i>Motivo</span>
+        <span class="m-badge m-badge-red" style="font-size:.67rem;">{{ iss.reason_code.replace('_',' ') }}</span>
+      </div>
+      {% if iss.operator_note %}
+      <div class="issue-note"><i class="bi bi-chat-left-text me-1"></i>{{ iss.operator_note }}</div>
+      {% endif %}
+    </div>
+
+    <div class="issue-footer">
+      <a href="{{ url_for('wms_mobile_issue_detail', issue_id=iss.id) }}" class="m-btn m-btn-ghost" style="min-height:40px;font-size:.85rem;">
+        <i class="bi bi-eye"></i> Ver detalle
+      </a>
+    </div>
+  </div>
+  {% endfor %}
+
+  <div style="height:16px;"></div>
+  {% endif %}
+</div>
+{% endblock %}

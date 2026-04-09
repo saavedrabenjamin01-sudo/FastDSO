@@ -1,0 +1,254 @@
+Create a dedicated mobile-first operator experience for FastWMS, optimized for warehouse work on a phone.
+
+GOAL
+The current WMS logic is working, but the operator experience on mobile is not fully adapted.
+Build a dedicated mobile UI layer for warehouse operators, focused on their real daily tasks:
+
+1) Picking
+2) Picking issues
+3) Moves between locations
+4) Inventory by location
+
+This must be a fully operator-oriented mobile experience, not a desktop layout squeezed into a phone.
+
+GENERAL RULES
+- Mobile first
+- Same FastDSO/FastWMS visual language
+- No desktop sidebar on mobile
+- Large buttons
+- One main action per screen
+- No horizontal scroll
+- Strong status badges
+- Spanish labels everywhere
+
+========================================
+PART 1 — MOBILE BASE LAYER
+========================================
+
+1) Create:
+- templates/mobile_base.html
+
+Requirements:
+- proper viewport meta
+- compact top header with title/logo
+- no desktop sidebar
+- clean background
+- operator-friendly spacing
+- support sticky top section and sticky bottom action bar
+- mobile-friendly cards and pills
+- same FastDSO colors
+
+2) Add a lightweight operator mobile nav
+At least include:
+- Mis Waves
+- Picking
+- Incidencias
+- Movimientos
+- Inventario
+- Salir
+
+Use compact bottom nav or simple top nav depending on current structure.
+
+========================================
+PART 2 — MOBILE PICKING
+========================================
+
+A) Route:
+- /wms/mobile/my-waves
+
+Show assigned waves only:
+- assigned_to == current_user.id
+- statuses: ASSIGNED, IN_PROGRESS, NEEDS_REVIEW
+
+Render as cards:
+- Folio or Referencia
+- Tipo (PLANNER / WEB / MANUAL)
+- Origen / Bucket de stock
+- Urgencia
+- Estado
+- Progreso
+- Button: Iniciar / Continuar
+
+B) Route:
+- /wms/mobile/wave/<wave_id>
+
+This is the main picking execution screen.
+
+UI:
+- one active reservation/task at a time
+- big card showing:
+   Ubicación
+   Caja
+   Código ubicación
+   Bucket de stock
+   SKU
+   Producto
+   Cantidad requerida
+   Pickeado / restante
+- mandatory location scan section
+- SKU scan section
+- big bottom action buttons:
+   Pick completo
+   Pick parcial
+   Reportar incidencia
+
+Behavior:
+- location scan required
+- SKU scan validated before allowing pick
+- after successful action, auto-advance to next reservation/task
+- show progress at top:
+   líneas completadas / total
+   unidades pickeadas / total
+   incidencias reportadas
+
+========================================
+PART 3 — MOBILE ISSUES
+========================================
+
+A) Route:
+- /wms/mobile/issues
+
+Show issues reported by current user and/or open issues relevant to their assigned waves.
+
+Render issue cards with:
+- SKU
+- Producto
+- Ubicación
+- Caja
+- Motivo
+- Cantidad faltante
+- Estado
+- Fecha
+
+Actions:
+- Ver detalle
+- Agregar nota (optional if allowed)
+- Mark reviewed only if business flow allows
+
+B) Route:
+- /wms/mobile/issues/<issue_id>
+Simple mobile detail page.
+
+========================================
+PART 4 — MOBILE MOVES
+========================================
+
+A) Route:
+- /wms/mobile/moves
+
+This should be operator-friendly, not a desktop table.
+
+Screen sections:
+1) Create move card
+   - Ubicación origen
+   - Caja origen
+   - SKU
+   - Cantidad
+   - Ubicación destino
+   - Caja destino
+   - Motivo
+   - buttons:
+      Escanear origen
+      Escanear SKU
+      Escanear destino
+      Confirmar movimiento
+
+2) Recent moves list as cards
+   - fecha
+   - sku
+   - origen
+   - destino
+   - unidades
+   - estado
+
+Behavior:
+- allow manual entry fallback if scanner unavailable
+- validate origin/destination before confirm
+- use existing move backend logic
+
+========================================
+PART 5 — MOBILE INVENTORY
+========================================
+
+A) Route:
+- /wms/mobile/inventory
+
+Do NOT render the desktop inventory table.
+Use:
+- search/filter bar at top:
+   Ubicación
+   SKU
+   Caja
+   Bucket de stock
+- results as stacked cards
+
+Each inventory card should show:
+- Ubicación
+- Caja
+- Código ubicación
+- Bucket de stock
+- SKU
+- Producto
+- Unidades
+- Asignadas
+- Disponibles
+- Tipo ubicación
+
+Actions per card:
+- Ver detalle
+- Mover
+- Buscar más del mismo SKU
+
+B) Route:
+- /wms/mobile/inventory/<location_or_item_id>
+Mobile detail page with:
+- location info
+- SKU rows or bucket split if needed
+- stock summary
+- recent movements (optional if easy)
+
+========================================
+PART 6 — VISUAL / UX RULES
+========================================
+
+1) Cards instead of tables wherever possible
+2) Minimum button height 48px
+3) Sticky bottom action bar on picking pages
+4) Strong color coding:
+   - URGENTE red
+   - WEB purple
+   - PLANNER blue
+   - DONE green
+   - SHORT / issue orange/red
+5) Monospace for SKU and location codes where useful
+6) Large readable quantity blocks
+7) Avoid too much text per screen
+
+========================================
+PART 7 — ROUTING / ACCESS
+========================================
+
+- All /wms/mobile/* routes must use mobile_base.html
+- only warehouse/operator users should access them
+- desktop views remain unchanged
+- no breaking changes to existing desktop WMS/Planner views
+
+========================================
+PART 8 — DELIVERABLES
+========================================
+
+Create/update:
+- templates/mobile_base.html
+- templates/wms_mobile_my_waves.html
+- templates/wms_mobile_pick_wave.html
+- templates/wms_mobile_issues.html
+- templates/wms_mobile_issue_detail.html
+- templates/wms_mobile_moves.html
+- templates/wms_mobile_inventory.html
+- optional detail templates if needed
+
+Ensure:
+- consistent mobile-first operator UX
+- picking, issues, moves, and inventory all usable from phone
+- no horizontal-scroll desktop leftovers
+- labels in Spanish

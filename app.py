@@ -11845,6 +11845,159 @@ def wms_kpis():
                            operator_rows=operator_rows, operators=operators)
 
 
+@app.route('/wms/mobile/issues')
+@login_required
+@require_permission('wms:view')
+def wms_mobile_issues():
+    wave_ids = [
+        w.id for w in db.session.query(WmsPickWave.id)
+        .filter(WmsPickWave.assigned_to == current_user.id).all()
+    ]
+    issues = []
+    if wave_ids:
+        raw = (
+            db.session.query(WmsPickIssue)
+            .filter(WmsPickIssue.wave_id.in_(wave_ids))
+            .order_by(WmsPickIssue.created_at.desc())
+            .limit(100)
+            .all()
+        )
+        for iss in raw:
+            loc = iss.location
+            issues.append({
+                'id': iss.id,
+                'sku': iss.sku,
+                'product_name': iss.product.name if iss.product else iss.sku,
+                'location_code': iss.location_code or '',
+                'location': (loc.location or loc.rack or '') if loc else '',
+                'box_number': (loc.box_number or loc.pallet_position or '') if loc else '',
+                'missing_qty': iss.missing_qty,
+                'reason_code': iss.reason_code,
+                'operator_note': iss.operator_note or '',
+                'created_at': iss.created_at.strftime('%d/%m %H:%M') if iss.created_at else '',
+                'wave_id': iss.wave_id,
+            })
+    return render_template('wms_mobile_issues.html', issues=issues)
+
+
+@app.route('/wms/mobile/issues/<int:issue_id>')
+@login_required
+@require_permission('wms:view')
+def wms_mobile_issue_detail(issue_id):
+    iss = db.session.get(WmsPickIssue, issue_id)
+    if not iss:
+        flash('Incidencia no encontrada.', 'warning')
+        return redirect(url_for('wms_mobile_issues'))
+    wave = db.session.get(WmsPickWave, iss.wave_id)
+    if wave and wave.assigned_to != current_user.id and not current_user.has_permission('admin:users'):
+        flash('No tienes acceso a esta incidencia.', 'danger')
+        return redirect(url_for('wms_mobile_issues'))
+    loc = iss.location
+    task = db.session.get(WmsPickTask, iss.task_id) if iss.task_id else None
+    detail = {
+        'id': iss.id,
+        'sku': iss.sku,
+        'product_name': iss.product.name if iss.product else iss.sku,
+        'product_category': iss.product.category if iss.product else '',
+        'location_code': iss.location_code or '',
+        'location': (loc.location or loc.rack or '') if loc else '',
+        'box_number': (loc.box_number or loc.pallet_position or '') if loc else '',
+        'location_type': (loc.location_type or 'BULK') if loc else 'BULK',
+        'missing_qty': iss.missing_qty,
+        'reason_code': iss.reason_code,
+        'operator_note': iss.operator_note or '',
+        'created_at': iss.created_at.strftime('%d/%m/%Y %H:%M') if iss.created_at else '',
+        'wave_id': iss.wave_id,
+        'task_sku': task.sku if task else '',
+        'task_requested': task.qty_requested if task else 0,
+        'task_picked': task.qty_picked if task else 0,
+        'bucket': wave.source_stock_bucket if wave else 'MAIN',
+    }
+    return render_template('wms_mobile_issue_detail.html', issue=detail, wave=wave)
+
+
+@app.route('/wms/mobile/moves', methods=['GET'])
+@login_required
+@require_permission('wms:view')
+def wms_mobile_moves():
+    locations = (
+        db.session.query(
+            WmsLocation.id, WmsLocation.location_code, WmsLocation.location_type,
+            WmsLocation.location, WmsLocation.box_number,
+            WmsLocation.rack, WmsLocation.level, WmsLocation.pallet_position,
+            WmsWarehouse.code.label('warehouse_code')
+        )
+        .join(WmsWarehouse, WmsLocation.warehouse_id == WmsWarehouse.id)
+        .filter(WmsLocation.is_active == True)
+        .order_by(WmsLocation.location, WmsLocation.box_number, WmsLocation.location_code)
+        .all()
+    )
+    def _loc_label(loc):
+        loc_part = loc.location or (f"{loc.rack}-{loc.level}" if loc.rack and loc.level else None)
+        box_part = loc.box_number or loc.pallet_position
+        if loc_part and box_part:
+            return f"{loc_part} | Caja {box_part} ({loc.location_type or 'BULK'})"
+        return f"{loc.location_code} ({loc.location_type or 'BULK'})"
+    location_options = [{'id': loc.id, 'label': _loc_label(loc)} for loc in locations]
+    recent_runs = (
+        WmsMoveRun.query
+        .order_by(WmsMoveRun.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    runs_data = []
+    for run in recent_runs:
+        lines = WmsMoveLine.query.filter_by(move_run_id=run.id).all()
+        first_line = lines[0] if lines else None
+        from_loc = db.session.get(WmsLocation, first_line.from_location_id) if first_line else None
+        to_loc = db.session.get(WmsLocation, first_line.to_location_id) if first_line else None
+        prod = db.session.get(Product, first_line.product_id) if first_line else None
+        runs_data.append({
+            'id': run.id,
+            'created_at': run.created_at.strftime('%d/%m %H:%M') if run.created_at else '',
+            'user': run.created_by.username if run.created_by else '—',
+            'total_lines': run.total_lines or 0,
+            'total_units': run.total_units or 0,
+            'status': run.status or 'OK',
+            'note': run.note or '',
+            'from_loc': from_loc.location_code if from_loc else '?',
+            'to_loc': to_loc.location_code if to_loc else '?',
+            'first_sku': prod.sku if prod else '?',
+        })
+    return render_template('wms_mobile_moves.html',
+                           location_options=location_options,
+                           recent_runs=runs_data)
+
+
+@app.route('/wms/mobile/inventory', methods=['GET'])
+@login_required
+@require_permission('wms:view')
+def wms_mobile_inventory():
+    args = request.args
+    search_q = (args.get('q') or '').strip()
+    has_filter = bool(search_q or args.get('loc') or args.get('box') or args.get('bucket') or args.get('stock'))
+    inventory = []
+    stats = {'total_units': 0, 'total_available': 0, 'location_count': 0, 'product_count': 0}
+    if has_filter:
+        inv_rows, kpis = _wms_inventory_query(args)
+        inventory = inv_rows[:80]
+        stats = {
+            'total_units': kpis['total_units'],
+            'total_available': kpis['total_available'],
+            'location_count': kpis['total_locations'],
+            'product_count': kpis['total_skus'],
+        }
+    return render_template('wms_mobile_inventory.html',
+                           inventory=inventory,
+                           stats=stats,
+                           has_filter=has_filter,
+                           q=search_q,
+                           f_loc=args.get('loc', ''),
+                           f_box=args.get('box', ''),
+                           f_bucket=args.get('bucket', ''),
+                           f_stock=args.get('stock', ''))
+
+
 @app.route('/wms/mobile/my-waves')
 @login_required
 @require_permission('wms:view')
