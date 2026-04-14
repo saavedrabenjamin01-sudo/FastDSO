@@ -1765,16 +1765,10 @@ def _ensure_wms_defaults(session=None):
         s.add(wh_web)
         s.flush()
         print("[WMS] Created WEB warehouse (legacy BC)")
-    # WEB-FALLBACK: virtual location in MAIN warehouse for WEB-bucket stock without WMS rows
-    loc_web_fallback = s.query(WmsLocation).filter_by(warehouse_id=wh.id, location_code='WEB-FALLBACK').first()
-    if not loc_web_fallback:
-        loc_web_fallback = WmsLocation(
-            warehouse_id=wh.id, location_code='WEB-FALLBACK',
-            location='WEB', box_number='01', location_type='BULK', is_active=True
-        )
-        s.add(loc_web_fallback)
-        s.flush()
-        print("[WMS] Created fallback location WEB-FALLBACK (MAIN warehouse, WEB bucket)")
+    # Shared-location model: MAIN and WEB use the same physical locations.
+    # Stock is separated ONLY by stock_bucket in WmsInventory.
+    # WEB-FALLBACK is a legacy virtual location — do NOT create it for new installs.
+    # If it exists in the DB (old data), leave it for backward compat but never add new reservations to it.
     return wh, loc
 
 
@@ -2083,8 +2077,6 @@ def create_manual_pick_wave(wave_source, lines, priority='MEDIUM',
             loc_code_map.get(i.location_id, '')
         ))
 
-    _WEB_FALLBACK_NOTE = 'WEB_FALLBACK_STOCK'
-
     urgency = priority if priority in WMS_URGENCY_RANK else 'MEDIUM'
     wave = WmsPickWave(
         warehouse_code='MAIN',
@@ -2154,21 +2146,16 @@ def create_manual_pick_wave(wave_source, lines, priority='MEDIUM',
             ))
 
         if task_reserved == 0 and qty_remaining > 0:
-            print(f"[WMS] fallback used only because no physical location rows exist for sku={sku} bucket={source_stock_bucket}")
+            print(f"[WMS] reserve WARNING: no WmsInventory rows found for sku={sku} bucket={source_stock_bucket} — check stock upload")
 
         total_reserved += task_reserved
         task_short = qty_remaining
         if task_short > 0:
             has_shortage = True
 
-        _has_fallback_res = any(r.get('is_fallback') for r in reservations_for_task)
         task_status = 'OPEN' if task_short == 0 else 'SHORT'
-        if task_short == 0 and _has_fallback_res:
-            task_note = _WEB_FALLBACK_NOTE
-        elif task_short > 0 and task_reserved > 0:
+        if task_short > 0 and task_reserved > 0:
             task_note = f'PARTIAL: reservado {task_reserved}/{qty_needed}'
-            if _has_fallback_res:
-                task_note += f' ({_WEB_FALLBACK_NOTE})'
         elif task_reserved == 0:
             task_note = 'NO_STOCK_AVAILABLE'
         else:
@@ -12172,31 +12159,33 @@ def api_wms_mobile_reservation_pick(res_id):
     _is_web_fallback = (res.location_code == 'WEB-FALLBACK')
 
     if wh and picked_qty > 0:
+        _bucket = (res.stock_bucket or 'MAIN').upper()
+        _loc_code = res.location_code or str(res.location_id)
+        _box = getattr(res, 'box_number', '') or ''
+
         if _is_web_fallback:
-            # WEB-FALLBACK mode: decrement StockSnapshot for WEB store instead of WmsInventory
-            print(f"[WMS] WEB-FALLBACK pick: -{picked_qty} uds pid={res.product_id} res #{res_id}")
-            web_store = db.session.query(Store).filter(Store.name.ilike('%web%')).first()
-            if web_store:
-                ss = (
-                    db.session.query(StockSnapshot)
-                    .filter_by(store_id=web_store.id, product_id=res.product_id)
-                    .order_by(StockSnapshot.as_of_date.desc())
-                    .first()
-                )
-                if ss:
-                    ss.quantity = max(0, (ss.quantity or 0) - picked_qty)
+            # Legacy WEB-FALLBACK reservation — log loudly, treat as normal WmsInventory decrement.
+            # In the shared-location model, WEB-FALLBACK should not appear in normal operations.
+            print(f"[WMS] legacy fallback used unexpectedly sku={res.sku if hasattr(res, 'sku') else res.product_id} "
+                  f"bucket={_bucket} location={_loc_code}")
+
+        # Normal WMS inventory decrement — filter strictly by stock_bucket from reservation
+        inv = (
+            db.session.query(WmsInventory)
+            .filter_by(location_id=res.location_id, product_id=res.product_id, stock_bucket=_bucket)
+            .first()
+        )
+        if inv:
+            inv.on_hand_units = max(0, (inv.on_hand_units or 0) - picked_qty)
+            inv.allocated_units = max(0, (inv.allocated_units or 0) - picked_qty)
+            inv.updated_at = datetime.utcnow()
         else:
-            # Normal WMS inventory decrement — filter by stock_bucket from reservation
-            _bucket = (res.stock_bucket or 'MAIN').upper()
-            inv = (
-                db.session.query(WmsInventory)
-                .filter_by(location_id=res.location_id, product_id=res.product_id, stock_bucket=_bucket)
-                .first()
-            )
-            if inv:
-                inv.on_hand_units = max(0, (inv.on_hand_units or 0) - picked_qty)
-                inv.allocated_units = max(0, (inv.allocated_units or 0) - picked_qty)
-                inv.updated_at = datetime.utcnow()
+            print(f"[WMS] pick confirm WARNING: WmsInventory row not found "
+                  f"location_id={res.location_id} bucket={_bucket} picked={picked_qty}")
+
+        print(f"[WMS] pick confirm sku={res.product_id} bucket={_bucket} "
+              f"location={_loc_code} box={_box} qty={picked_qty}")
+
         db.session.add(WmsInventoryEvent(
             event_type='PICK_PICK',
             ref_type='pick_reservation',
@@ -12206,7 +12195,7 @@ def api_wms_mobile_reservation_pick(res_id):
             product_id=res.product_id,
             delta_units=-picked_qty,
             delta_pallets=0,
-            note=f"{'WEB-FALLBACK' if _is_web_fallback else 'Mobile'} pick: -{picked_qty} uds en {res.location_code or res.location_id} res #{res_id}"
+            note=f"Mobile pick [{_bucket}]: -{picked_qty} uds en {_loc_code} res #{res_id}"
         ))
 
     task = db.session.get(WmsPickTask, res.task_id) if res.task_id else None
@@ -12359,7 +12348,8 @@ def try_reallocate_shortage_for_reservation(reservation_id, missing_qty):
         new_reservation_ids.append(new_res.id)
         remaining -= reserve_qty
         qty_reallocated += reserve_qty
-        print(f"[WMS] reallocated sku={sku_display} qty={reserve_qty} new_reservation={new_res.id} sequence={max_seq}")
+        print(f"[WMS] reallocate sku={sku_display} bucket={_realloc_bucket} "
+              f"old_location={res.location_code} new_location={loc.location_code} qty={reserve_qty}")
 
     return {
         'qty_reallocated': qty_reallocated,

@@ -1,0 +1,317 @@
+Implement a strict shared-location / separate-stock-bucket model in FastWMS.
+
+BUSINESS REALITY (DO NOT MISINTERPRET)
+MAIN and WEB use the SAME PHYSICAL LOCATIONS.
+They do NOT have separate physical racks, levels, boxes, or location layouts.
+
+Example:
+- Physical location: A-02
+- Box: 01
+- SKU: X
+- Physical quantity in the box: 10 units total
+- Systemically, 5 units belong to MAIN
+- Systemically, 5 units belong to WEB
+
+IMPORTANT:
+The operator does NOT need to physically distinguish MAIN units from WEB units inside the same box.
+The distinction is SYSTEM-LEVEL ONLY.
+The system must guarantee that:
+- folios/planner/distribution consume only MAIN bucket
+- manual WEB picking consumes only WEB bucket
+- both use the SAME physical location and box
+- no fake WEB-only locations are used in normal operation
+
+GOAL
+Refactor and consolidate FastWMS so that:
+1) physical locations are shared between MAIN and WEB
+2) stock is separated only by stock bucket
+3) picking uses the same physical location for both buckets
+4) WEB-FALLBACK is removed from normal operation
+5) all reservation and picking logic respects the stock bucket strictly
+
+==================================================
+PART 1 — DATA MODEL RULES
+==================================================
+
+1) WmsLocation
+This remains the physical location model only.
+It must represent:
+- warehouse/layout identity (physical warehouse, if applicable)
+- location
+- box_number
+- location_code
+- location_type
+- is_active
+
+Do NOT duplicate physical locations for WEB.
+
+2) WmsInventory
+This must represent stock by:
+- location_id
+- product_id
+- stock_bucket
+- on_hand_units
+- allocated_units
+- updated_at
+
+Required stock_bucket values for V1:
+- MAIN
+- WEB
+
+Required uniqueness:
+- (location_id, product_id, stock_bucket)
+
+Meaning:
+The same physical location_id + product_id may exist twice:
+- once for stock_bucket = MAIN
+- once for stock_bucket = WEB
+
+3) WmsPickWave
+Must use:
+- source_stock_bucket
+Allowed values:
+- MAIN
+- WEB
+
+This is the only stock origin selector for wave reservation.
+Do NOT use a fake separate physical warehouse for WEB in this model.
+
+4) WmsPickReservation
+Must store:
+- wave_id
+- task_id
+- product_id
+- location_id
+- location
+- box_number
+- location_code
+- stock_bucket
+- reserved_qty
+- picked_qty
+- status
+- sequence_order
+- is_reallocation
+- reallocated_from_reservation_id
+
+==================================================
+PART 2 — STOCK LOAD / UPLOAD RULES
+==================================================
+
+1) Stock upload format must support:
+- SKU
+- PRODUCT_NAME
+- QUANTITY
+- CATEGORY
+- WAREHOUSE
+- LOCATION_CODE
+- LOCATION_TYPE
+- LOCATION
+- BOX_NUMBER
+- STOCK_BUCKET
+- NOTE
+
+2) STOCK_BUCKET is the logical owner of the stock.
+Allowed values:
+- MAIN
+- WEB
+
+3) If STOCK_BUCKET is missing in legacy uploads:
+- default to MAIN
+- log warning
+- do not break backward compatibility
+
+4) When loading stock:
+- identify/create the physical location from:
+   LOCATION + BOX_NUMBER (or LOCATION_CODE fallback)
+- then create/update WmsInventory using:
+   location_id + product_id + stock_bucket
+- do NOT merge MAIN and WEB quantities together
+
+5) Physical locations remain shared.
+The same LOCATION / BOX_NUMBER may receive stock for both MAIN and WEB.
+
+==================================================
+PART 3 — RESERVATION RULES
+==================================================
+
+1) Planner/distribution waves
+For all planner/folio/distribution waves:
+- source_stock_bucket MUST be MAIN
+- reservation must search ONLY WmsInventory rows where:
+   stock_bucket == MAIN
+
+2) Manual WEB waves
+For all MANUAL_WEB waves:
+- source_stock_bucket MUST be WEB
+- reservation must search ONLY WmsInventory rows where:
+   stock_bucket == WEB
+
+3) Manual OTHER waves
+- allow choosing source_stock_bucket explicitly
+- but still reserve only within that chosen bucket
+
+4) Shared physical location usage
+Both MAIN and WEB waves must reserve from the SAME shared WmsLocation rows.
+Example:
+- MAIN wave may reserve from A-02 / 01 using bucket MAIN
+- WEB wave may reserve from A-02 / 01 using bucket WEB
+
+5) Reservation sorting
+Keep existing physical-location sorting logic, but always filter first by stock_bucket:
+- location_type priority: PICK first, BULK second
+- available_units ascending
+- location ascending
+- box_number ascending
+
+Where:
+- available_units = on_hand_units - allocated_units
+
+6) Hard rule
+Never reserve across buckets.
+Examples:
+- a MAIN wave must never consume WEB stock
+- a WEB wave must never consume MAIN stock
+
+==================================================
+PART 4 — PICKING EXECUTION RULES
+==================================================
+
+1) The operator must see the REAL PHYSICAL LOCATION.
+On desktop and mobile picking screens, show:
+- Ubicación
+- Caja
+- Código ubicación
+- SKU
+- Producto
+- Bucket de stock
+- Cantidad
+
+2) The operator does NOT need a separate WEB physical location.
+Do NOT show:
+- WEB-FALLBACK
+- WEB-only fake locations
+- duplicated location structures
+
+3) The operator picks from the same physical box regardless of bucket.
+The bucket is only a SYSTEM indicator to control which stock pool is consumed.
+
+4) When confirming a pick:
+- reduce on_hand_units and allocated_units only for the matching:
+   location_id + product_id + stock_bucket
+- never touch the other bucket
+
+Example:
+If the operator picks 3 units from A-02 / 01 for a WEB wave:
+- decrement WEB bucket only
+- do not decrement MAIN bucket
+
+==================================================
+PART 5 — ISSUE / REALLOCATION RULES
+==================================================
+
+1) If a reservation fails and an issue is reported:
+- keep the same physical-location logic
+- reallocation must search alternative stock ONLY within the same stock_bucket
+
+2) Examples:
+- WEB issue -> reallocate only from WEB bucket in other shared physical locations
+- MAIN issue -> reallocate only from MAIN bucket in other shared physical locations
+
+3) Never reallocate across buckets automatically.
+
+4) WEB-FALLBACK must be removed from normal flow.
+Only allow a legacy fallback if absolutely necessary for old inconsistent records, but:
+- log it loudly
+- do not use it in normal operations
+- normal shared-location + bucket data should bypass fallback completely
+
+==================================================
+PART 6 — UI RULES
+==================================================
+
+1) WMS Inventory
+The inventory screen must clearly show:
+- Ubicación
+- Caja
+- Código ubicación
+- SKU
+- Producto
+- Bucket de stock
+- Unidades
+- Asignadas
+- Disponibles
+
+2) WMS Waves detail
+Each reservation line must show:
+- physical location
+- box
+- stock bucket
+
+3) Mobile picking
+The operator screen must show:
+- Ubicación
+- Caja
+- Bucket de stock
+This is important so the system context is visible, even though the physical box is shared.
+
+4) Visual badges
+Use strong visual badges:
+- MAIN = blue
+- WEB = purple
+
+==================================================
+PART 7 — REMOVE WRONG BEHAVIOR
+==================================================
+
+1) Remove normal use of WEB-FALLBACK.
+2) Remove any assumption that WEB must have its own fake physical locations.
+3) Remove any logic that duplicates physical layout for WEB.
+4) Do not treat WEB as a separate physical warehouse for picking in this model.
+
+==================================================
+PART 8 — DEBUG / LOGGING
+==================================================
+
+Add concise logs:
+- [WMS] stock load sku=... location=... box=... bucket=... qty=...
+- [WMS] reserve sku=... bucket=... location=... box=... qty=...
+- [WMS] pick confirm sku=... bucket=... location=... box=... qty=...
+- [WMS] reallocate sku=... bucket=... old_location=... new_location=... qty=...
+- [WMS] legacy fallback used unexpectedly sku=... bucket=...
+
+==================================================
+PART 9 — REQUIRED OUTCOME
+==================================================
+
+After this change, the system must behave like this:
+
+A) Shared physical locations
+- MAIN and WEB use the same LOCATION / BOX_NUMBER / LOCATION_CODE
+
+B) Separate logical stock
+- inventory is separated by stock_bucket MAIN/WEB
+
+C) Planner/distribution
+- consume only MAIN
+
+D) Manual WEB picking
+- consume only WEB
+
+E) Picking UI
+- shows real shared location
+- no WEB-FALLBACK in normal operation
+
+F) Reallocation
+- stays inside the same stock bucket
+
+G) No breaking changes
+- keep existing Planner/WMS flow working
+- only correct the stock-origin and location-sharing logic
+
+DELIVERABLES
+- shared-location logic consolidated
+- stock separated by stock_bucket
+- WEB-FALLBACK removed from normal operation
+- planner waves use MAIN only
+- manual WEB waves use WEB only
+- desktop and mobile picking show shared physical locations with bucket context
