@@ -1,0 +1,200 @@
+Refine the distribution generation and distribution review/edit workflow in FastDSO so it becomes cleaner, more operational, and consistent with the portal design.
+
+GOAL
+Before continuing deeper WMS work, improve two critical parts of the distribution flow:
+
+1) Distribution review/edit page
+2) Distribution generator page
+
+These must become cleaner, easier to use, and more operationally correct.
+
+==================================================
+PART 1 — DISTRIBUTION REVIEW / EDIT PAGE
+==================================================
+
+GOAL
+Turn the distribution edit page into a real operational adjustment workspace.
+
+REQUIRED CHANGES
+
+1) CLEANER PAGE LAYOUT
+Reorganize the review/edit page into these sections:
+
+A) Header block
+Show:
+- Folio / run name
+- Generation model/mode
+- Responsable
+- Fecha
+- Estado
+
+B) Summary cards
+Show:
+- Tiendas visibles
+- SKUs visibles
+- Unidades sugeridas visibles
+- Unidades finales visibles
+- Líneas ajustadas
+- Warnings activos
+
+C) Filter bar
+Add a clean, ordered filter bar with:
+- Store filter
+- SKU search
+- Category filter
+- Toggle: only adjusted lines
+- Toggle: only warning lines
+- Toggle: only qty_final > 0
+- Apply / Clear buttons
+
+D) Editable table
+Make it visually cleaner and aligned with the portal style.
+
+2) IMPROVED TABLE COLUMNS
+Use these columns:
+- Tienda
+- SKU
+- Producto
+- Categoría
+- Stock tienda
+- Venta reciente
+- Qty sugerida
+- Qty final
+- Delta
+- Stock CD disponible
+- Estado / warnings
+
+3) REAL-TIME SKU REDISTRIBUTION LOGIC
+This is critical.
+
+For each SKU, the page must behave like a shared allocation pool:
+- if the user reduces qty_final in one store,
+  those released units must become available to assign to another store for the same SKU
+- this must happen in real time in the UI
+
+Rules:
+- total qty_final across all destination stores for the same SKU
+  must not exceed available CD stock for that SKU
+- display live values:
+   available CD stock for SKU
+   currently allocated in this distribution for SKU
+   free remaining balance for SKU
+
+Example:
+CD available for SKU X = 10
+Store A qty_final = 6
+Store B qty_final = 4
+Store C qty_final = 0
+
+If Store A is reduced to 3:
+- free balance becomes 3
+- the user can assign those 3 to Store B or Store C
+- UI updates immediately
+
+4) LIVE UI FEEDBACK
+When qty_final changes:
+- update row delta
+- update summary cards
+- update store summary
+- update SKU remaining CD balance
+- add/remove AJUSTADO badge
+- show warning if total assigned for SKU exceeds CD available
+
+5) OPTIONAL GROUPING MODE
+Add a view toggle:
+- Agrupar por tienda
+- Agrupar por SKU
+
+Grouping by SKU is especially useful for redistribution tasks.
+
+6) QUICK ACTIONS
+Per row, add compact controls:
+- -1
+- +1
+- +5
+and keep numeric direct input
+
+==================================================
+PART 2 — DISTRIBUTION GENERATOR PAGE
+==================================================
+
+GOAL
+Improve the distribution generator form so it is cleaner, follows portal design, and supports store selection/exclusion.
+
+REQUIRED CHANGES
+
+1) RESPONSABLE AUTO-FILL
+The Responsable field must default automatically to the currently logged-in user.
+Behavior:
+- set Responsable = current_user display name or username
+- make it read-only for normal users
+- optionally editable only for admin/authorized users
+
+2) STORE SELECTION
+Add proper store selection controls.
+Users must be able to:
+- include all stores
+- include only selected stores
+- exclude some stores if needed
+
+Preferred UX:
+- multi-select of included stores
+- search within stores
+- “Seleccionar todas” helper
+- selected stores shown clearly
+
+The generation must only apply to the included stores.
+
+3) CLEANER VISUAL STRUCTURE
+Reorganize generator page into clean sections:
+
+A) General info
+- Responsable
+- Categoría
+- Fecha
+- Observación
+
+B) Generation config
+- model/mode
+- stock rules
+- generation options
+
+C) Destination stores
+- included stores multiselect
+
+D) Actions
+- Generar distribución
+- Limpiar
+
+4) VISUAL CONSISTENCY
+The generator page must follow the same design language as the portal:
+- clean cards
+- aligned fields
+- soft shadows
+- rounded blocks
+- consistent spacing
+- no cluttered old-form feeling
+
+==================================================
+PART 3 — STOCK LOGIC SAFETY
+==================================================
+
+1) Review/edit page must use MAIN stock only for distribution CD availability.
+2) Do not let the page imply that WEB stock is available for folio distribution.
+3) If qty_final exceeds available MAIN CD stock for a SKU:
+- show warning immediately
+- optionally block send to authorization until fixed
+
+==================================================
+PART 4 — DELIVERABLES
+==================================================
+
+Deliver:
+- cleaner distribution review/edit page
+- cleaner generator page
+- responsible auto-filled from current user
+- store inclusion selection in generator
+- real-time reallocation behavior per SKU
+- live CD balance updates for each SKU
+- no breaking changes to authorization, Planner, or WMS downstream flow
+- labels in Spanish

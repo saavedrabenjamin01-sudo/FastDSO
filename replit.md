@@ -56,7 +56,8 @@ Do not make changes to the folder `Excel tipo/`.
 - **Stock Query Module**: Rich list+detail view for inventory consultation.
 - **AI Copilot (GPT V1 Cross FastDSO)**: Read-only AI analysis layer for distribution runs and forecasts, providing executive narratives, anomaly detection, and suggested parameter tweaks.
 - **FastWMS (Warehouse Management Module)**: Integrated WMS module for location-level inventory tracking within the Distribution Center, supporting pick waves, mobile picking, and stock buckets (`MAIN`, `WEB`).
-- **Distribution Review Flow**: Post-approval review and adjustment of distribution plans before WMS integration.
+- **Distribution Review Flow**: Post-approval review and adjustment of distribution plans before WMS integration. Includes per-SKU shared allocation pool (CD MAIN-bucket only) with live UI feedback and over-allocation warning (soft, non-blocking) at save and submit-for-auth. Three view modes: Por líneas, Por tienda, Por SKU.
+- **Distribution Generator Scope Filter**: The generator (`/upload`) supports per-run store-scope filter (Todas / Selección personalizada). Engine `generate_predictions_from_macro` honors `included_store_ids`; predictions for non-selected stores are dropped before persistence. Responsable auto-fills from `current_user` (read-only for non-admin).
 - **Distribución Manual**: User-defined distribution module for manual CSV/XLSX uploads.
 - **RBAC Admin UI**: Comprehensive roles management interface with permission matrix.
 

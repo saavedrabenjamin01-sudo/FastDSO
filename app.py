@@ -3369,14 +3369,19 @@ def generate_predictions_from_macro(
     mode: str = "sma3_min3",
     meta: dict | None = None,
     user_id: int | None = None,
-    include_held: bool = False
+    include_held: bool = False,
+    included_store_ids: set | None = None,
 ):
     """
     Generate distribution predictions from SalesWeeklyAgg (macro layer)
     constrained to the specified scope_skus only.
-    
+
     CRITICAL: This function NEVER uses macro sales as the SKU universe.
     It ONLY generates predictions for SKUs in scope_skus.
+
+    `included_store_ids` (optional): when provided, only Prediction rows for
+    those store ids are persisted. Category weights are still computed across
+    all stores for math integrity.
     """
     from uuid import uuid4
     
@@ -4115,6 +4120,20 @@ def generate_predictions_from_macro(
         for cand in cold_start_candidates:
             final_preds.append(cand)
     
+    # ── Apply optional store-scope filter BEFORE safety checks ──
+    # Filtering here ensures the kill-switch + per-store cap operate on
+    # the *persisted* set (only selected stores), not on excluded items
+    # that would have been dropped anyway.
+    if included_store_ids is not None:
+        before_filter = len(final_preds)
+        pre_total = sum(int(it["suggested"]) for it in final_preds)
+        final_preds = [it for it in final_preds if it.get("store_id") in included_store_ids]
+        dropped = before_filter - len(final_preds)
+        post_total = sum(int(it["suggested"]) for it in final_preds)
+        print(f"[DISTRIBUTION] Store-scope filter: kept_stores={len(included_store_ids)}, "
+              f"dropped_rows={dropped}, kept_rows={len(final_preds)}, "
+              f"pre_filter_units={pre_total}, post_filter_units={post_total}")
+
     total_units = sum(int(it["suggested"]) for it in final_preds)
     cold_start_used = len([p for p in final_preds if 'COLD_START' in p.get('model_name', '')])
     sales_based_used = len(final_preds) - cold_start_used
@@ -4153,14 +4172,14 @@ def generate_predictions_from_macro(
     target_week = next_monday()
     preds_bulk = []
     assigned_by_product = defaultdict(int)
-    
+
     for it in final_preds:
         assigned_qty = int(it["suggested"])
         assigned_by_product[it["product_id"]] += assigned_qty
-    
+
     for it in final_preds:
         assigned_qty = int(it["suggested"])
-        
+
         debug_data = {
             'w0_units': it.get('w0_units'),
             'w1_units': it.get('w1_units'),
@@ -4176,7 +4195,7 @@ def generate_predictions_from_macro(
             'total_sales_in_window': it.get('total_sales_in_window'),
         }
         debug_json_str = json.dumps(debug_data)
-        
+
         existing = Prediction.query.filter_by(
             product_id=it["product_id"],
             store_id=it["store_id"],
@@ -8758,14 +8777,35 @@ def upload():
         file.save(filepath)
         
         analysis_mode = request.form.get('analysis_mode', 'sma3_min3')
+        # Responsable: admins may override; others always get current_user's display name.
+        responsable_form = request.form.get('responsable', '').strip()
+        if responsable_form and current_user.role == 'Admin':
+            responsable_value = responsable_form
+        else:
+            responsable_value = (current_user.username if current_user.is_authenticated else None)
         meta = {
             "folio": request.form.get('folio', '').strip() or None,
-            "responsable": request.form.get('responsable', '').strip() or None,
+            "responsable": responsable_value,
             "categoria": request.form.get('categoria', '').strip() or None,
             "fecha_doc": request.form.get('fecha_doc', '').strip() or None,
         }
         user_id = current_user.id if current_user.is_authenticated else None
         include_held = request.form.get('include_held') == '1' and current_user.role == 'Admin'
+
+        # ── Included stores filter ──────────────────────────────────────────
+        store_scope = request.form.get('store_scope', 'all')
+        included_store_ids: set | None = None
+        if store_scope == 'custom':
+            raw_ids = request.form.getlist('included_stores')
+            try:
+                included_store_ids = {int(x) for x in raw_ids if str(x).strip().isdigit()}
+            except Exception:
+                included_store_ids = None
+            if not included_store_ids:
+                if is_ajax:
+                    return jsonify({'ok': False, 'message': 'Selecciona al menos una tienda destino o cambia a "Todas".', 'category': 'warning'}), 400
+                flash('Selecciona al menos una tienda destino o cambia a "Todas".', 'warning')
+                return redirect(url_for('upload'))
         
         if include_held:
             log_audit(
@@ -8863,7 +8903,8 @@ def upload():
                 mode=analysis_mode,
                 meta=meta,
                 user_id=user_id,
-                include_held=include_held
+                include_held=include_held,
+                included_store_ids=included_store_ids,
             )
             
             session.pop('distribution_request_skus', None)
@@ -8875,7 +8916,10 @@ def upload():
             except:
                 pass
             
-            msg = f'Distribución generada: {n_preds} predicciones para {len(sku_list)} SKUs ({total_units:,} unidades)'
+            scope_msg = ''
+            if included_store_ids:
+                scope_msg = f' (limitada a {len(included_store_ids)} tiendas seleccionadas)'
+            msg = f'Distribución generada: {n_preds} predicciones para {len(sku_list)} SKUs ({total_units:,} unidades){scope_msg}'
             
             num_stores = db.session.query(func.count(func.distinct(Prediction.store_id))).filter(
                 Prediction.run_id == run_id,
@@ -8930,9 +8974,10 @@ def upload():
     pending_skus = session.get('distribution_request_skus', [])
     pending_mode = session.get('distribution_request_mode', 'sma3_min3')
     pending_meta = session.get('distribution_request_meta', {})
-    return render_template('upload.html', require_stock_confirm=require_stock_confirm, 
+    all_stores = Store.query.order_by(Store.name).all()
+    return render_template('upload.html', require_stock_confirm=require_stock_confirm,
                            pending_skus=pending_skus, pending_mode=pending_mode, pending_meta=pending_meta,
-                           ai_enabled=AI_ENABLED)
+                           ai_enabled=AI_ENABLED, all_stores=all_stores)
 
 
 @app.route('/generate_from_pending', methods=['POST'])
@@ -8953,18 +8998,44 @@ def generate_from_pending():
         return redirect(url_for('upload'))
     
     user_id = current_user.id if current_user.is_authenticated else None
-    
+
+    # Honor included store selection from the form (optional)
+    store_scope = request.form.get('store_scope', 'all')
+    included_store_ids: set | None = None
+    if store_scope == 'custom':
+        raw_ids = request.form.getlist('included_stores')
+        try:
+            included_store_ids = {int(x) for x in raw_ids if str(x).strip().isdigit()}
+        except Exception:
+            included_store_ids = set()
+        # Custom scope requires at least one valid store; otherwise reject
+        # (do NOT silently fall back to all stores).
+        if not included_store_ids:
+            msg = 'Selecciona al menos una tienda destino o usa "Todas las tiendas".'
+            if is_ajax:
+                return jsonify({'ok': False, 'message': msg, 'category': 'warning'}), 400
+            flash(msg, 'warning')
+            return redirect(url_for('upload'))
+
+    # Ensure responsable defaults to the current user when missing
+    if not (meta or {}).get('responsable'):
+        meta = dict(meta or {})
+        meta['responsable'] = current_user.username if current_user.is_authenticated else None
+
     print(f"[DISTRIBUTION REQUEST] === GENERATE FROM PENDING ===")
     print(f"[DISTRIBUTION REQUEST] SKUs total: {len(sku_list)}")
     print(f"[DISTRIBUTION REQUEST] Mode: {analysis_mode}")
-    
+    if included_store_ids:
+        print(f"[DISTRIBUTION REQUEST] Included stores: {len(included_store_ids)}")
+
     try:
         run_id, n_preds, total_units = generate_predictions_from_macro(
             scope_skus=sku_list,
             mode=analysis_mode,
             meta=meta,
             user_id=user_id,
-            include_held=False
+            include_held=False,
+            included_store_ids=included_store_ids,
         )
         
         session.pop('distribution_request_skus', None)
@@ -14103,6 +14174,11 @@ def distribution_review(plan_id):
     product_ids = list({l.product_id for l in lines if l.product_id})
 
     # ── CD stock (OK quality only) ────────────────────────────────────────
+    # IMPORTANT: For folio distribution we use only the physical CD stock
+    # available for outbound shipping (stock_bucket=MAIN). The legacy
+    # `StockCD` table represents this MAIN-bucket inventory; WEB-bucket
+    # stock lives in WmsInventory and must NOT be counted here, since it
+    # is reserved for e-commerce / web fulfillment, not folio distribution.
     cd_stock_raw = (
         db.session.query(Product.id, db.func.sum(StockCD.quantity))
         .join(StockCD, StockCD.product_id == Product.id)
@@ -14216,13 +14292,75 @@ def distribution_review(plan_id):
             lines_by_store[sname] = []
         lines_by_store[sname].append(line)
 
+    # ── Group lines by SKU + per-SKU allocation pool ─────────────────────
+    # Pool model: each SKU is a shared pool. cd_available is the MAIN-bucket
+    # CD stock; allocated is the sum of qty_final across all destination
+    # stores for the same SKU; free = cd_available - allocated.
+    lines_by_sku = {}
+    sku_meta = {}  # sku -> {product_name, category, product_id}
+    for line in lines:
+        if not line.product:
+            continue
+        sku = line.product.sku
+        if sku not in lines_by_sku:
+            lines_by_sku[sku] = []
+            sku_meta[sku] = {
+                'product_id': line.product_id,
+                'product_name': line.product.name or '—',
+                'category': line.product.category or '',
+            }
+        lines_by_sku[sku].append(line)
+
+    sku_pool_rows = []
+    sku_overalloc_count = 0
+    total_suggested_units = 0
+    for sku, sku_lines in lines_by_sku.items():
+        meta = sku_meta[sku]
+        pid = meta['product_id']
+        cd = cd_stock_map_by_id.get(pid, 0)
+        allocated = sum(l.effective_qty() for l in sku_lines)
+        suggested_total = sum((l.qty_suggested or l.qty_planned or 0) for l in sku_lines)
+        total_suggested_units += suggested_total
+        free = cd - allocated
+        over = allocated > cd
+        if over:
+            sku_overalloc_count += 1
+        sku_pool_rows.append({
+            'sku': sku,
+            'product_name': meta['product_name'],
+            'category': meta['category'],
+            'product_id': pid,
+            'cd_available': cd,
+            'allocated': allocated,
+            'suggested_total': suggested_total,
+            'free': free,
+            'over': over,
+            'lines': sku_lines,
+            'store_count': len(sku_lines),
+        })
+    sku_pool_rows.sort(key=lambda r: (-r['allocated'], r['sku']))
+
+    visible_skus = len(lines_by_sku)
+
+    # ── Header metadata: model + responsable + fecha + estado ────────────
+    source_run = None
+    if plan.source_run_id:
+        source_run = Run.query.filter_by(run_id=plan.source_run_id).first()
+    plan_responsable = (source_run.responsable if source_run and source_run.responsable
+                        else (plan.created_by.username if plan.created_by else '—'))
+    plan_mode = (source_run.mode if source_run and source_run.mode else '—')
+    plan_fecha = (source_run.created_at.strftime('%d/%m/%Y') if source_run and source_run.created_at
+                  else (plan.created_at.strftime('%d/%m/%Y') if plan.created_at else '—'))
+
     return render_template(
         'distribution_review.html',
         plan=plan,
         lines=lines,
         lines_by_store=lines_by_store,
+        sku_pool_rows=sku_pool_rows,
         store_rows=store_rows,
         total_final_units=total_final_units,
+        total_suggested_units=total_suggested_units,
         adjusted_count=adjusted_count,
         cd_stock_map=cd_stock_map,
         cd_stock_map_by_id=cd_stock_map_by_id,
@@ -14231,8 +14369,63 @@ def distribution_review(plan_id):
         store_names_list=store_names_list,
         categories_list=categories_list,
         total_warnings=total_warnings,
+        sku_overalloc_count=sku_overalloc_count,
+        visible_skus=visible_skus,
+        plan_responsable=plan_responsable,
+        plan_mode=plan_mode,
+        plan_fecha=plan_fecha,
         can_edit=can_edit,
     )
+
+
+def _check_plan_over_allocation(plan):
+    """Detect SKUs whose total qty_final across all stores exceeds the
+    physical CD stock available for distribution (MAIN bucket). The legacy
+    StockCD table represents this MAIN-bucket inventory; WEB-bucket stock
+    is reserved for e-commerce and is intentionally NOT counted here.
+
+    Returns a list of dicts: {sku, allocated, cd_available, over}.
+    """
+    over_list = []
+    if not plan:
+        return over_list
+
+    # Sum allocated qty per product_id for the plan.
+    alloc_by_pid = defaultdict(int)
+    for ln in plan.lines:
+        if not ln.product_id:
+            continue
+        eff = ln.qty_final if ln.qty_final is not None else (ln.qty_planned or 0)
+        alloc_by_pid[ln.product_id] += int(eff or 0)
+
+    if not alloc_by_pid:
+        return over_list
+
+    pids = list(alloc_by_pid.keys())
+    cd_rows = (
+        db.session.query(Product.id, Product.sku, db.func.sum(StockCD.quantity))
+        .join(StockCD, StockCD.product_id == Product.id)
+        .filter(StockCD.quality_status != 'PROBLEM')
+        .filter(Product.id.in_(pids))
+        .group_by(Product.id, Product.sku)
+        .all()
+    )
+    cd_by_pid = {r[0]: (r[1], int(r[2] or 0)) for r in cd_rows}
+
+    for pid, allocated in alloc_by_pid.items():
+        sku, cd = cd_by_pid.get(pid, (None, 0))
+        if sku is None:
+            prod = db.session.get(Product, pid)
+            sku = prod.sku if prod else f'#{pid}'
+        if allocated > cd:
+            over_list.append({
+                'sku': sku,
+                'allocated': allocated,
+                'cd_available': cd,
+                'over': allocated - cd,
+            })
+    over_list.sort(key=lambda x: -x['over'])
+    return over_list
 
 
 @app.route('/distribution/review/<int:plan_id>/save', methods=['POST'])
@@ -14291,6 +14484,18 @@ def distribution_review_save(plan_id):
     db.session.commit()
 
     flash(f'Ajustes guardados: {changed} línea(s) modificada(s).', 'success' if changed else 'info')
+
+    # ── Soft warning (non-blocking): over-allocation vs CD MAIN stock ──
+    over_list = _check_plan_over_allocation(plan)
+    if over_list:
+        sample = ', '.join(f"{r['sku']} (+{r['over']})" for r in over_list[:5])
+        more = '…' if len(over_list) > 5 else ''
+        flash(
+            f'⚠ Atención: {len(over_list)} SKU(s) exceden el stock CD disponible: {sample}{more}. '
+            f'Revisa antes de enviar a autorizar.',
+            'warning'
+        )
+
     return redirect(url_for('distribution_review', plan_id=plan_id))
 
 
@@ -14371,6 +14576,18 @@ def distribution_review_submit_auth(plan_id):
     )
 
     flash(f'Plan {plan.folio} enviado a autorización. Un responsable deberá aprobarlo para enviarlo al Planner.', 'success')
+
+    # ── Soft warning (non-blocking): over-allocation vs CD MAIN stock ──
+    over_list = _check_plan_over_allocation(plan)
+    if over_list:
+        sample = ', '.join(f"{r['sku']} (+{r['over']})" for r in over_list[:5])
+        more = '…' if len(over_list) > 5 else ''
+        flash(
+            f'⚠ El plan se envió a autorización con {len(over_list)} SKU(s) por sobre el stock CD: '
+            f'{sample}{more}. El responsable deberá validar la cobertura antes de aprobar.',
+            'warning'
+        )
+
     return redirect(url_for('runs'))
 
 

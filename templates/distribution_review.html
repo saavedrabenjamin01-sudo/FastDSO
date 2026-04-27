@@ -6,76 +6,125 @@
 <div class="container-fluid py-3">
 
   <!-- ── Header ── -->
-  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
-    <div>
-      <h5 class="mb-0 fw-bold">
-        Plan <span class="text-primary">{{ plan.folio }}</span>
-        <span class="badge ms-2
-          {% if plan.status == 'DRAFT' %}bg-secondary
-          {% elif plan.status == 'DRAFT_REVIEW' %}bg-warning text-dark
-          {% elif plan.status == 'APPROVED' %}bg-success
-          {% else %}bg-secondary{% endif %}" style="font-size:.72rem;">
-          {% if plan.status == 'DRAFT' %}BORRADOR
-          {% elif plan.status == 'DRAFT_REVIEW' %}EN AUTORIZACIÓN
-          {% else %}{{ plan.status }}{% endif %}
-        </span>
-        {% if plan.urgency == 'URGENT' %}<span class="badge bg-danger ms-1" style="font-size:.7rem;">URGENTE</span>{% endif %}
-        {% if plan.source == 'MANUAL' %}<span class="badge bg-dark ms-1" style="font-size:.7rem;">MANUAL</span>{% endif %}
-      </h5>
-      <small class="text-muted">
-        {% if plan.status == 'DRAFT' %}Revisa y ajusta las cantidades antes de enviar a autorizar
-        {% elif plan.status == 'DRAFT_REVIEW' %}Pendiente de aprobación por un responsable
-        {% else %}Plan confirmado y enviado al FastPlanner{% endif %}
-        &middot; Generado: {{ plan.created_at.strftime('%d/%m/%Y %H:%M') if plan.created_at else '—' }}
-        {% if plan.approved_by %}&middot; Aprobado por {{ plan.approved_by.username }}{% endif %}
-      </small>
+  <div class="card border-0 shadow-sm mb-3" style="border-radius:12px;">
+    <div class="card-body py-3 px-3">
+      <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <h5 class="mb-0 fw-bold">
+            Plan <span class="text-primary">{{ plan.folio }}</span>
+          </h5>
+          <span class="badge
+            {% if plan.status == 'DRAFT' %}bg-secondary
+            {% elif plan.status == 'DRAFT_REVIEW' %}bg-warning text-dark
+            {% elif plan.status == 'APPROVED' %}bg-success
+            {% else %}bg-secondary{% endif %}" style="font-size:.72rem;">
+            {% if plan.status == 'DRAFT' %}BORRADOR
+            {% elif plan.status == 'DRAFT_REVIEW' %}EN AUTORIZACIÓN
+            {% else %}{{ plan.status }}{% endif %}
+          </span>
+          {% if plan.urgency == 'URGENT' %}<span class="badge bg-danger" style="font-size:.7rem;">URGENTE</span>{% endif %}
+          {% if plan.source == 'MANUAL' %}<span class="badge bg-dark" style="font-size:.7rem;">MANUAL</span>{% endif %}
+        </div>
+        <a href="{{ url_for('runs') }}" class="btn btn-sm btn-outline-secondary">
+          <i class="bi bi-arrow-left me-1"></i>Volver a corridas
+        </a>
+      </div>
+      <div class="row g-2 align-items-center" style="font-size:.78rem;">
+        <div class="col-6 col-md-3">
+          <div class="text-muted text-uppercase" style="font-size:.66rem;letter-spacing:.04em;">Responsable</div>
+          <div class="fw-semibold"><i class="bi bi-person-circle me-1 text-primary"></i>{{ plan_responsable }}</div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="text-muted text-uppercase" style="font-size:.66rem;letter-spacing:.04em;">Modo / modelo</div>
+          <div class="fw-semibold"><i class="bi bi-sliders me-1 text-primary"></i>{{ plan_mode }}</div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="text-muted text-uppercase" style="font-size:.66rem;letter-spacing:.04em;">Fecha documento</div>
+          <div class="fw-semibold"><i class="bi bi-calendar3 me-1 text-primary"></i>{{ plan_fecha }}</div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="text-muted text-uppercase" style="font-size:.66rem;letter-spacing:.04em;">Generado</div>
+          <div class="fw-semibold text-muted" style="font-size:.78rem;">
+            {{ plan.created_at.strftime('%d/%m/%Y %H:%M') if plan.created_at else '—' }}
+            {% if plan.approved_by %}<br><small><i class="bi bi-check2-circle me-1"></i>Aprobado por {{ plan.approved_by.username }}</small>{% endif %}
+          </div>
+        </div>
+      </div>
+      <div class="text-muted mt-2" style="font-size:.74rem;">
+        {% if plan.status == 'DRAFT' %}<i class="bi bi-info-circle me-1"></i>Revisa y ajusta las cantidades antes de enviar a autorizar.
+        {% elif plan.status == 'DRAFT_REVIEW' %}<i class="bi bi-info-circle me-1"></i>Pendiente de aprobación por un responsable.
+        {% else %}<i class="bi bi-info-circle me-1"></i>Plan confirmado y enviado al FastPlanner.{% endif %}
+      </div>
     </div>
-    <a href="{{ url_for('runs') }}" class="btn btn-sm btn-outline-secondary">
-      <i class="bi bi-arrow-left me-1"></i>Volver a corridas
-    </a>
   </div>
 
-  <!-- ── KPI Cards ── -->
-  <div class="row g-2 mb-3">
+  <!-- ── KPI Cards (7) ── -->
+  <div class="row g-2 mb-2">
     <div class="col-6 col-md col-xl">
       <div class="card border-0 shadow-sm text-center py-2">
         <div class="card-body py-1 px-2">
-          <div class="fw-bold" style="font-size:1.5rem;color:#1d4ed8;" id="kpi-visible-lines">{{ lines|length }}</div>
-          <div class="text-muted" style="font-size:.72rem;">Líneas visibles</div>
+          <div class="fw-bold" style="font-size:1.4rem;color:#0369a1;" id="kpi-visible-stores">{{ store_rows|length }}</div>
+          <div class="text-muted" style="font-size:.7rem;">Tiendas</div>
         </div>
       </div>
     </div>
     <div class="col-6 col-md col-xl">
       <div class="card border-0 shadow-sm text-center py-2">
         <div class="card-body py-1 px-2">
-          <div class="fw-bold" style="font-size:1.5rem;color:#059669;" id="kpi-total-units">{{ total_final_units }}</div>
-          <div class="text-muted" style="font-size:.72rem;">Unidades finales</div>
+          <div class="fw-bold" style="font-size:1.4rem;color:#7e22ce;" id="kpi-visible-skus">{{ visible_skus }}</div>
+          <div class="text-muted" style="font-size:.7rem;">SKUs visibles</div>
         </div>
       </div>
     </div>
     <div class="col-6 col-md col-xl">
       <div class="card border-0 shadow-sm text-center py-2">
         <div class="card-body py-1 px-2">
-          <div class="fw-bold" style="font-size:1.5rem;color:#0369a1;" id="kpi-visible-stores">{{ store_rows|length }}</div>
-          <div class="text-muted" style="font-size:.72rem;">Tiendas</div>
+          <div class="fw-bold" style="font-size:1.4rem;color:#1d4ed8;" id="kpi-visible-lines">{{ lines|length }}</div>
+          <div class="text-muted" style="font-size:.7rem;">Líneas visibles</div>
         </div>
       </div>
     </div>
     <div class="col-6 col-md col-xl">
       <div class="card border-0 shadow-sm text-center py-2">
         <div class="card-body py-1 px-2">
-          <div class="fw-bold" style="font-size:1.5rem;color:{{ '#b45309' if adjusted_count else '#6b7280' }};" id="kpi-adjusted">{{ adjusted_count }}</div>
-          <div class="text-muted" style="font-size:.72rem;">Ajustadas</div>
+          <div class="fw-bold" style="font-size:1.4rem;color:#475569;" id="kpi-suggested-units">{{ total_suggested_units }}</div>
+          <div class="text-muted" style="font-size:.7rem;">Sugeridas</div>
         </div>
       </div>
     </div>
     <div class="col-6 col-md col-xl">
       <div class="card border-0 shadow-sm text-center py-2">
         <div class="card-body py-1 px-2">
-          <div class="fw-bold" style="font-size:1.5rem;color:{{ '#dc2626' if total_warnings else '#6b7280' }};" id="kpi-warnings">{{ total_warnings }}</div>
-          <div class="text-muted" style="font-size:.72rem;">Warnings</div>
+          <div class="fw-bold" style="font-size:1.4rem;color:#059669;" id="kpi-total-units">{{ total_final_units }}</div>
+          <div class="text-muted" style="font-size:.7rem;">Finales</div>
         </div>
       </div>
+    </div>
+    <div class="col-6 col-md col-xl">
+      <div class="card border-0 shadow-sm text-center py-2">
+        <div class="card-body py-1 px-2">
+          <div class="fw-bold" style="font-size:1.4rem;color:{{ '#b45309' if adjusted_count else '#6b7280' }};" id="kpi-adjusted">{{ adjusted_count }}</div>
+          <div class="text-muted" style="font-size:.7rem;">Ajustadas</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-md col-xl">
+      <div class="card border-0 shadow-sm text-center py-2">
+        <div class="card-body py-1 px-2">
+          <div class="fw-bold" style="font-size:1.4rem;color:{{ '#dc2626' if total_warnings else '#6b7280' }};" id="kpi-warnings">{{ total_warnings }}</div>
+          <div class="text-muted" style="font-size:.7rem;">Warnings</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Over-allocation banner (live) ── -->
+  <div id="overalloc-banner" class="alert alert-danger py-2 px-3 d-none align-items-start gap-2 mb-3"
+       style="font-size:.84rem;border-radius:10px;">
+    <i class="bi bi-exclamation-octagon-fill mt-1"></i>
+    <div class="flex-grow-1">
+      <strong><span id="overalloc-count">0</span> SKU(s) exceden el stock CD disponible:</strong>
+      <span id="overalloc-list"></span>
     </div>
   </div>
 
@@ -259,7 +308,10 @@
                 <i class="bi bi-list-ul me-1"></i>Por líneas
               </button>
               <button type="button" class="btn btn-outline-primary" id="btn-view-grouped" onclick="toggleView('grouped')">
-                <i class="bi bi-layout-accordion-collapsed me-1"></i>Por tienda
+                <i class="bi bi-shop me-1"></i>Por tienda
+              </button>
+              <button type="button" class="btn btn-outline-primary" id="btn-view-sku" onclick="toggleView('sku')">
+                <i class="bi bi-upc-scan me-1"></i>Por SKU
               </button>
             </div>
           </div>
@@ -326,6 +378,9 @@
                   <tr data-line-id="{{ line.id }}"
                       data-store="{{ store_name }}"
                       data-sku="{{ sku|lower }}"
+                      data-sku-code="{{ sku }}"
+                      data-product-id="{{ line.product_id }}"
+                      data-cd="{{ cd }}"
                       data-category="{{ cat|lower }}"
                       data-adjusted="{{ 'true' if w_ajustado else 'false' }}"
                       data-has-warning="{{ 'true' if has_warning else 'false' }}"
@@ -371,6 +426,9 @@
                              data-suggested="{{ suggested }}"
                              data-line-id="{{ line.id }}"
                              data-store="{{ store_name }}"
+                             data-product-id="{{ line.product_id }}"
+                             data-sku-code="{{ sku }}"
+                             data-cd="{{ cd }}"
                              onchange="onQtyChange(this)">
                       <div class="d-flex justify-content-center gap-1 mt-1">
                         <button type="button" class="btn-qty" onclick="stepQty({{ line.id }}, -5)">−5</button>
@@ -417,6 +475,126 @@
                   {% endfor %}
                 </tbody>
               </table>
+            </div>
+          </div>
+
+          <!-- ════ SKU VIEW (group by SKU with shared allocation pool widget) ════ -->
+          <div id="skuView" style="display:none;">
+            <div class="accordion accordion-flush" id="skuAccordion">
+              {% for sp in sku_pool_rows %}
+              {% set sku_acc = 'skuacc' ~ loop.index %}
+              <div class="accordion-item border-0 border-bottom" data-sku-acc-pid="{{ sp.product_id }}" data-sku-acc-code="{{ sp.sku }}">
+                <h2 class="accordion-header">
+                  <button class="accordion-button collapsed py-2 px-3" type="button"
+                          data-bs-toggle="collapse" data-bs-target="#{{ sku_acc }}"
+                          style="font-size:.82rem;background:transparent;">
+                    <div class="d-flex align-items-center gap-2 flex-wrap w-100 me-2">
+                      <code class="fw-semibold" style="font-size:.78rem;">{{ sp.sku }}</code>
+                      <span class="text-muted" style="font-size:.74rem;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ sp.product_name }}">
+                        {{ (sp.product_name or '—')[:48] }}
+                      </span>
+                      {% if sp.category %}<span class="badge bg-light text-dark border" style="font-size:.62rem;">{{ sp.category[:14] }}</span>{% endif %}
+                      <span class="badge bg-light text-dark border" style="font-size:.65rem;">{{ sp.store_count }} tiendas</span>
+                      <!-- Pool widget: CD avail / Asignado / Libre -->
+                      <span class="ms-auto d-flex align-items-center gap-2" data-sku-pool-widget="{{ sp.product_id }}">
+                        <span class="badge bg-light text-dark border" style="font-size:.65rem;" title="Stock CD disponible (MAIN)">
+                          <i class="bi bi-building me-1"></i>CD: <strong data-sku-cd="{{ sp.product_id }}">{{ sp.cd_available }}</strong>
+                        </span>
+                        <span class="badge bg-primary-subtle text-primary" style="font-size:.65rem;" title="Suma de qty_final actual">
+                          Asign: <strong data-sku-alloc="{{ sp.product_id }}">{{ sp.allocated }}</strong>
+                        </span>
+                        <span class="badge {{ 'bg-danger' if sp.over else 'bg-success-subtle text-success' }}"
+                              data-sku-free-badge="{{ sp.product_id }}" style="font-size:.65rem;" title="CD − Asignado">
+                          Libre: <strong data-sku-free="{{ sp.product_id }}">{{ sp.free }}</strong>
+                        </span>
+                        <span class="badge bg-danger {{ '' if sp.over else 'd-none' }}"
+                              data-sku-over-badge="{{ sp.product_id }}" style="font-size:.62rem;">EXCEDE CD</span>
+                      </span>
+                    </div>
+                  </button>
+                </h2>
+                <div id="{{ sku_acc }}" class="accordion-collapse collapse" data-bs-parent="#skuAccordion">
+                  <div class="accordion-body p-0">
+                    <!-- Pool progress bar -->
+                    <div class="px-3 py-2 bg-light border-bottom">
+                      <div class="d-flex justify-content-between align-items-center mb-1" style="font-size:.72rem;">
+                        <span class="text-muted">Pool compartido por tiendas</span>
+                        <span class="text-muted">
+                          <strong data-sku-alloc-text="{{ sp.product_id }}">{{ sp.allocated }}</strong> /
+                          <strong>{{ sp.cd_available }}</strong> uds
+                        </span>
+                      </div>
+                      <div class="progress" style="height:7px;border-radius:4px;">
+                        {% set pct = ((sp.allocated * 100 / sp.cd_available) | round(0, 'floor')) if sp.cd_available else 0 %}
+                        {% if pct > 100 %}{% set pct = 100 %}{% endif %}
+                        <div class="progress-bar {{ 'bg-danger' if sp.over else ('bg-warning' if pct > 90 else 'bg-success') }}"
+                             role="progressbar" style="width: {{ pct }}%;"
+                             data-sku-pool-bar="{{ sp.product_id }}"></div>
+                      </div>
+                    </div>
+                    <div class="table-responsive">
+                      <table class="table table-sm table-hover mb-0 align-middle" style="font-size:.76rem;">
+                        <thead class="table-light" style="font-size:.66rem;">
+                          <tr>
+                            <th>Tienda</th>
+                            <th class="text-end">Stk T</th>
+                            <th class="text-end">Vta 4s</th>
+                            <th class="text-center">Sug.</th>
+                            <th class="text-center">Final</th>
+                            {% if can_edit %}<th class="text-center">Ajuste rápido</th>{% endif %}
+                            <th class="text-center">Δ</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {% for line in sp.lines %}
+                          {% set sl_store = line.store.name if line.store else '—' %}
+                          {% set sl_sug = (line.qty_suggested or line.qty_planned) %}
+                          {% set sl_eff = line.effective_qty() %}
+                          {% set sl_delta = sl_eff - sl_sug %}
+                          {% set sl_sk = (line.store_id | string) + '_' + (line.product_id | string) %}
+                          {% set sl_ss = store_stock_map.get(sl_sk) %}
+                          {% set sl_has_ss = sl_sk in store_stock_map %}
+                          {% set sl_sales = sales_map.get(sl_sk) %}
+                          {% set sl_has_sales = sl_sk in sales_map %}
+                          <tr data-sku-line="{{ line.id }}" class="{{ 'row-changed' if line.is_manually_adjusted else '' }}">
+                            <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ sl_store }}">{{ sl_store }}</td>
+                            <td class="text-end">
+                              {% if sl_has_ss %}{% if sl_ss <= 0 %}<span class="text-danger fw-semibold">0</span>{% else %}<span class="text-muted">{{ sl_ss }}</span>{% endif %}
+                              {% else %}<span class="text-muted">—</span>{% endif %}
+                            </td>
+                            <td class="text-end">
+                              {% if sl_has_sales %}<span class="text-muted">{{ sl_sales }}</span>{% else %}<span class="text-muted">—</span>{% endif %}
+                            </td>
+                            <td class="text-center text-muted">{{ sl_sug }}</td>
+                            <td class="text-center fw-semibold" id="skuproxy_{{ line.id }}">{{ sl_eff }}</td>
+                            {% if can_edit %}
+                            <td class="text-center">
+                              <div class="d-flex justify-content-center gap-1">
+                                <button type="button" class="btn-qty" onclick="stepQty({{ line.id }}, -5)">−5</button>
+                                <button type="button" class="btn-qty" onclick="stepQty({{ line.id }}, -1)">−1</button>
+                                <button type="button" class="btn-qty btn-qty-pos" onclick="stepQty({{ line.id }}, 1)">+1</button>
+                                <button type="button" class="btn-qty btn-qty-pos" onclick="stepQty({{ line.id }}, 5)">+5</button>
+                              </div>
+                            </td>
+                            {% endif %}
+                            <td class="text-center">
+                              <span id="sku-delta-{{ line.id }}"
+                                class="{% if sl_delta > 0 %}text-success fw-semibold{% elif sl_delta < 0 %}text-danger fw-semibold{% else %}text-muted{% endif %}"
+                                style="font-size:.76rem;">
+                                {% if sl_delta > 0 %}+{{ sl_delta }}{% elif sl_delta < 0 %}{{ sl_delta }}{% else %}—{% endif %}
+                              </span>
+                            </td>
+                          </tr>
+                          {% endfor %}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              {% else %}
+              <div class="text-center text-muted py-4" style="font-size:.82rem;">Sin SKUs en este plan.</div>
+              {% endfor %}
             </div>
           </div>
 
@@ -869,6 +1047,7 @@ function recalcVisibleTotals() {
   });
 
   buildZeroWarnings();
+  recalcSkuPools();
 }
 
 function _setText(id, val) {
@@ -1053,26 +1232,133 @@ function toggleView(name) {
   currentView = name;
   const lineView = document.getElementById('lineView');
   const groupedView = document.getElementById('groupedView');
+  const skuView = document.getElementById('skuView');
   const btnLines = document.getElementById('btn-view-lines');
   const btnGrouped = document.getElementById('btn-view-grouped');
+  const btnSku = document.getElementById('btn-view-sku');
   const noResults = document.getElementById('no-filter-results');
+
+  // Reset all to outline first
+  btnLines.className = 'btn btn-sm btn-outline-primary';
+  btnGrouped.className = 'btn btn-sm btn-outline-primary';
+  if (btnSku) btnSku.className = 'btn btn-sm btn-outline-primary';
+  lineView.style.display = 'none';
+  groupedView.style.display = 'none';
+  if (skuView) skuView.style.display = 'none';
 
   if (name === 'lines') {
     lineView.style.display = '';
-    groupedView.style.display = 'none';
     btnLines.className = 'btn btn-sm btn-primary active';
-    btnGrouped.className = 'btn btn-sm btn-outline-primary';
     applyFilters();
-  } else {
-    lineView.style.display = 'none';
-    groupedView.style.display = '';
+  } else if (name === 'sku') {
+    skuView.style.display = '';
+    if (btnSku) btnSku.className = 'btn btn-sm btn-primary active';
     noResults.style.display = 'none';
+    document.querySelectorAll('#reviewTbody tr[data-line-id]').forEach(function(tr) { tr.style.display = ''; });
+    recalcVisibleTotals();
+  } else {
+    groupedView.style.display = '';
     btnGrouped.className = 'btn btn-sm btn-primary active';
-    btnLines.className = 'btn btn-sm btn-outline-primary';
-    // Ensure all table rows are visible (accordion reads from them)
+    noResults.style.display = 'none';
     document.querySelectorAll('#reviewTbody tr[data-line-id]').forEach(function(tr) { tr.style.display = ''; });
     recalcVisibleTotals();
   }
+}
+
+/* ─── Per-SKU shared allocation pool: live recompute ─── */
+function recalcSkuPools() {
+  // Build {productId: {cd, allocated}} from all line-view inputs.
+  const pools = {};
+  document.querySelectorAll('#reviewTbody tr[data-line-id]').forEach(function(tr) {
+    const pid = tr.dataset.productId;
+    if (!pid) return;
+    const cd = parseInt(tr.dataset.cd) || 0;
+    const inp = getInput(tr.dataset.lineId);
+    const v = inp ? Math.max(0, parseInt(inp.value) || 0) : 0;
+    if (!pools[pid]) pools[pid] = { cd: cd, allocated: 0 };
+    pools[pid].allocated += v;
+  });
+
+  const overSkus = [];
+  Object.keys(pools).forEach(function(pid) {
+    const p = pools[pid];
+    const free = p.cd - p.allocated;
+    const over = p.allocated > p.cd;
+    _updatePoolWidget(pid, p.cd, p.allocated, free, over);
+    if (over) {
+      // Try to find the SKU code for the banner from the SKU accordion.
+      const acc = document.querySelector('[data-sku-acc-pid="' + pid + '"]');
+      const code = acc ? (acc.dataset.skuAccCode || pid) : pid;
+      overSkus.push({ code: code, over: p.allocated - p.cd });
+    }
+  });
+
+  // Per-line EXCEDE CD inline badge in line view
+  document.querySelectorAll('#reviewTbody tr[data-line-id]').forEach(function(tr) {
+    const pid = tr.dataset.productId;
+    const p = pools[pid];
+    const badgesDiv = document.getElementById('badges_' + tr.dataset.lineId);
+    if (!badgesDiv) return;
+    const existing = badgesDiv.querySelector('.badge-excede-cd');
+    if (p && p.allocated > p.cd && p.cd >= 0) {
+      if (!existing) {
+        const b = document.createElement('span');
+        b.className = 'badge bg-danger badge-excede-cd';
+        b.textContent = 'EXCEDE CD';
+        b.title = 'La asignación total para este SKU supera el stock CD disponible.';
+        badgesDiv.appendChild(b);
+      }
+    } else if (existing) {
+      existing.remove();
+    }
+  });
+
+  // Global banner
+  const banner = document.getElementById('overalloc-banner');
+  const cnt = document.getElementById('overalloc-count');
+  const list = document.getElementById('overalloc-list');
+  if (!banner) return;
+  if (overSkus.length === 0) {
+    banner.classList.add('d-none');
+    banner.classList.remove('d-flex');
+  } else {
+    banner.classList.remove('d-none');
+    banner.classList.add('d-flex');
+    if (cnt) cnt.textContent = overSkus.length;
+    if (list) {
+      list.textContent = overSkus.slice(0, 8).map(function(s) {
+        return s.code + ' (+' + s.over + ')';
+      }).join(', ') + (overSkus.length > 8 ? '…' : '');
+    }
+  }
+}
+
+function _updatePoolWidget(pid, cd, allocated, free, over) {
+  const allocEl = document.querySelector('[data-sku-alloc="' + pid + '"]');
+  if (allocEl) allocEl.textContent = allocated;
+  const allocTextEl = document.querySelector('[data-sku-alloc-text="' + pid + '"]');
+  if (allocTextEl) allocTextEl.textContent = allocated;
+  const freeEl = document.querySelector('[data-sku-free="' + pid + '"]');
+  if (freeEl) freeEl.textContent = free;
+  const freeBadge = document.querySelector('[data-sku-free-badge="' + pid + '"]');
+  if (freeBadge) {
+    freeBadge.className = 'badge ' + (over ? 'bg-danger' : 'bg-success-subtle text-success');
+    freeBadge.style.fontSize = '.65rem';
+    freeBadge.setAttribute('data-sku-free-badge', pid);
+    freeBadge.title = 'CD − Asignado';
+    // Re-add inner content (template)
+    freeBadge.innerHTML = 'Libre: <strong data-sku-free="' + pid + '">' + free + '</strong>';
+  }
+  const overBadge = document.querySelector('[data-sku-over-badge="' + pid + '"]');
+  if (overBadge) overBadge.classList.toggle('d-none', !over);
+  const bar = document.querySelector('[data-sku-pool-bar="' + pid + '"]');
+  if (bar) {
+    let pct = cd > 0 ? Math.floor((allocated * 100) / cd) : (allocated > 0 ? 100 : 0);
+    if (pct > 100) pct = 100;
+    bar.style.width = pct + '%';
+    bar.className = 'progress-bar ' + (over ? 'bg-danger' : (pct > 90 ? 'bg-warning' : 'bg-success'));
+  }
+  // SKU view per-row proxy is already updated in onQtyChange via skuproxy_<id>.
 }
 
 /* ─── Auth flow ─── */
