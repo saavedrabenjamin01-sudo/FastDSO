@@ -733,8 +733,15 @@
             <div class="text-muted" style="font-size:.82rem;">
               <span id="footer-adjusted-count">{{ adjusted_count }}</span> línea(s) ajustada(s) de {{ lines|length }}
             </div>
-            <div class="d-flex gap-2">
-              <a href="{{ url_for('runs') }}" class="btn btn-sm btn-outline-secondary">Cancelar</a>
+            <div class="d-flex gap-2 flex-wrap">
+              <a href="{{ url_for('distributions') }}" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-arrow-left me-1"></i>Historial
+              </a>
+              <a href="{{ url_for('export_distribution_plan', plan_id=plan.id) }}"
+                 class="btn btn-sm btn-outline-success"
+                 onclick="if(_dirtyFlag){return confirm('Hay cambios sin guardar. El export usará los valores guardados previamente. ¿Continuar?');}">
+                <i class="bi bi-file-earmark-excel me-1"></i>Exportar
+              </a>
               <button type="submit" class="btn btn-sm btn-outline-primary" form="reviewForm">
                 <i class="bi bi-floppy me-1"></i>Guardar ajustes
               </button>
@@ -772,8 +779,14 @@
             {% endif %}
 
           {% elif plan.status == 'APPROVED' %}
-          <div class="card-footer text-muted text-center" style="font-size:.82rem;">
-            <i class="bi bi-lock me-1"></i>Plan confirmado. Solo lectura.
+          <div class="card-footer d-flex justify-content-between align-items-center gap-2 flex-wrap">
+            <div class="text-muted" style="font-size:.82rem;">
+              <i class="bi bi-lock me-1"></i>Plan confirmado. Solo lectura.
+            </div>
+            <a href="{{ url_for('export_distribution_plan', plan_id=plan.id) }}"
+               class="btn btn-sm btn-outline-success">
+              <i class="bi bi-file-earmark-excel me-1"></i>Exportar Qty Final
+            </a>
           </div>
           {% endif %}
 
@@ -879,6 +892,7 @@
 
 let activeStoreFilter = '';
 let currentView = 'lines';
+let _dirtyFlag = false;
 
 /* ─── Core qty mutators ─── */
 function getInput(lineId) {
@@ -963,9 +977,14 @@ function onQtyChange(input) {
     }
   }
 
-  // Accordion proxy qty
+  // Accordion proxy qty (store view) + SKU view proxy
   const proxy = document.getElementById('proxy_' + lineId);
   if (proxy) proxy.textContent = newVal;
+  const skuProxy = document.getElementById('skuproxy_' + lineId);
+  if (skuProxy) skuProxy.textContent = newVal;
+
+  // Mark dirty for unsaved-changes guard
+  _dirtyFlag = true;
 
   // Accordion delta
   const accDelta = document.getElementById('acc-delta-' + lineId);
@@ -1415,6 +1434,19 @@ function confirmAndSend() {
   if (s) s.innerHTML = '<strong>Unidades finales:</strong> ' + total;
   new bootstrap.Modal(document.getElementById('confirmModal')).show();
 }
+
+/* ─── Unsaved-changes guard ─── */
+{% if can_edit %}
+window.addEventListener('beforeunload', function(e) {
+  if (!_dirtyFlag) return;
+  e.preventDefault();
+  e.returnValue = 'Tienes cambios sin guardar en la distribución. ¿Salir de todas formas?';
+  return e.returnValue;
+});
+document.getElementById('reviewForm').addEventListener('submit', function() {
+  _dirtyFlag = false;
+});
+{% endif %}
 
 /* ─── Live filter event wiring ─── */
 document.getElementById('filter-sku').addEventListener('input', applyFilters);

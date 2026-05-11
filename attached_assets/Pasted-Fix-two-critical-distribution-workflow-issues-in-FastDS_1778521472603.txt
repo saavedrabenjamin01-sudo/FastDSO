@@ -1,0 +1,191 @@
+Fix two critical distribution workflow issues in FastDSO:
+
+1) distribution edits are not being persisted correctly or are not reflected in exports
+2) the distribution edit screen does not implement a real per-SKU editable allocation pool when units are removed from one store and reassigned to others
+
+GOAL
+Make the distribution review/edit flow truly operational:
+- edits must persist reliably in qty_final
+- exports must use the saved final quantities
+- users must be able to manually reallocate freed units across stores through a per-SKU pool concept
+- distribution history/export should move out of the main dashboard into a dedicated module
+
+==================================================
+PART 1 — PERSISTENCE / EXPORT FIX
+==================================================
+
+PROBLEM
+Changes made in the distribution edit page are either:
+- not being saved to the database
+- or not being reflected when exporting distributions from the main dashboard
+
+REQUIRED FIX
+
+1) Ensure the edit page saves qty_final correctly
+When user clicks "Guardar ajustes":
+- persist qty_final for each edited line
+- persist is_manually_adjusted
+- persist adjustment metadata if applicable
+- commit transaction properly
+- show success message
+
+2) Ensure exports use qty_final, not qty_suggested
+Audit all export logic related to distributions.
+Any export/download must use:
+- qty_final as the source of truth
+Never:
+- qty_suggested
+
+3) Add debug logs:
+[PLAN] saved adjustments plan_id=...
+[PLAN] line saved sku=... store=... qty_final=...
+[PLAN] export using qty_final plan_id=...
+
+==================================================
+PART 2 — NEW DISTRIBUTION HISTORY / EXPORT MODULE
+==================================================
+
+PROBLEM
+The main dashboard should not be the place to query and export historical distributions.
+
+REQUIRED CHANGE
+
+1) Create a new dedicated module/page:
+Route suggestion:
+- /distributions
+Title:
+- "Distribuciones"
+
+2) This page must list created distributions/runs/plans with:
+- folio/run id
+- created_at
+- responsable
+- status
+- total stores
+- total SKUs
+- total units
+- mode/badges (e.g. exhaust/no-saldo mode)
+
+3) Add actions:
+- Ver detalle
+- Editar
+- Exportar
+
+4) Add filters:
+- date range
+- responsable
+- status
+- search by folio/run id
+
+5) Move export entry point here instead of relying on the main dashboard
+
+==================================================
+PART 3 — PER-SKU EDITABLE POOL LOGIC
+==================================================
+
+PROBLEM
+When the user reduces qty_final for one store, those freed units do not become available as a reusable pool for the same SKU.
+
+GOAL
+For each SKU, the edit screen must maintain a real live allocation pool so the user can manually reassign freed units to any other store(s).
+
+CORE RULE
+
+For each SKU:
+pool_sku = available_main_for_sku - sum(qty_final across all stores for that SKU)
+
+Where:
+- available_main_for_sku = current MAIN CD available stock for that SKU
+- WEB stock must never be used here
+
+REQUIRED BEHAVIOR
+
+1) If the user decreases qty_final in one store:
+- pool_sku must increase immediately
+
+2) If the user increases qty_final in another store:
+- pool_sku must decrease immediately
+
+3) The user must be able to assign the freed units to:
+- one other store
+- or multiple stores
+manually
+
+4) If user tries to increase beyond pool_sku:
+- show immediate warning
+- optionally block that increase
+
+==================================================
+PART 4 — UI FOR THE SKU POOL
+==================================================
+
+1) Add a per-SKU live allocation summary
+When editing lines, especially in grouped-by-SKU mode, show:
+
+- Stock CD disponible
+- Total asignado en esta distribución
+- Pool libre
+
+Example:
+SKU 045496597863
+- Stock CD disponible: 20
+- Asignado actual: 16
+- Pool libre: 4
+
+2) Add grouping by SKU
+Make sure the edit page supports:
+- Agrupar por tienda
+- Agrupar por SKU
+
+When grouped by SKU:
+- all store lines for the same SKU are shown together
+- the SKU pool summary appears above the group
+- this becomes the preferred mode for manual reallocation
+
+3) Quick actions
+Per row, keep or add:
+- -1
+- +1
+- +5
+- direct numeric input
+
+These must update the SKU pool live.
+
+==================================================
+PART 5 — REVIEW / SAVE / EXPORT INTEGRITY
+==================================================
+
+1) The saved qty_final values must be what:
+- the edit page shows after reload
+- the history/detail page shows
+- the export file outputs
+- authorization flow later uses
+- Planner/WMS later consume
+
+2) If the user edits but does not save:
+- do not silently export unsaved values
+- either require save first
+- or clearly indicate draft unsaved changes
+
+==================================================
+PART 6 — SAFETY
+==================================================
+
+- Use MAIN stock only for the pool calculation
+- never use WEB stock for folio distribution
+- do not overwrite qty_suggested
+- keep qty_suggested as original engine output
+- do not break Planner/WMS downstream flow
+
+==================================================
+PART 7 — DELIVERABLES
+==================================================
+
+Deliver:
+- reliable save of qty_final edits
+- exports based on qty_final
+- new /distributions module for history and export
+- live per-SKU allocation pool logic
+- grouped-by-SKU editing experience
+- no breaking changes to authorization or downstream Planner/WMS
+- labels/messages in Spanish

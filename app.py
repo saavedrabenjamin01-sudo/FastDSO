@@ -13805,6 +13805,93 @@ def export_predictions():
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
+@app.route('/distributions')
+@login_required
+@require_permission('distribution:export')
+def distributions():
+    """Distribuciones — módulo de historial y exportación de planes de distribución."""
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+    per_page = per_page if per_page in [10, 20, 50] else 20
+
+    status_filter = request.args.get('status', '').strip()
+    responsable_filter = request.args.get('responsable', '').strip()
+    search = request.args.get('search', '').strip()
+    date_from = request.args.get('date_from', '').strip()
+    date_to = request.args.get('date_to', '').strip()
+
+    q = DistributionPlan.query
+
+    if status_filter:
+        q = q.filter(DistributionPlan.status == status_filter)
+
+    if search:
+        q = q.filter(
+            or_(
+                DistributionPlan.folio.ilike(f'%{search}%'),
+                DistributionPlan.source_run_id.ilike(f'%{search}%'),
+            )
+        )
+
+    if date_from:
+        try:
+            dt_from = datetime.strptime(date_from, '%Y-%m-%d')
+            q = q.filter(DistributionPlan.created_at >= dt_from)
+        except ValueError:
+            pass
+
+    if date_to:
+        try:
+            dt_to = datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=1)
+            q = q.filter(DistributionPlan.created_at < dt_to)
+        except ValueError:
+            pass
+
+    q = q.order_by(DistributionPlan.created_at.desc())
+    pagination = q.paginate(page=page, per_page=per_page, error_out=False)
+
+    run_ids = [p.source_run_id for p in pagination.items if p.source_run_id]
+    run_map = {}
+    if run_ids:
+        runs_q = Run.query.filter(Run.run_id.in_(run_ids)).all()
+        run_map = {r.run_id: r for r in runs_q}
+
+    plan_rows = []
+    for p in pagination.items:
+        src_run = run_map.get(p.source_run_id) if p.source_run_id else None
+        resp = (src_run.responsable if src_run and src_run.responsable
+                else (p.created_by.username if p.created_by else '—'))
+        if responsable_filter and responsable_filter.lower() not in resp.lower():
+            continue
+        plan_rows.append({
+            'plan': p,
+            'responsable': resp,
+            'mode': (src_run.mode if src_run and src_run.mode else (p.source or '—')),
+            'exhaust_cd': bool(
+                getattr(src_run, 'exhaust_cd_stock', False) or
+                getattr(p, 'exhaust_cd_stock', False)
+            ),
+            'total_stores': p.total_stores(),
+            'total_skus': p.total_skus(),
+            'total_units': p.total_units(),
+        })
+
+    all_statuses = ['DRAFT', 'DRAFT_REVIEW', 'APPROVED', 'IN_PROGRESS', 'PACKED', 'DISPATCHED', 'CLOSED', 'BLOCKED']
+
+    return render_template(
+        'distributions.html',
+        plan_rows=plan_rows,
+        pagination=pagination,
+        status_filter=status_filter,
+        responsable_filter=responsable_filter,
+        search=search,
+        date_from=date_from,
+        date_to=date_to,
+        per_page=per_page,
+        all_statuses=all_statuses,
+    )
+
+
 @app.route('/runs', methods=['GET'])
 @login_required
 @require_permission('runs:view')
@@ -14580,6 +14667,7 @@ def distribution_review_save(plan_id):
         if note:
             line.adjustment_note = note
 
+        print(f'[PLAN] line saved sku={line.product.sku if line.product else "?"} store={line.store.name if line.store else "?"} qty_final={new_qty}')
         changed += 1
 
     if changed:
@@ -14590,6 +14678,7 @@ def distribution_review_save(plan_id):
             comment=f'{changed} línea(s) ajustada(s) manualmente por {current_user.username}'
         ))
     db.session.commit()
+    print(f'[PLAN] saved adjustments plan_id={plan.id} folio={plan.folio} changed={changed}')
 
     flash(f'Ajustes guardados: {changed} línea(s) modificada(s).', 'success' if changed else 'info')
 
@@ -14741,6 +14830,81 @@ def distribution_review_confirm(plan_id):
 
     flash(f'Plan {plan.folio} enviado al FastPlanner{wave_msg}', 'success')
     return redirect(url_for('planner'))
+
+
+@app.route('/distribution/plan/<int:plan_id>/export')
+@login_required
+@require_permission('distribution:export')
+def export_distribution_plan(plan_id):
+    """Export a distribution plan to Excel using qty_final as the source of truth."""
+    import io
+    import pandas as pd
+
+    plan = db.session.get(DistributionPlan, plan_id)
+    if not plan:
+        abort(404)
+
+    lines = (
+        DistributionPlanLine.query
+        .filter_by(plan_id=plan.id)
+        .join(Product, DistributionPlanLine.product_id == Product.id)
+        .join(Store, DistributionPlanLine.store_id == Store.id, isouter=True)
+        .order_by(Product.sku, Store.name)
+        .all()
+    )
+
+    source_run = None
+    if plan.source_run_id:
+        source_run = Run.query.filter_by(run_id=plan.source_run_id).first()
+    responsable = (source_run.responsable if source_run and source_run.responsable
+                   else (plan.created_by.username if plan.created_by else '—'))
+
+    print(f'[PLAN] export using qty_final plan_id={plan.id} folio={plan.folio} lines={len(lines)}')
+
+    rows = []
+    for line in lines:
+        eff = line.effective_qty()
+        sug = line.qty_suggested if line.qty_suggested is not None else line.qty_planned
+        rows.append({
+            'Folio': plan.folio,
+            'SKU': str(line.product.sku) if line.product else '—',
+            'Producto': (line.product.name or '—') if line.product else '—',
+            'Categoría': (line.product.category or '—') if line.product else '—',
+            'Tienda': line.store.name if line.store else '—',
+            'Qty sugerida': sug or 0,
+            'Qty final': eff,
+            'Ajustado': 'Sí' if line.is_manually_adjusted else 'No',
+            'Nota ajuste': line.adjustment_note or '',
+            'Responsable': responsable,
+            'Fecha': plan.created_at.strftime('%Y-%m-%d') if plan.created_at else '',
+            'Estado': plan.status,
+        })
+
+    if not rows:
+        rows.append({k: '' for k in [
+            'Folio', 'SKU', 'Producto', 'Categoría', 'Tienda',
+            'Qty sugerida', 'Qty final', 'Ajustado', 'Nota ajuste',
+            'Responsable', 'Fecha', 'Estado'
+        ]})
+
+    df = pd.DataFrame(rows)
+    df['SKU'] = df['SKU'].astype(str)
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Distribución')
+        ws = writer.sheets['Distribución']
+        for cell in ws['A']:
+            cell.number_format = '@'
+
+    output.seek(0)
+    fname = f'FastDSO_Plan_{plan.folio}_{date.today().strftime("%Y%m%d")}.xlsx'
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name=fname,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
 
 
 @app.route('/runs/<run_id>/reject', methods=['POST'])
@@ -21733,11 +21897,12 @@ def planner_export_picking(plan_id):
         cell.alignment = Alignment(horizontal='center')
         cell.border = thin_border
     
+    print(f'[PLAN] export using qty_final plan_id={plan.id} folio={plan.folio} lines={len(lines)}')
     for row_idx, line in enumerate(lines, 2):
         ws.cell(row=row_idx, column=1, value=line.product.sku).border = thin_border
         ws.cell(row=row_idx, column=2, value=line.product.name).border = thin_border
         ws.cell(row=row_idx, column=3, value=line.store.name if line.store else '— (CD)').border = thin_border
-        ws.cell(row=row_idx, column=4, value=line.qty_planned).border = thin_border
+        ws.cell(row=row_idx, column=4, value=line.effective_qty()).border = thin_border
         ws.cell(row=row_idx, column=5, value=line.line_notes or '').border = thin_border
         
         ws.cell(row=row_idx, column=1).number_format = '@'

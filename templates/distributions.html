@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block title %}Distribuciones{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 py-3">
+
+  <!-- Header -->
+  <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <div>
+      <h4 class="mb-0 fw-semibold"><i class="bi bi-box-arrow-up-right text-primary me-2"></i>Distribuciones</h4>
+      <small class="text-muted">Historial de planes de distribución — exportación basada en cantidades finales (qty_final)</small>
+    </div>
+    <a href="{{ url_for('upload') }}" class="btn btn-sm btn-primary">
+      <i class="bi bi-plus-lg me-1"></i>Nueva distribución
+    </a>
+  </div>
+
+  <!-- Filters card -->
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-body py-2 px-3">
+      <form method="GET" action="{{ url_for('distributions') }}" class="row g-2 align-items-end" id="filterForm">
+        <div class="col-12 col-sm-6 col-md-3 col-lg-2">
+          <label class="form-label mb-1 fw-semibold" style="font-size:.74rem;">Buscar folio / corrida</label>
+          <input type="text" name="search" class="form-control form-control-sm"
+                 placeholder="Folio o ID corrida…" value="{{ search }}">
+        </div>
+        <div class="col-12 col-sm-6 col-md-2 col-lg-2">
+          <label class="form-label mb-1 fw-semibold" style="font-size:.74rem;">Estado</label>
+          <select name="status" class="form-select form-select-sm">
+            <option value="">Todos</option>
+            {% for s in all_statuses %}
+            <option value="{{ s }}" {% if s == status_filter %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-sm-6 col-md-2 col-lg-2">
+          <label class="form-label mb-1 fw-semibold" style="font-size:.74rem;">Responsable</label>
+          <input type="text" name="responsable" class="form-control form-control-sm"
+                 placeholder="Nombre…" value="{{ responsable_filter }}">
+        </div>
+        <div class="col-12 col-sm-6 col-md-2 col-lg-2">
+          <label class="form-label mb-1 fw-semibold" style="font-size:.74rem;">Desde</label>
+          <input type="date" name="date_from" class="form-control form-control-sm" value="{{ date_from }}">
+        </div>
+        <div class="col-12 col-sm-6 col-md-2 col-lg-2">
+          <label class="form-label mb-1 fw-semibold" style="font-size:.74rem;">Hasta</label>
+          <input type="date" name="date_to" class="form-control form-control-sm" value="{{ date_to }}">
+        </div>
+        <div class="col-auto d-flex gap-1">
+          <button type="submit" class="btn btn-sm btn-primary">
+            <i class="bi bi-funnel-fill me-1"></i>Filtrar
+          </button>
+          <a href="{{ url_for('distributions') }}" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-x-lg"></i>
+          </a>
+        </div>
+        <div class="col-auto ms-auto">
+          <label class="form-label mb-1 fw-semibold" style="font-size:.74rem;">Por página</label>
+          <select name="per_page" class="form-select form-select-sm" style="width:80px;" onchange="this.form.submit()">
+            {% for n in [10, 20, 50] %}
+            <option value="{{ n }}" {% if n == per_page %}selected{% endif %}>{{ n }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Results table -->
+  <div class="card border-0 shadow-sm">
+    <div class="card-header py-2 d-flex align-items-center justify-content-between">
+      <h6 class="mb-0 fw-semibold" style="font-size:.82rem;">
+        <i class="bi bi-table me-1"></i>Planes
+        <span class="badge bg-secondary ms-1" style="font-size:.62rem;">{{ pagination.total }}</span>
+      </h6>
+      <span class="text-muted" style="font-size:.75rem;">
+        Página {{ pagination.page }} de {{ pagination.pages or 1 }}
+      </span>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0 align-middle" style="font-size:.78rem;">
+        <thead class="table-dark" style="font-size:.68rem;">
+          <tr>
+            <th>Folio</th>
+            <th>Fecha</th>
+            <th>Responsable</th>
+            <th>Estado</th>
+            <th class="text-center">Tiendas</th>
+            <th class="text-center">SKUs</th>
+            <th class="text-center">Unidades finales</th>
+            <th class="text-center">Modo</th>
+            <th class="text-center" style="min-width:130px;">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in plan_rows %}
+          {% set p = row.plan %}
+          {% set st = p.status %}
+          <tr>
+            <td>
+              <code style="font-size:.74rem;">{{ p.folio }}</code>
+              {% if p.source_run_id %}
+              <br><span class="text-muted" style="font-size:.64rem;">Corrida: {{ p.source_run_id[:8] }}</span>
+              {% endif %}
+            </td>
+            <td style="white-space:nowrap;">
+              {{ p.created_at.strftime('%d/%m/%Y') if p.created_at else '—' }}
+              <br><span class="text-muted" style="font-size:.65rem;">
+                {{ p.created_at.strftime('%H:%M') if p.created_at else '' }}
+              </span>
+            </td>
+            <td>{{ row.responsable }}</td>
+            <td>
+              {% if st == 'DRAFT' %}
+                <span class="badge bg-secondary">BORRADOR</span>
+              {% elif st == 'DRAFT_REVIEW' %}
+                <span class="badge bg-warning text-dark">PEND. APROBACIÓN</span>
+              {% elif st == 'APPROVED' %}
+                <span class="badge bg-success">APROBADO</span>
+              {% elif st == 'IN_PROGRESS' %}
+                <span class="badge bg-primary">EN PROCESO</span>
+              {% elif st == 'PACKED' %}
+                <span class="badge bg-info text-dark">EMPACADO</span>
+              {% elif st == 'DISPATCHED' %}
+                <span class="badge bg-success">DESPACHADO</span>
+              {% elif st == 'CLOSED' %}
+                <span class="badge bg-dark">CERRADO</span>
+              {% elif st == 'BLOCKED' %}
+                <span class="badge bg-danger">BLOQUEADO</span>
+              {% else %}
+                <span class="badge bg-light text-dark border">{{ st }}</span>
+              {% endif %}
+            </td>
+            <td class="text-center text-muted">{{ row.total_stores }}</td>
+            <td class="text-center text-muted">{{ row.total_skus }}</td>
+            <td class="text-center fw-semibold">{{ "{:,}".format(row.total_units | int) }}</td>
+            <td class="text-center">
+              <div class="d-flex flex-wrap gap-1 justify-content-center">
+                {% if row.exhaust_cd %}
+                <span class="badge bg-purple text-white" style="background:#7c3aed;font-size:.6rem;" title="No dejar saldos en CD">NO SALDO</span>
+                {% endif %}
+                {% if row.mode and row.mode != '—' %}
+                <span class="badge bg-light text-dark border" style="font-size:.6rem;">{{ row.mode[:12] }}</span>
+                {% endif %}
+              </div>
+            </td>
+            <td class="text-center">
+              <div class="d-flex gap-1 justify-content-center flex-wrap">
+                <a href="{{ url_for('distribution_review', plan_id=p.id) }}"
+                   class="btn btn-xs btn-outline-primary"
+                   title="Ver / Editar"
+                   style="font-size:.7rem;padding:2px 7px;">
+                  <i class="bi bi-pencil-square me-1"></i>{% if st in ('DRAFT','DRAFT_REVIEW') %}Editar{% else %}Ver{% endif %}
+                </a>
+                {% if current_user.has_permission('distribution:export') %}
+                <a href="{{ url_for('export_distribution_plan', plan_id=p.id) }}"
+                   class="btn btn-xs btn-outline-success"
+                   title="Exportar Qty Final"
+                   style="font-size:.7rem;padding:2px 7px;">
+                  <i class="bi bi-file-earmark-excel me-1"></i>Exportar
+                </a>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="9" class="text-center text-muted py-5">
+              <i class="bi bi-inbox" style="font-size:2rem;display:block;margin-bottom:.5rem;opacity:.4;"></i>
+              No hay distribuciones que coincidan con los filtros.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if pagination.pages and pagination.pages > 1 %}
+    <div class="card-footer py-2 d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <span class="text-muted" style="font-size:.78rem;">
+        Mostrando {{ plan_rows|length }} de {{ pagination.total }} planes
+      </span>
+      <nav>
+        <ul class="pagination pagination-sm mb-0">
+          <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+            <a class="page-link" href="{{ url_for('distributions', page=pagination.prev_num, per_page=per_page, status=status_filter, responsable=responsable_filter, search=search, date_from=date_from, date_to=date_to) }}">
+              &laquo;
+            </a>
+          </li>
+          {% for pg in pagination.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+            {% if pg %}
+            <li class="page-item {% if pg == pagination.page %}active{% endif %}">
+              <a class="page-link" href="{{ url_for('distributions', page=pg, per_page=per_page, status=status_filter, responsable=responsable_filter, search=search, date_from=date_from, date_to=date_to) }}">{{ pg }}</a>
+            </li>
+            {% else %}
+            <li class="page-item disabled"><span class="page-link">…</span></li>
+            {% endif %}
+          {% endfor %}
+          <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+            <a class="page-link" href="{{ url_for('distributions', page=pagination.next_num, per_page=per_page, status=status_filter, responsable=responsable_filter, search=search, date_from=date_from, date_to=date_to) }}">
+              &raquo;
+            </a>
+          </li>
+        </ul>
+      </nav>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}
