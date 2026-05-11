@@ -1,0 +1,110 @@
+Add a new optional distribution mode in FastDSO: "No dejar saldos en CD" / distribute all available MAIN stock.
+
+GOAL
+Sometimes the business needs to fully empty or nearly empty CD stock for the SKUs being distributed.
+Add a generator option that forces the engine to distribute all available MAIN stock for each SKU, while still respecting the existing rules:
+- store hierarchy
+- current store stock
+- included stores only
+- standard eligibility rules
+- MAIN stock only
+
+BUSINESS RULES
+
+1) This is an optional mode in the distribution generator.
+2) It applies only to distribution/folio generation (MAIN stock).
+3) WEB stock must never be used.
+4) The system should try to leave CD remainder at 0 for the selected SKUs.
+5) If remainder cannot be fully distributed, show the remaining units clearly.
+
+UI CHANGES — GENERATOR
+
+1) In the distribution generator page, add a new checkbox/switch:
+- "No dejar saldos en CD"
+or
+- "Distribuir todo el stock disponible"
+
+2) Add helper text:
+"Si queda remanente del SKU en bodega, el sistema lo redistribuirá priorizando tiendas con menor stock actual y respetando la jerarquía definida."
+
+3) Save this option as part of the generated plan/run metadata:
+- exhaust_cd_stock = true/false
+
+GENERATION LOGIC
+
+1) Base rule
+The generator must still first compute the normal suggested distribution using existing business logic.
+
+2) Available stock source
+For each SKU, compute:
+- available_main = MAIN stock available for distribution
+Do NOT use WEB stock.
+
+3) Standard generation
+Generate the regular suggestion first:
+- qty_suggested per destination store
+- respecting current hierarchy/rules
+
+4) Exhaust-stock mode
+If exhaust_cd_stock = true:
+- after standard generation, calculate:
+   remainder = available_main - total_suggested_for_sku
+- if remainder > 0:
+   redistribute the remainder across eligible stores
+
+5) Remainder distribution priority
+Distribute extra units prioritizing:
+1. stores with lower current stock for that SKU
+2. existing hierarchy / priority rules
+3. lower post-distribution coverage if such metric exists
+4. deterministic tie-breaker (store name or id)
+
+6) Recommended implementation
+For each SKU with remainder > 0:
+- build eligible store list from included stores only
+- sort eligible stores by the priority above
+- allocate extra units iteratively until:
+   - remainder = 0
+   - or no more eligible stores remain
+
+7) Constraints
+- never exceed available_main
+- never allocate to excluded stores
+- never use WEB stock
+- keep qty_final initialized from the resulting suggestion
+
+REVIEW PAGE
+
+1) On the review/edit page, show if the plan was generated with this mode:
+- badge or label:
+   "Modo: No dejar saldos"
+
+2) Show summary metric:
+- "Remanente CD final"
+This should be near zero if the mode succeeded.
+
+3) If remainder > 0 after generation:
+- show warning:
+   "No fue posible distribuir completamente el saldo de algunos SKU"
+
+EDIT / AUTHORIZATION SAFETY
+
+1) Keep the normal review/edit flow intact.
+2) Users may still manually adjust lines after generation.
+3) If they remove units later, remainder can appear again — that is acceptable.
+4) Planner/WMS downstream flow remains unchanged and continues to use qty_final only.
+
+AUDIT / TRACEABILITY
+
+1) Save exhaust_cd_stock on the plan/run
+2) Optional log:
+   [PLAN] exhaust mode enabled plan_id=...
+   [PLAN] sku=... available_main=... total_assigned=... remainder=...
+
+DELIVERABLES
+
+- generator checkbox for "No dejar saldos en CD"
+- generation engine redistributes remaining MAIN stock
+- remainder goes to stores with lower stock while respecting hierarchy
+- review page shows exhaust mode and remaining CD balance
+- no breaking changes to existing distribution flow

@@ -409,6 +409,7 @@ class Run(db.Model):
     rejected_at = db.Column(db.DateTime, nullable=True)
     reject_comment = db.Column(db.Text, nullable=True)
     planner_plan_id = db.Column(db.Integer, db.ForeignKey('distribution_plan.id'), nullable=True)
+    exhaust_cd_stock = db.Column(db.Boolean, nullable=False, default=False)
 
     user = db.relationship('User', foreign_keys=[user_id], backref='runs')
     submitted_by = db.relationship('User', foreign_keys=[submitted_by_user_id])
@@ -774,6 +775,7 @@ class DistributionPlan(db.Model):
     wms_wave_id = db.Column(db.Integer, nullable=True)
     wms_status = db.Column(db.String(30), nullable=True)
     store_transfer_run_id = db.Column(db.Integer, nullable=True)
+    exhaust_cd_stock = db.Column(db.Boolean, nullable=False, default=False)
 
     created_by = db.relationship('User', foreign_keys=[created_by_user_id])
     closed_by = db.relationship('User', foreign_keys=[closed_by_user_id])
@@ -1529,6 +1531,11 @@ def _ensure_wms_defaults(session=None):
                 conn.execute(text("ALTER TABLE distribution_plan ADD COLUMN store_transfer_run_id INTEGER"))
                 conn.commit()
             print("[PLANNER] Added column distribution_plan.store_transfer_run_id")
+        if 'exhaust_cd_stock' not in plan_cols:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE distribution_plan ADD COLUMN exhaust_cd_stock BOOLEAN NOT NULL DEFAULT 0"))
+                conn.commit()
+            print("[PLAN] Added column distribution_plan.exhaust_cd_stock")
     with db.engine.connect() as conn:
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS store_transfer_run (
@@ -3371,6 +3378,7 @@ def generate_predictions_from_macro(
     user_id: int | None = None,
     include_held: bool = False,
     included_store_ids: set | None = None,
+    exhaust_cd_stock: bool = False,
 ):
     """
     Generate distribution predictions from SalesWeeklyAgg (macro layer)
@@ -3400,7 +3408,8 @@ def generate_predictions_from_macro(
         categoria=meta.get("categoria"),
         notes=meta.get("fecha_doc"),
         mode=mode,
-        status='completed'
+        status='completed',
+        exhaust_cd_stock=exhaust_cd_stock,
     )
     db.session.add(prediction_run)
     db.session.flush()
@@ -4133,6 +4142,82 @@ def generate_predictions_from_macro(
         print(f"[DISTRIBUTION] Store-scope filter: kept_stores={len(included_store_ids)}, "
               f"dropped_rows={dropped}, kept_rows={len(final_preds)}, "
               f"pre_filter_units={pre_total}, post_filter_units={post_total}")
+
+    # ── "No dejar saldos en CD" redistribution (optional mode) ─────────────
+    # When exhaust_cd_stock=True, any remaining MAIN CD stock (cd_available -
+    # already_assigned) is redistributed to eligible stores sorted by lowest
+    # current store stock first, then store name for a stable tie-break.
+    # Runs AFTER scope filter so we never distribute to excluded stores, and
+    # BEFORE safety checks so the kill-switch sees the real final numbers.
+    exhaust_remainder_by_pid: dict = {}  # product_id -> summary dict
+    if exhaust_cd_stock:
+        _items_by_pid: dict = defaultdict(list)
+        for _it in final_preds:
+            _items_by_pid[_it["product_id"]].append(_it)
+
+        for _pid, _pitems in _items_by_pid.items():
+            _cd_avail = cd_stock.get(_pid, 0)
+            _assigned = sum(int(_it.get("suggested", 0)) for _it in _pitems)
+            _remainder = max(_cd_avail - _assigned, 0)
+            _sku_label = _pitems[0].get("sku", str(_pid)) if _pitems else str(_pid)
+
+            exhaust_remainder_by_pid[_pid] = {
+                "sku": _sku_label,
+                "cd_available": _cd_avail,
+                "assigned": _assigned,
+                "remainder": _remainder,
+            }
+
+            if _remainder <= 0:
+                continue
+
+            # Sort by current store stock ASC (lowest stock gets priority),
+            # then store name ASC as a deterministic tie-breaker.
+            _pitems_sorted = sorted(
+                _pitems,
+                key=lambda x: (
+                    store_stock_lookup.get((x["product_id"], x["store_id"]), 0),
+                    x.get("store", ""),
+                )
+            )
+            n_stores = len(_pitems_sorted)
+            _base_extra = _remainder // n_stores
+            _leftover = _remainder % n_stores
+            _distributed = 0
+            for _i, _it in enumerate(_pitems_sorted):
+                _extra = _base_extra + (1 if _i < _leftover else 0)
+                if _extra > 0:
+                    _it["suggested"] = int(_it.get("suggested", 0)) + _extra
+                    _distributed += _extra
+                    _rc = _it.get("reason_code") or "OK"
+                    # Upgrade suppressed-by-CD reason codes since we now fill them
+                    if _rc in ("CD_EXHAUSTED", "CD_ZERO", "CD_PARTIAL"):
+                        _it["reason_code"] = "EXHAUST_FILL"
+                    elif _rc == "OK":
+                        _it["reason_code"] = "EXHAUST_FILL"
+                    elif "EXHAUST" not in _rc:
+                        _it["reason_code"] = _rc + "+EXHAUST"
+
+            exhaust_remainder_by_pid[_pid]["assigned"] = _assigned + _distributed
+            exhaust_remainder_by_pid[_pid]["remainder"] = max(_remainder - _distributed, 0)
+
+        # Audit log
+        _fully_cleared = sum(
+            1 for v in exhaust_remainder_by_pid.values()
+            if v["cd_available"] > 0 and v["remainder"] == 0
+        )
+        _residual = [
+            (v["sku"], v["cd_available"], v["assigned"], v["remainder"])
+            for v in exhaust_remainder_by_pid.values()
+            if v["remainder"] > 0
+        ]
+        print(
+            f"[PLAN] exhaust_cd_stock=True SKUs_processed={len(exhaust_remainder_by_pid)} "
+            f"fully_cleared={_fully_cleared} with_remainder={len(_residual)}"
+        )
+        for _esku, _eavail, _eassigned, _erem in _residual[:20]:
+            print(f"[PLAN] sku={_esku} available_main={_eavail} "
+                  f"total_assigned={_eassigned} remainder={_erem}")
 
     total_units = sum(int(it["suggested"]) for it in final_preds)
     cold_start_used = len([p for p in final_preds if 'COLD_START' in p.get('model_name', '')])
@@ -8905,6 +8990,7 @@ def upload():
                 user_id=user_id,
                 include_held=include_held,
                 included_store_ids=included_store_ids,
+                exhaust_cd_stock=exhaust_cd_stock,
             )
             
             session.pop('distribution_request_skus', None)
@@ -8919,6 +9005,8 @@ def upload():
             scope_msg = ''
             if included_store_ids:
                 scope_msg = f' (limitada a {len(included_store_ids)} tiendas seleccionadas)'
+            if exhaust_cd_stock:
+                scope_msg += ' · Modo: No dejar saldos en CD'
             msg = f'Distribución generada: {n_preds} predicciones para {len(sku_list)} SKUs ({total_units:,} unidades){scope_msg}'
             
             num_stores = db.session.query(func.count(func.distinct(Prediction.store_id))).filter(
@@ -9028,6 +9116,10 @@ def generate_from_pending():
     if included_store_ids:
         print(f"[DISTRIBUTION REQUEST] Included stores: {len(included_store_ids)}")
 
+    exhaust_cd_stock = request.form.get('exhaust_cd_stock') == '1'
+    if exhaust_cd_stock:
+        print(f"[DISTRIBUTION REQUEST] exhaust_cd_stock=True")
+
     try:
         run_id, n_preds, total_units = generate_predictions_from_macro(
             scope_skus=sku_list,
@@ -9036,6 +9128,7 @@ def generate_from_pending():
             user_id=user_id,
             include_held=False,
             included_store_ids=included_store_ids,
+            exhaust_cd_stock=exhaust_cd_stock,
         )
         
         session.pop('distribution_request_skus', None)
@@ -13971,6 +14064,7 @@ def _create_plan_from_run_draft(run, user_id, status='DRAFT'):
         notes_commercial=run.submit_note,
         created_by_user_id=user_id,
         created_at=datetime.utcnow(),
+        exhaust_cd_stock=getattr(run, 'exhaust_cd_stock', False) or False,
     )
     db.session.add(plan)
     db.session.flush()
@@ -14352,6 +14446,18 @@ def distribution_review(plan_id):
     plan_fecha = (source_run.created_at.strftime('%d/%m/%Y') if source_run and source_run.created_at
                   else (plan.created_at.strftime('%d/%m/%Y') if plan.created_at else '—'))
 
+    # ── Exhaust mode metadata ──────────────────────────────────────────────
+    plan_exhaust_cd = bool(
+        getattr(source_run, 'exhaust_cd_stock', False)
+        or getattr(plan, 'exhaust_cd_stock', False)
+    )
+    # Remanente CD = sum of (cd_available - currently_allocated) per SKU
+    # A positive value means we could not fully exhaust CD stock.
+    exhaust_cd_remainder = sum(
+        max(row['cd_available'] - row['allocated'], 0)
+        for row in sku_pool_rows
+    )
+
     return render_template(
         'distribution_review.html',
         plan=plan,
@@ -14374,6 +14480,8 @@ def distribution_review(plan_id):
         plan_responsable=plan_responsable,
         plan_mode=plan_mode,
         plan_fecha=plan_fecha,
+        plan_exhaust_cd=plan_exhaust_cd,
+        exhaust_cd_remainder=exhaust_cd_remainder,
         can_edit=can_edit,
     )
 
@@ -22565,6 +22673,11 @@ def init_database():
                 conn.execute(text("ALTER TABLE run ADD COLUMN is_active BOOLEAN DEFAULT 0"))
                 conn.commit()
             print("✅ Added 'is_active' column to run table")
+        if 'exhaust_cd_stock' not in run_columns:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE run ADD COLUMN exhaust_cd_stock BOOLEAN NOT NULL DEFAULT 0"))
+                conn.commit()
+            print("✅ Added 'exhaust_cd_stock' column to run table")
     
     seed_rbac()
 

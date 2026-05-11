@@ -24,6 +24,7 @@
           </span>
           {% if plan.urgency == 'URGENT' %}<span class="badge bg-danger" style="font-size:.7rem;">URGENTE</span>{% endif %}
           {% if plan.source == 'MANUAL' %}<span class="badge bg-dark" style="font-size:.7rem;">MANUAL</span>{% endif %}
+          {% if plan_exhaust_cd %}<span class="badge text-bg-purple" style="font-size:.7rem;background:#6d28d9;color:#fff;">NO DEJAR SALDOS</span>{% endif %}
         </div>
         <a href="{{ url_for('runs') }}" class="btn btn-sm btn-outline-secondary">
           <i class="bi bi-arrow-left me-1"></i>Volver a corridas
@@ -117,6 +118,31 @@
       </div>
     </div>
   </div>
+
+  {% if plan_exhaust_cd %}
+  <!-- ── Exhaust mode summary row ── -->
+  <div class="d-flex flex-wrap gap-2 align-items-center mb-3 px-1">
+    <div class="d-flex align-items-center gap-2 rounded-3 px-3 py-2 border"
+         style="background:#f5f3ff;border-color:#c4b5fd !important;font-size:.82rem;">
+      <i class="bi bi-box-arrow-in-down text-purple" style="color:#7c3aed;font-size:1rem;"></i>
+      <div>
+        <span class="fw-semibold" style="color:#5b21b6;">Modo: No dejar saldos en CD</span>
+        <span class="ms-3 text-muted">Remanente CD final:</span>
+        <span class="ms-1 fw-bold {% if exhaust_cd_remainder > 0 %}text-danger{% else %}text-success{% endif %}">
+          {{ "{:,}".format(exhaust_cd_remainder | int) }}
+          {% if exhaust_cd_remainder == 0 %}<i class="bi bi-check-circle ms-1"></i>{% endif %}
+        </span>
+      </div>
+    </div>
+    {% if exhaust_cd_remainder > 0 %}
+    <div class="d-flex align-items-center gap-2 rounded-3 px-3 py-2 border border-warning"
+         style="background:#fffbeb;font-size:.8rem;">
+      <i class="bi bi-exclamation-triangle-fill text-warning"></i>
+      <span class="text-warning-emphasis">No fue posible distribuir completamente el saldo de algunos SKUs.</span>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
 
   <!-- ── Over-allocation banner (live) ── -->
   <div id="overalloc-banner" class="alert alert-danger py-2 px-3 d-none align-items-start gap-2 mb-3"
