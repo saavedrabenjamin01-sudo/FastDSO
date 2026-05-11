@@ -1,0 +1,167 @@
+Fix the dataset reset logic in app.py for Sales, Store Stock, and CD Stock.
+
+ROOT CAUSE IDENTIFIED
+The reset endpoints currently delete only the visible source tables, but the application actually reads operational stock/sales from a combination of:
+- source snapshots
+- InventoryBaseline
+- InventoryEvent
+- macro/aggregate tables
+- and, for CD/WMS flows, WmsInventory/WmsMovement
+
+Because of this, after pressing reset and re-uploading:
+- store stock loads with incorrect quantities
+- CD stock may remain zero or inconsistent
+- old sales influence current results
+
+This is NOT just an upload issue.
+It is a partial-reset / stale-baseline / stale-events problem.
+
+==================================================
+PART 1 — FIX reset_sales()
+==================================================
+
+Current issue:
+reset_sales() only deletes DistributionRecord.
+
+Required fix:
+When resetting sales, also clear:
+- DistributionRecord
+- SalesWeeklyAgg
+- any sales-derived cache/aggregate table if present
+
+Optional but recommended:
+- also clear Prediction and related distribution suggestions if the intent is a truly clean sales reset
+
+The reset must run in one transaction.
+
+Flash message in Spanish:
+"Ventas reiniciadas correctamente"
+
+==================================================
+PART 2 — FIX reset_store_stock()
+==================================================
+
+Current issue:
+reset_store_stock() only deletes StockSnapshot.
+
+But store stock is actually calculated through:
+- StockSnapshot
+- InventoryBaseline(scope='store')
+- InventoryEvent with store_id IS NOT NULL
+
+Required fix:
+When resetting store stock, also clear:
+- StockSnapshot
+- InventoryBaseline rows where scope='store'
+- InventoryEvent rows that affect store operational stock
+  (at minimum events with store_id IS NOT NULL, if they belong to this stock operational layer)
+
+Be careful:
+Do NOT delete unrelated audit data or user data.
+
+The reset must run in one transaction.
+
+Flash message in Spanish:
+"Stock de tiendas reiniciado correctamente"
+
+==================================================
+PART 3 — FIX reset_stock_cd()
+==================================================
+
+Current issue:
+reset_stock_cd() only deletes StockCD.
+
+But CD stock is actually calculated through:
+- StockCD
+- InventoryBaseline(scope='cd')
+- InventoryEvent with store_id IS NULL
+- WmsInventory is also used by some CD/WMS logic
+- WmsMovement may still reflect old operational state
+
+Required fix:
+When resetting CD stock, also clear:
+- StockCD
+- InventoryBaseline rows where scope='cd'
+- InventoryEvent rows that affect CD operational stock
+  (at minimum events with store_id IS NULL)
+- WmsInventory
+- WmsMovement
+- WmsMoveRun if necessary for consistency
+
+Do NOT delete:
+- users
+- roles
+- permissions
+- layout definitions unless absolutely necessary
+
+If layout/location master should remain, keep WmsLocation/WmsWarehouse intact.
+Only clear stock/movement state.
+
+The reset must run in one transaction.
+
+Flash message in Spanish:
+"Stock CD reiniciado correctamente"
+
+==================================================
+PART 4 — FIX STORE STOCK UPLOAD BEHAVIOR
+==================================================
+
+Current issue:
+upload_stock() uses:
+- today = date.today()
+- existing_snapshots only for today's date
+- then updates/creates rows for today only
+
+This is not a true clean replace-all load.
+
+Required fix:
+Add or enforce replace-all behavior for store stock uploads:
+- before loading the new file, clear previous StockSnapshot rows
+  OR at minimum clear all snapshots for the active baseline logic
+- recreate/update InventoryBaseline(scope='store') to the new upload date
+- ensure the next operational stock query uses only the newly loaded snapshot base
+
+Do NOT leave old baseline dates pointing to deleted snapshots.
+
+Add debug logs:
+[RESET] store stock reset complete
+[RESET] cd stock reset complete
+[RESET] sales reset complete
+[UPLOAD] store stock replace_all complete rows=...
+[UPLOAD] cd stock replace_all complete rows=...
+[UPLOAD] sales replace_all complete rows=...
+
+==================================================
+PART 5 — RELOCATE RESET BUTTONS
+==================================================
+
+These reset buttons should not remain in the main dashboard.
+
+Move them to safer locations:
+- Store stock reset button inside the Store Stock module
+- CD stock reset button inside the CD Stock module
+- Sales reset button inside the Sales upload/maintenance module
+
+Rules:
+- admin only
+- strong confirmation modal
+- Spanish warning text:
+  "Esta acción eliminará los datos cargados actualmente y no se puede deshacer."
+
+==================================================
+PART 6 — SAFETY
+==================================================
+
+- use transactions for each reset
+- rollback on error
+- do not touch user/admin tables
+- do not break current upload flows
+- after reset, the next upload must start from a truly clean state
+
+DELIVERABLES
+- complete reset for sales
+- complete reset for store stock
+- complete reset for CD stock
+- store stock upload behaves as clean replace-all
+- reset buttons moved out of dashboard
+- no stale baselines/events causing wrong values after re-upload

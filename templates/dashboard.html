@@ -255,10 +255,7 @@
               <div class="dashv1-panel-tools">
                 {% if current_user.has_permission('admin:reset') %}
                 <div class="dash-quick-actions">
-                  <form method="post" action="{{ url_for('reset_sales') }}" onsubmit="return confirm('¿Eliminar TODAS las ventas?')"><button type="submit" class="qa-btn" title="Reset ventas"><i class="bi bi-trash3"></i></button></form>
                   <form method="post" action="{{ url_for('reset_predictions') }}" onsubmit="return confirm('¿Eliminar TODAS las distribuciones?')"><button type="submit" class="qa-btn" title="Reset distribuciones"><i class="bi bi-diagram-3"></i></button></form>
-                  <form method="post" action="{{ url_for('reset_store_stock') }}" onsubmit="return confirm('¿Eliminar TODO el stock de tiendas?')"><button type="submit" class="qa-btn" title="Reset stock tiendas"><i class="bi bi-shop"></i></button></form>
-                  <form method="post" action="{{ url_for('reset_stock_cd') }}" onsubmit="return confirm('¿Eliminar TODO el stock del CD?')"><button type="submit" class="qa-btn" title="Reset stock CD"><i class="bi bi-box-seam"></i></button></form>
                 </div>
                 {% endif %}
                 <input class="form-control form-control-sm dashv1-search" placeholder="Buscar SKU" value="{{ pred_search if pred_search is defined else '' }}" onkeydown="if(event.key==='Enter'){event.preventDefault();updateParam('pred_search', this.value, 'pred_page');}">

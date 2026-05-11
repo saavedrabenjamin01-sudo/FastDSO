@@ -9319,7 +9319,23 @@ def upload_stock():
         for sc in store_cols:
             df[sc] = pd.to_numeric(df[sc], errors='coerce').fillna(0).astype(int)
 
-        today = date.today()
+        fecha_doc_str = request.form.get('fecha_doc', '').strip()
+        if fecha_doc_str:
+            try:
+                snapshot_date = date.fromisoformat(fecha_doc_str)
+            except ValueError:
+                snapshot_date = date.today()
+        else:
+            snapshot_date = date.today()
+
+        # --- Replace-all: wipe all previous store stock state before loading ---
+        _ss_del = db.session.query(StockSnapshot).delete(synchronize_session=False)
+        db.session.query(InventoryBaseline).filter_by(scope='store').delete(synchronize_session=False)
+        db.session.query(InventoryEvent).filter(
+            InventoryEvent.store_id.isnot(None)
+        ).delete(synchronize_session=False)
+        db.session.flush()
+
         created = 0
         updated = 0
 
@@ -9335,11 +9351,8 @@ def upload_stock():
             s.name: s for s in Store.query.all()
         }
 
-        # 3) cache de snapshots del día por (product_id, store_id)
-        existing_snapshots = {
-            (ss.product_id, ss.store_id): ss
-            for ss in StockSnapshot.query.filter_by(as_of_date=today).all()
-        }
+        # 3) snapshots cleared above — start fresh
+        existing_snapshots = {}
 
         # ahora iteramos el dataframe
         for _, row in df.iterrows():
@@ -9393,7 +9406,7 @@ def upload_stock():
                 else:
                     # crear
                     ss = StockSnapshot(
-                        as_of_date=today,
+                        as_of_date=snapshot_date,
                         product_id=prod.id,
                         store_id=store.id,
                         quantity=qty
@@ -9402,19 +9415,22 @@ def upload_stock():
                     existing_snapshots[key] = ss
                     created += 1
 
+        # Anchor the new baseline to the snapshot date
+        db.session.add(InventoryBaseline(scope='store', baseline_date=snapshot_date))
         db.session.commit()
+        print(f'[UPLOAD] store stock replace_all complete rows={created} date={snapshot_date}')
         
         upload_stats = {
             'created': created,
             'updated': updated,
             'total_rows': len(df),
             'store_count': len(store_cols),
-            'as_of_date': str(today)
+            'as_of_date': str(snapshot_date)
         }
         
         log_audit(
             action="stock_store.upload",
-            message=f"Stock tiendas cargado: {created} nuevos, {updated} actualizados",
+            message=f"Stock tiendas cargado (replace-all): {created} nuevos, fecha={snapshot_date}",
             entity_type="StockSnapshot",
             metadata={
                 "filename": filename,
@@ -9425,7 +9441,7 @@ def upload_stock():
         session['upload_success'] = {
             'type': 'stock_store',
             'title': 'Stock Tiendas Cargado',
-            'message': f'{len(df):,} filas procesadas. {created:,} nuevos, {updated:,} actualizados.',
+            'message': f'{len(df):,} filas procesadas. {created:,} registros cargados al {snapshot_date}.',
             'stats': upload_stats
         }
         return redirect(url_for('upload_stock'))
@@ -9598,34 +9614,52 @@ def export_purchase_projection():
 @login_required
 @require_permission('admin:reset')
 def reset_sales():
-    count = db.session.query(DistributionRecord).count()
-    db.session.query(DistributionRecord).delete()
-    db.session.commit()
-    log_audit(
-        action="reset.sales",
-        message=f"Eliminados {count} registros de ventas",
-        entity_type="DistributionRecord",
-        metadata={"deleted_count": count}
-    )
-    flash('✅ Se eliminaron todos los registros de ventas cargadas.', 'warning')
-    return redirect(url_for('dashboard'))
+    try:
+        dr_count = db.session.query(DistributionRecord).count()
+        agg_count = db.session.query(SalesWeeklyAgg).count()
+        db.session.query(DistributionRecord).delete(synchronize_session=False)
+        db.session.query(SalesWeeklyAgg).delete(synchronize_session=False)
+        db.session.commit()
+        print(f'[RESET] sales reset complete dr={dr_count} agg={agg_count}')
+        log_audit(
+            action="reset.sales",
+            message=f"Ventas reiniciadas: {dr_count} DistributionRecord, {agg_count} SalesWeeklyAgg eliminados",
+            entity_type="DistributionRecord",
+            metadata={"deleted_dr": dr_count, "deleted_agg": agg_count}
+        )
+        flash('Ventas reiniciadas correctamente', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error al reiniciar ventas: {e}', 'danger')
+    return redirect(url_for('upload'))
 
 
 @app.route('/reset_store_stock', methods=['POST'])
 @login_required
 @require_permission('admin:reset')
 def reset_store_stock():
-    count = db.session.query(StockSnapshot).count()
-    db.session.query(StockSnapshot).delete()
-    db.session.commit()
-    log_audit(
-        action="reset.stock_store",
-        message=f"Eliminados {count} snapshots de stock tiendas",
-        entity_type="StockSnapshot",
-        metadata={"deleted_count": count}
-    )
-    flash('✅ Se eliminó todo el stock de tiendas.', 'warning')
-    return redirect(url_for('dashboard'))
+    try:
+        ss_count = db.session.query(StockSnapshot).count()
+        bl_count = db.session.query(InventoryBaseline).filter_by(scope='store').count()
+        ev_count = db.session.query(InventoryEvent).filter(InventoryEvent.store_id.isnot(None)).count()
+        db.session.query(StockSnapshot).delete(synchronize_session=False)
+        db.session.query(InventoryBaseline).filter_by(scope='store').delete(synchronize_session=False)
+        db.session.query(InventoryEvent).filter(
+            InventoryEvent.store_id.isnot(None)
+        ).delete(synchronize_session=False)
+        db.session.commit()
+        print(f'[RESET] store stock reset complete snapshots={ss_count} baselines={bl_count} events={ev_count}')
+        log_audit(
+            action="reset.stock_store",
+            message=f"Stock tiendas reiniciado: {ss_count} snapshots, {bl_count} baselines, {ev_count} eventos eliminados",
+            entity_type="StockSnapshot",
+            metadata={"deleted_snapshots": ss_count, "deleted_baselines": bl_count, "deleted_events": ev_count}
+        )
+        flash('Stock de tiendas reiniciado correctamente', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error al reiniciar stock de tiendas: {e}', 'danger')
+    return redirect(url_for('upload_stock'))
 
 
 @app.route('/reset_predictions', methods=['POST'])
@@ -9649,17 +9683,38 @@ def reset_predictions():
 @login_required
 @require_permission('admin:reset')
 def reset_stock_cd():
-    count = StockCD.query.count()
-    StockCD.query.delete()
-    db.session.commit()
-    log_audit(
-        action="reset.stock_cd",
-        message=f"Eliminados {count} registros stock CD",
-        entity_type="StockCD",
-        metadata={"deleted_count": count}
-    )
-    flash('Stock CD completamente reiniciado.', 'success')
-    return redirect(url_for('dashboard'))
+    try:
+        cd_count = db.session.query(StockCD).count()
+        bl_count = db.session.query(InventoryBaseline).filter_by(scope='cd').count()
+        ev_count = db.session.query(InventoryEvent).filter(InventoryEvent.store_id.is_(None)).count()
+        wms_inv_count = db.session.query(WmsInventory).count()
+        wms_mov_count = db.session.query(WmsMovement).count()
+        wms_line_count = db.session.query(WmsMoveLine).count()
+        wms_run_count = db.session.query(WmsMoveRun).count()
+        db.session.query(WmsMoveLine).delete(synchronize_session=False)
+        db.session.query(WmsMoveRun).delete(synchronize_session=False)
+        db.session.query(WmsMovement).delete(synchronize_session=False)
+        db.session.query(WmsInventory).delete(synchronize_session=False)
+        db.session.query(InventoryEvent).filter(
+            InventoryEvent.store_id.is_(None)
+        ).delete(synchronize_session=False)
+        db.session.query(InventoryBaseline).filter_by(scope='cd').delete(synchronize_session=False)
+        db.session.query(StockCD).delete(synchronize_session=False)
+        db.session.commit()
+        print(f'[RESET] cd stock reset complete cd={cd_count} baselines={bl_count} events={ev_count} wms_inv={wms_inv_count} wms_mov={wms_mov_count} wms_lines={wms_line_count} wms_runs={wms_run_count}')
+        log_audit(
+            action="reset.stock_cd",
+            message=f"Stock CD reiniciado: {cd_count} StockCD, {bl_count} baselines, {ev_count} eventos, {wms_inv_count} WmsInventory, {wms_mov_count} movimientos eliminados",
+            entity_type="StockCD",
+            metadata={"deleted_cd": cd_count, "deleted_baselines": bl_count, "deleted_events": ev_count,
+                      "deleted_wms_inv": wms_inv_count, "deleted_wms_mov": wms_mov_count,
+                      "deleted_wms_lines": wms_line_count, "deleted_wms_runs": wms_run_count}
+        )
+        flash('Stock CD reiniciado correctamente', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error al reiniciar stock CD: {e}', 'danger')
+    return redirect(url_for('upload_stock_cd'))
 
 def process_stock_cd_upload(job_id, payload):
     """
