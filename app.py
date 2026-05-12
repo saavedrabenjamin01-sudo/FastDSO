@@ -8876,6 +8876,8 @@ def upload():
         }
         user_id = current_user.id if current_user.is_authenticated else None
         include_held = request.form.get('include_held') == '1' and current_user.role == 'Admin'
+        exhaust_cd_stock = request.form.get('exhaust_cd_stock') in ('1', 'true', 'True', 'on', 'yes')
+        print(f'[PLAN] exhaust_cd_stock={exhaust_cd_stock}')
 
         # ── Included stores filter ──────────────────────────────────────────
         store_scope = request.form.get('store_scope', 'all')
