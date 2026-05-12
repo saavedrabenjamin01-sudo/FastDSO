@@ -1,0 +1,58 @@
+Fix distribution generation so the per-store safety limit does not abort the entire run.
+
+CURRENT ERROR
+ABORT: Run exceeds per-store safety limit. Max row (13) > 10. Distribution not saved.
+
+ROOT CAUSE
+The generator is currently treating the per-store safety limit as a hard abort condition for the whole run.
+With the new "No dejar saldos en CD" / exhaust stock logic, extra units may be pushed into a store above the per-store safety limit, and the run is aborted completely.
+
+GOAL
+Keep the per-store safety limit, but do NOT abort the whole distribution run.
+Instead:
+- cap each store at the safety limit
+- try redistributing remaining units to other eligible stores
+- if no more eligible stores remain, leave a remainder in CD
+- save the run successfully with warnings
+
+REQUIRED FIX
+
+1) Locate the logic that raises:
+"Run exceeds per-store safety limit..."
+
+2) Replace hard abort behavior with capped redistribution behavior:
+For each SKU and store:
+- if proposed qty exceeds per-store safety limit:
+   - cap that store at the safety limit
+   - compute overflow/remnant
+   - try assigning that overflow to the next eligible stores
+     respecting the existing hierarchy/rules
+- if no more stores can receive units:
+   - keep the remainder unassigned in CD
+   - do NOT abort the run
+
+3) Safety limit must remain enforced:
+- no store should end above the configured safety limit
+- but the run itself should still be saved
+
+4) Warning behavior
+If remainder could not be fully redistributed because all eligible stores hit the safety limit:
+- save the run
+- show warning in review/generation result:
+  "Parte del saldo no pudo distribuirse por límite de seguridad por tienda."
+
+5) If exhaust_cd_stock mode is enabled:
+- attempt to exhaust stock
+- but never break the per-store safety limit
+- leftover remainder is acceptable if all stores are capped
+
+6) Add debug logs:
+[PLAN] safety cap hit sku=... store=... capped_at=...
+[PLAN] redistributed overflow sku=... qty=...
+[PLAN] remainder left due to safety limit sku=... qty=...
+
+7) Deliverable
+- distribution no longer aborts when one store exceeds the limit
+- stores are capped at the limit
+- remainder is redistributed or left in CD
+- run is saved successfully

@@ -4249,10 +4249,74 @@ def generate_predictions_from_macro(
         print(f"[DISTRIBUTION KILL-SWITCH] ABORT: total_units ({total_units}) > {TOTAL_UNITS_KILL_SWITCH}")
         raise ValueError(f"ABORT: Run exceeds safety limit. Total units ({total_units}) > {TOTAL_UNITS_KILL_SWITCH}. Distribution not saved.")
     
+    # ── Per-store safety cap + redistribute (no abort) ───────────────────────
+    # If any row exceeds MAX_UNITS_PER_STORE_EVENT we cap it and try to
+    # redistribute the overflow to stores that still have room.  The run is
+    # always saved; if overflow cannot be fully absorbed we leave it in CD and
+    # attach a warning to the run notes.
+    safety_warning_issued = False
+    safety_remainder_skus: list = []
+
     if max_single_row > MAX_UNITS_PER_STORE_EVENT:
-        db.session.rollback()
-        print(f"[DISTRIBUTION KILL-SWITCH] ABORT: max_single_row ({max_single_row}) > {MAX_UNITS_PER_STORE_EVENT}")
-        raise ValueError(f"ABORT: Run exceeds per-store safety limit. Max row ({max_single_row}) > {MAX_UNITS_PER_STORE_EVENT}. Distribution not saved.")
+        print(f"[PLAN] safety limit exceeded — applying cap+redistribute (max={max_single_row} > limit={MAX_UNITS_PER_STORE_EVENT})")
+        _cap_by_pid: dict = defaultdict(list)
+        for _it in final_preds:
+            _cap_by_pid[_it["product_id"]].append(_it)
+
+        for _pid, _pitems in _cap_by_pid.items():
+            # Pass 1: cap and collect overflow
+            _overflow = 0
+            for _it in _pitems:
+                _qty = int(_it.get("suggested", 0))
+                if _qty > MAX_UNITS_PER_STORE_EVENT:
+                    _overflow += _qty - MAX_UNITS_PER_STORE_EVENT
+                    print(f"[PLAN] safety cap hit sku={_it.get('sku', _pid)} store={_it.get('store', _it['store_id'])} capped_at={MAX_UNITS_PER_STORE_EVENT} (was {_qty})")
+                    _it["suggested"] = MAX_UNITS_PER_STORE_EVENT
+                    _rc = _it.get("reason_code") or "OK"
+                    _it["reason_code"] = "SAFETY_CAP" if _rc == "OK" else f"{_rc}+SAFETY_CAP"
+
+            if _overflow <= 0:
+                continue
+
+            # Pass 2: redistribute overflow to stores with remaining room
+            _redistributed = 0
+            _eligible = sorted(
+                [_it for _it in _pitems if int(_it.get("suggested", 0)) < MAX_UNITS_PER_STORE_EVENT],
+                key=lambda x: int(x.get("suggested", 0)),
+            )
+            for _it in _eligible:
+                if _overflow <= 0:
+                    break
+                _room = MAX_UNITS_PER_STORE_EVENT - int(_it.get("suggested", 0))
+                _give = min(_room, _overflow)
+                if _give > 0:
+                    _it["suggested"] = int(_it.get("suggested", 0)) + _give
+                    _overflow -= _give
+                    _redistributed += _give
+                    print(f"[PLAN] redistributed overflow sku={_it.get('sku', _pid)} store={_it.get('store', _it['store_id'])} qty={_give}")
+
+            if _overflow > 0:
+                _sku_label = _pitems[0].get("sku", str(_pid)) if _pitems else str(_pid)
+                print(f"[PLAN] remainder left due to safety limit sku={_sku_label} qty={_overflow}")
+                safety_remainder_skus.append(_sku_label)
+                safety_warning_issued = True
+
+        # Recompute totals after cap+redistribute
+        total_units = sum(int(it["suggested"]) for it in final_preds)
+        max_single_row = max((p.get("suggested", 0) for p in final_preds), default=0)
+        capped_rows = len([p for p in final_preds if p.get("suggested", 0) == MAX_UNITS_PER_STORE_EVENT])
+        print(f"[PLAN] after safety cap+redistribute: total_units={total_units} max_single_row={max_single_row} safety_capped_pids={len(safety_remainder_skus)}")
+
+        if safety_warning_issued:
+            _warn_note = (
+                f"ADVERTENCIA: Parte del saldo no pudo distribuirse por límite de seguridad "
+                f"por tienda (límite={MAX_UNITS_PER_STORE_EVENT}). "
+                f"SKUs afectados: {', '.join(safety_remainder_skus[:20])}"
+            )
+            if prediction_run.notes:
+                prediction_run.notes = prediction_run.notes + " | " + _warn_note
+            else:
+                prediction_run.notes = _warn_note
     
     target_week = next_monday()
     preds_bulk = []
