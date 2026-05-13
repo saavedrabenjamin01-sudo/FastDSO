@@ -1,0 +1,312 @@
+Implement Cycle Counting (Conteo cíclico por ubicación) in FastWMS as the next critical step toward a real warehouse go-live.
+
+GOAL
+Add a proper cycle count workflow so warehouse staff can:
+- create count tasks by location
+- execute counts from mobile
+- compare counted quantity vs system quantity
+- review variances
+- approve and apply inventory adjustments with audit trail
+
+This is the next priority for WMS maturity.
+
+==================================================
+PART 1 — BUSINESS SCOPE
+==================================================
+
+We need a cycle counting module for inventory accuracy.
+
+Supported scope for V1:
+- count by physical location
+- count by location + box
+- count by specific SKU in a location
+- count by stock bucket (MAIN / WEB)
+- mobile execution by operator
+- supervisor approval for adjustments
+
+Do NOT implement advanced lot/serial counting yet.
+Do NOT implement full ABC scheduling yet.
+Keep V1 operational and simple.
+
+==================================================
+PART 2 — DATA MODEL
+==================================================
+
+Add these models/tables:
+
+1) WmsCycleCountRun
+- id
+- code / reference
+- created_at
+- created_by_user_id
+- status
+  allowed values:
+   DRAFT
+   ASSIGNED
+   IN_PROGRESS
+   COMPLETED
+   REVIEW_PENDING
+   CLOSED
+- warehouse_code
+- stock_bucket nullable
+- note nullable
+
+2) WmsCycleCountTask
+- id
+- run_id
+- location_id
+- location
+- box_number
+- location_code
+- product_id nullable
+- sku nullable
+- product_name nullable
+- stock_bucket nullable
+- expected_qty
+- counted_qty nullable
+- variance_qty nullable
+- variance_type nullable
+  allowed values:
+   MATCH
+   SHORT
+   OVER
+   NOT_COUNTED
+- counted_by_user_id nullable
+- counted_at nullable
+- status
+  allowed values:
+   OPEN
+   COUNTED
+   REVIEWED
+   ADJUSTED
+- note nullable
+
+3) WmsInventoryAdjustmentLog
+- id
+- task_id
+- product_id
+- sku
+- location_id
+- location_code
+- stock_bucket
+- old_qty
+- new_qty
+- variance_qty
+- approved_by_user_id
+- created_at
+- note nullable
+
+==================================================
+PART 3 — COUNT RUN CREATION
+==================================================
+
+Create a new module/page:
+Route:
+- /wms/cycle-counts
+
+And creation page:
+- /wms/cycle-counts/new
+
+Permissions:
+- create/manage count runs: warehouse_manager or admin (or permission such as wms:count_manage)
+
+Creation options:
+- Warehouse
+- Stock bucket (MAIN / WEB / all)
+- Specific location
+- Range/prefix of locations (optional if simple)
+- Specific SKU (optional)
+- Note
+
+Creation behavior:
+1) Build tasks from current WmsInventory rows
+2) One task per:
+   location_id + product_id + stock_bucket
+   unless SKU filter narrows it
+3) expected_qty must come from current WmsInventory.on_hand_units
+4) Default task status = OPEN
+5) Run status = DRAFT or ASSIGNED depending on assignment flow
+
+==================================================
+PART 4 — ASSIGNMENT
+==================================================
+
+Count runs must be assignable to warehouse operators.
+
+Add assignment similar to waves:
+- assign count tasks or full count run to operator
+- show assigned operator in list/detail
+- allow only users with permission:
+   wms:count_execute
+or equivalent operator role
+
+==================================================
+PART 5 — MOBILE COUNT EXECUTION
+==================================================
+
+Add mobile-first routes:
+
+1) /wms/mobile/counts
+Show assigned count runs/tasks for current operator.
+
+2) /wms/mobile/counts/<run_id>
+Show tasks as mobile cards:
+- Ubicación
+- Caja
+- Código ubicación
+- SKU
+- Producto
+- Bucket de stock
+- Stock sistema
+- input for counted quantity
+- button "Guardar conteo"
+
+Mobile flow:
+1) operator opens task
+2) optionally scans location
+3) enters counted_qty
+4) saves count
+
+Rules:
+- counted_qty must be >= 0
+- expected_qty shown on screen for V1 (not blind count yet)
+- after save:
+   variance_qty = counted_qty - expected_qty
+   variance_type =
+      MATCH if 0
+      SHORT if counted < expected
+      OVER if counted > expected
+- task.status = COUNTED
+- run status moves to IN_PROGRESS / COMPLETED accordingly
+
+==================================================
+PART 6 — REVIEW & APPROVAL
+==================================================
+
+Create review page:
+- /wms/cycle-counts/<run_id>
+
+Show:
+- summary cards:
+   total tasks
+   matched
+   with variance
+   pending review
+- table with:
+   location
+   box
+   sku
+   stock bucket
+   expected_qty
+   counted_qty
+   variance_qty
+   variance_type
+   status
+
+Supervisor actions:
+- approve adjustment
+- reject adjustment
+- approve all MATCH automatically if useful
+
+Rules:
+- MATCH tasks can be marked REVIEWED/CLOSED without inventory change
+- SHORT / OVER tasks require review before inventory change
+
+==================================================
+PART 7 — APPLY INVENTORY ADJUSTMENTS
+==================================================
+
+When supervisor approves a variance:
+1) locate the exact WmsInventory row by:
+   location_id + product_id + stock_bucket
+2) old_qty = current on_hand_units
+3) set new on_hand_units = counted_qty
+4) do not touch the wrong bucket
+5) keep allocated_units safe:
+   - if allocated_units > new on_hand_units, either block approval with warning
+     OR mark as review-required
+   Preferred V1:
+   - block adjustment if allocated_units exceeds counted_qty
+   - require supervisor intervention
+
+6) write WmsInventoryAdjustmentLog
+7) task.status = ADJUSTED
+
+Important:
+- Never mix MAIN and WEB during count adjustment
+- Counting one bucket must not alter the other bucket in the same physical location
+
+==================================================
+PART 8 — UI / VISUAL DESIGN
+==================================================
+
+Desktop:
+- use same FastDSO style
+- cards + clean tables
+- strong variance badges:
+   MATCH = green
+   SHORT = orange/red
+   OVER = blue/orange
+
+Mobile:
+- use mobile_base.html
+- large count input
+- compact card layout
+- one task per card
+- clear location/SKU/bucket display
+
+Spanish labels only:
+- Conteos cíclicos
+- Crear conteo
+- Stock sistema
+- Cantidad contada
+- Diferencia
+- Aprobar ajuste
+- Rechazar
+- Sin diferencias
+
+==================================================
+PART 9 — FILTERS
+==================================================
+
+Add filters on desktop list/review:
+- status
+- stock bucket
+- location
+- SKU
+- operator
+- only with variance
+
+==================================================
+PART 10 — LOGGING / AUDIT
+==================================================
+
+Add logs:
+- [COUNT] run created id=...
+- [COUNT] task counted location=... sku=... expected=... counted=... variance=...
+- [COUNT] adjustment approved task=... old=... new=...
+- [COUNT] adjustment blocked due to allocated_units > counted_qty task=...
+
+==================================================
+PART 11 — SAFETY
+==================================================
+
+- Do not break existing WMS inventory logic
+- Do not touch user/admin tables
+- Do not auto-adjust inventory without supervisor approval when variance exists
+- Keep MATCH counts lightweight
+- Preserve MAIN/WEB stock bucket separation
+
+==================================================
+DELIVERABLES
+==================================================
+
+Deliver:
+- cycle count run model
+- cycle count task model
+- inventory adjustment log
+- desktop pages for count creation/list/review
+- mobile pages for count execution
+- supervisor approval workflow
+- inventory update on approved variance
+- no breaking changes to current WMS picking/moves/inventory flows
