@@ -1,0 +1,296 @@
+Implement a simple receiving module (Recepción simple) in FastWMS.
+
+GOAL
+Add a practical inbound receiving workflow to FastWMS for day-to-day warehouse operation, without replacing the existing bulk stock upload process.
+
+IMPORTANT
+This module is complementary to stock upload.
+- Bulk stock upload remains valid for initial loads, syncs, and administrative corrections.
+- Receiving is for operational inbound activity:
+   purchases, returns, transfers, adjustments, restocking, etc.
+
+This is a simple receiving module for V1, not a full enterprise ASN/PO receiving system.
+
+==================================================
+PART 1 — BUSINESS SCOPE
+==================================================
+
+We need a basic receiving workflow so warehouse staff can:
+- create a receiving run
+- register received SKUs and quantities
+- assign destination location
+- assign stock bucket (MAIN / WEB)
+- confirm receipt
+- increase WMS inventory with audit trail
+
+Supported V1 scope:
+- manual receiving
+- bulk file receiving (optional but recommended)
+- destination location required
+- stock bucket required
+- mobile-friendly execution optional for later
+- no ASN/PO matching yet
+- no lot/serial control yet
+
+==================================================
+PART 2 — DATA MODEL
+==================================================
+
+Add these models/tables:
+
+1) WmsReceivingRun
+- id
+- code/reference
+- created_at
+- created_by_user_id
+- status
+  allowed values:
+   DRAFT
+   IN_PROGRESS
+   COMPLETED
+   CANCELLED
+- source_type
+  allowed values:
+   PURCHASE
+   RETURN
+   TRANSFER
+   ADJUSTMENT
+   OTHER
+- external_reference nullable
+- note nullable
+
+2) WmsReceivingLine
+- id
+- run_id
+- product_id nullable
+- sku
+- product_name
+- category nullable
+- qty_expected nullable
+- qty_received
+- warehouse_code
+- location_id nullable
+- location
+- box_number
+- location_code
+- stock_bucket
+- status
+  allowed values:
+   OPEN
+   RECEIVED
+   CANCELLED
+- received_by_user_id nullable
+- received_at nullable
+- note nullable
+
+3) WmsReceivingLog (optional if needed, otherwise reuse movement log)
+- id
+- run_id
+- line_id
+- sku
+- product_id nullable
+- qty_received
+- warehouse_code
+- location_id
+- location_code
+- stock_bucket
+- received_by_user_id
+- created_at
+- note nullable
+
+==================================================
+PART 3 — DESKTOP RECEIVING MODULE
+==================================================
+
+Create new module/pages:
+- /wms/receiving
+- /wms/receiving/new
+- /wms/receiving/<run_id>
+
+Permissions:
+- warehouse_manager or admin
+- or permission such as wms:receive_manage
+
+==================================================
+PART 4 — CREATE RECEIVING RUN
+==================================================
+
+On /wms/receiving/new create a simple receiving form with:
+
+Header fields:
+- Tipo de ingreso
+   PURCHASE / RETURN / TRANSFER / ADJUSTMENT / OTHER
+- Referencia externa
+- Observación
+
+Line entry section:
+- SKU
+- Producto (optional auto-fill if SKU exists)
+- Cantidad recibida
+- Bodega física / warehouse_code
+- Ubicación
+- Caja
+- Código ubicación (derived or validated)
+- Bucket de stock (MAIN / WEB)
+- Agregar línea
+
+Optional file upload:
+Support CSV/XLSX with columns:
+- sku
+- qty_received
+- warehouse
+- location
+- box_number
+- stock_bucket
+Optional:
+- product_name
+- note
+
+Rules:
+- quantity > 0
+- stock_bucket required
+- location required
+- if location_code missing, build from location + box_number
+- if product does not exist, allow stub creation using existing product rules
+
+==================================================
+PART 5 — RECEIVING CONFIRMATION LOGIC
+==================================================
+
+Create service:
+confirm_receiving_run(run_id)
+
+Behavior:
+1) For each WmsReceivingLine:
+   - resolve/create physical WmsLocation
+   - resolve/create Product if needed
+   - find or create WmsInventory row by:
+      location_id + product_id + stock_bucket
+   - increment WmsInventory.on_hand_units by qty_received
+   - do not mix buckets
+   - do not touch allocated_units unnecessarily
+
+2) Mark line status = RECEIVED
+3) Mark run status = COMPLETED
+4) Write receiving audit log or movement log
+
+Important:
+- If same physical location already has same SKU in same bucket, accumulate units
+- If same physical location has same SKU in different bucket, keep separate WmsInventory rows
+
+==================================================
+PART 6 — LOCATION / STOCK BUCKET RULES
+==================================================
+
+Receiving must respect the existing shared-location model:
+- physical locations are shared
+- stock is separated only by stock_bucket
+
+Examples:
+Location A-02 / Box 01 / SKU X
+- receiving 5 units into MAIN increases only MAIN bucket
+- receiving 5 units into WEB increases only WEB bucket
+
+Never merge MAIN and WEB quantities together.
+
+==================================================
+PART 7 — UI / REVIEW
+==================================================
+
+Receiving run detail page must show:
+- header info
+- status
+- source type
+- external reference
+- summary cards:
+   total lines
+   total units
+   MAIN units
+   WEB units
+- line table:
+   SKU
+   Producto
+   Qty recibida
+   Ubicación
+   Caja
+   Bucket
+   Estado
+
+Actions:
+- Confirmar recepción
+- Cancelar run
+- Exportar if easy
+
+==================================================
+PART 8 — OPTIONAL FILE PREVIEW
+==================================================
+
+If a file is uploaded before final creation:
+- preview first rows
+- show total valid rows
+- show skipped rows with reasons
+This is optional but recommended.
+
+==================================================
+PART 9 — FUTURE-SAFE DESIGN
+==================================================
+
+This V1 receiving module must coexist with current stock upload.
+Do NOT remove stock upload.
+
+Intent:
+- stock upload remains for admin/reset/sync mass operations
+- receiving becomes operational inbound entry
+
+==================================================
+PART 10 — VISUAL / UX
+==================================================
+
+Desktop:
+- same FastDSO / WMS look
+- clean cards and forms
+- compact line table
+- Spanish labels
+
+Labels:
+- Recepción
+- Crear recepción
+- Confirmar recepción
+- Tipo de ingreso
+- Cantidad recibida
+- Bucket de stock
+- Ubicación
+- Caja
+
+==================================================
+PART 11 — LOGGING
+==================================================
+
+Add logs:
+- [RCV] run created id=...
+- [RCV] line sku=... qty=... location=... box=... bucket=...
+- [RCV] inventory updated sku=... old=... new=... bucket=...
+- [RCV] run completed id=...
+
+==================================================
+PART 12 — SAFETY
+==================================================
+
+- do not break existing stock upload flows
+- do not touch user/admin tables
+- do not mix MAIN and WEB
+- do not create invalid locations
+- use transactions for confirmation
+- rollback if any receiving line fails
+
+==================================================
+DELIVERABLES
+==================================================
+
+Deliver:
+- WmsReceivingRun model
+- WmsReceivingLine model
+- receiving desktop module
+- receiving confirmation service
+- inventory increase by location + stock bucket
+- no breaking changes to current WMS inventory/picking/moves logic
