@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Recepción {{ run.code }}{% endblock %}
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h3 class="mb-0"><i class="bi bi-box-arrow-in-down text-primary"></i> Recepción {{ run.code }}</h3>
+      <small class="text-muted">{{ run.source_type }} — {{ run.created_at.strftime('%Y-%m-%d %H:%M') }} por {{ run.created_by.username if run.created_by else '—' }}</small>
+    </div>
+    <div class="d-flex gap-2">
+      {% set badge = {'DRAFT':'secondary','IN_PROGRESS':'warning text-dark','COMPLETED':'success','CANCELLED':'danger'}.get(run.status,'secondary') %}
+      <span class="badge bg-{{ badge }} fs-6 align-self-center">{{ run.status }}</span>
+      <a href="{{ url_for('wms_receiving_export', run_id=run.id) }}" class="btn btn-outline-secondary"><i class="bi bi-file-earmark-excel"></i> Exportar</a>
+      <a href="{{ url_for('wms_receiving') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Volver</a>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-md-3"><div class="card card-body text-center"><div class="small text-muted">Total líneas</div><div class="h3 mb-0">{{ lines|length }}</div></div></div>
+    <div class="col-md-3"><div class="card card-body text-center"><div class="small text-muted">Total unidades</div><div class="h3 mb-0">{{ total_units }}</div></div></div>
+    <div class="col-md-3"><div class="card card-body text-center"><div class="small text-muted">MAIN</div><div class="h3 mb-0 text-primary">{{ main_units }}</div></div></div>
+    <div class="col-md-3"><div class="card card-body text-center"><div class="small text-muted">WEB</div><div class="h3 mb-0 text-warning">{{ web_units }}</div></div></div>
+  </div>
+
+  {% if run.external_reference or run.note %}
+  <div class="card mb-3"><div class="card-body small">
+    {% if run.external_reference %}<div><strong>Referencia:</strong> {{ run.external_reference }}</div>{% endif %}
+    {% if run.note %}<div><strong>Observación:</strong> {{ run.note }}</div>{% endif %}
+  </div></div>
+  {% endif %}
+
+  <div class="card mb-3">
+    <div class="card-header"><strong>Líneas</strong></div>
+    <div class="table-responsive">
+      <table class="table table-sm mb-0 align-middle">
+        <thead class="table-light">
+          <tr><th>SKU</th><th>Producto</th><th class="text-end">Qty</th><th>Ubicación</th><th>Caja</th><th>Código ubic.</th><th>Bucket</th><th>Estado</th></tr>
+        </thead>
+        <tbody>
+          {% for ln in lines %}
+          <tr>
+            <td><strong>{{ ln.sku }}</strong></td>
+            <td class="small">{{ ln.product_name or (ln.product.name if ln.product else '—') }}</td>
+            <td class="text-end"><strong>{{ ln.qty_received }}</strong></td>
+            <td>{{ ln.location or '—' }}</td>
+            <td>{{ ln.box_number or '—' }}</td>
+            <td class="small text-muted">{{ ln.location_code or '—' }}</td>
+            <td><span class="badge bg-{{ 'primary' if ln.stock_bucket=='MAIN' else 'warning text-dark' }}">{{ ln.stock_bucket }}</span></td>
+            <td>
+              {% set lb = {'OPEN':'secondary','RECEIVED':'success','CANCELLED':'danger'}.get(ln.status,'secondary') %}
+              <span class="badge bg-{{ lb }}">{{ ln.status }}</span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {% if run.status in ['DRAFT','IN_PROGRESS'] %}
+  <div class="d-flex gap-2">
+    <form method="post" action="{{ url_for('wms_receiving_confirm', run_id=run.id) }}" onsubmit="return confirm('¿Confirmar recepción y actualizar inventario?');">
+      <button class="btn btn-success"><i class="bi bi-check2-circle"></i> Confirmar recepción</button>
+    </form>
+    <form method="post" action="{{ url_for('wms_receiving_cancel', run_id=run.id) }}" onsubmit="return confirm('¿Cancelar recepción?');">
+      <button class="btn btn-outline-danger"><i class="bi bi-x-circle"></i> Cancelar</button>
+    </form>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

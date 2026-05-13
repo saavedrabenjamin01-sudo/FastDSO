@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Nueva recepción{% endblock %}
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h3 class="mb-0"><i class="bi bi-box-arrow-in-down text-primary"></i> Crear recepción</h3>
+      <small class="text-muted">Ingresa SKUs manualmente o sube archivo CSV/XLSX</small>
+    </div>
+    <a href="{{ url_for('wms_receiving') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Volver</a>
+  </div>
+
+  <form method="post" enctype="multipart/form-data" id="recvForm">
+    <div class="card mb-3">
+      <div class="card-header"><strong>Encabezado</strong></div>
+      <div class="card-body">
+        <div class="row g-3">
+          <div class="col-md-3">
+            <label class="form-label">Tipo de ingreso</label>
+            <select name="source_type" class="form-select" required>
+              {% for s in source_types %}
+              <option value="{{ s }}" {% if s == form_data.source_type %}selected{% endif %}>{{ s }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">Referencia externa</label>
+            <input type="text" name="external_reference" class="form-control" value="{{ form_data.external_reference }}" placeholder="OC, NC, transfer #, etc.">
+          </div>
+          <div class="col-md-5">
+            <label class="form-label">Observación</label>
+            <input type="text" name="note" class="form-control" value="{{ form_data.note }}">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>Líneas manuales</strong>
+        <button type="button" class="btn btn-sm btn-outline-primary" onclick="addRow()"><i class="bi bi-plus-lg"></i> Agregar línea</button>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th style="width:140px">SKU</th>
+              <th>Producto (opcional)</th>
+              <th style="width:90px">Qty</th>
+              <th style="width:100px">Bodega</th>
+              <th style="width:140px">Ubicación</th>
+              <th style="width:90px">Caja</th>
+              <th style="width:90px">Bucket</th>
+              <th style="width:40px"></th>
+            </tr>
+          </thead>
+          <tbody id="linesBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header"><strong>Archivo CSV/XLSX (opcional)</strong></div>
+      <div class="card-body">
+        <input type="file" name="upload_file" class="form-control" accept=".csv,.xlsx,.xls">
+        <small class="text-muted">Columnas: sku, qty_received, location, stock_bucket (req); warehouse, box_number, product_name, note (opc).</small>
+      </div>
+    </div>
+
+    {% if preview_rows or preview_errors %}
+    <div class="card mb-3">
+      <div class="card-header"><strong>Previsualización</strong> — {{ preview_rows|length }} filas válidas, {{ preview_errors|length }} errores</div>
+      {% if preview_errors %}
+      <div class="card-body">
+        <ul class="text-danger small mb-0">{% for e in preview_errors %}<li>{{ e }}</li>{% endfor %}</ul>
+      </div>
+      {% endif %}
+      {% if preview_rows %}
+      <div class="table-responsive" style="max-height:300px;overflow:auto">
+        <table class="table table-sm mb-0">
+          <thead class="table-light"><tr><th>SKU</th><th>Qty</th><th>Ubicación</th><th>Caja</th><th>Bucket</th></tr></thead>
+          <tbody>
+            {% for r in preview_rows %}
+            <tr><td>{{ r.sku }}</td><td>{{ r.qty_received }}</td><td>{{ r.location }}</td><td>{{ r.box_number or '' }}</td><td>{{ r.stock_bucket }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <div class="d-flex gap-2">
+      <button type="submit" name="action" value="preview" class="btn btn-outline-secondary"><i class="bi bi-eye"></i> Previsualizar</button>
+      <button type="submit" name="action" value="create" class="btn btn-primary"><i class="bi bi-check2"></i> Crear recepción</button>
+    </div>
+  </form>
+</div>
+
+<script>
+let rowIdx = 0;
+function addRow() {
+  const tbody = document.getElementById('linesBody');
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td><input name="sku_${rowIdx}" class="form-control form-control-sm" required></td>
+    <td><input name="pname_${rowIdx}" class="form-control form-control-sm" placeholder="Auto si SKU existe"></td>
+    <td><input name="qty_${rowIdx}" type="number" min="1" class="form-control form-control-sm" required></td>
+    <td><input name="wh_${rowIdx}" value="MAIN" class="form-control form-control-sm"></td>
+    <td><input name="location_${rowIdx}" class="form-control form-control-sm" required></td>
+    <td><input name="box_${rowIdx}" class="form-control form-control-sm"></td>
+    <td><select name="bucket_${rowIdx}" class="form-select form-select-sm">
+      {% for b in buckets %}<option value="{{ b }}">{{ b }}</option>{% endfor %}
+    </select></td>
+    <td><button type="button" class="btn btn-sm btn-outline-danger" onclick="this.closest('tr').remove()"><i class="bi bi-x"></i></button></td>`;
+  tbody.appendChild(tr);
+  rowIdx++;
+}
+addRow();
+</script>
+{% endblock %}

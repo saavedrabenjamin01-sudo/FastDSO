@@ -54,7 +54,7 @@ ROLE_PERMISSIONS = {
         'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view',
         'planner:view', 'planner:operate', 'planner:manage', 'planner:approve', 'planner:assign_picker',
         'wms:view', 'wms:moves', 'wms:pick', 'wms:kpis', 'wms:count_manage', 'wms:count_execute',
-        'wms:replen_manage', 'wms:replen_execute',
+        'wms:replen_manage', 'wms:replen_execute', 'wms:receive_manage',
         'users:manage', 'roles:manage'
     ],
     'Management': [
@@ -73,14 +73,14 @@ ROLE_PERMISSIONS = {
         'distribution:export', 'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view',
         'planner:view', 'planner:operate', 'planner:assign_picker', 'wms:view', 'wms:moves', 'wms:kpis',
         'wms:count_manage', 'wms:count_execute',
-        'wms:replen_manage', 'wms:replen_execute'
+        'wms:replen_manage', 'wms:replen_execute', 'wms:receive_manage'
     ],
     'WarehouseManager': [
         'dashboard:view', 'stock:query', 'stock_store:upload', 'stock_cd:upload', 'stock:upload',
         'planner:view', 'planner:operate', 'planner:assign_picker', 'planner:approve',
         'wms:view', 'wms:moves', 'wms:kpis', 'alerts:view', 'store_health:view',
         'wms:count_manage', 'wms:count_execute',
-        'wms:replen_manage', 'wms:replen_execute'
+        'wms:replen_manage', 'wms:replen_execute', 'wms:receive_manage'
     ],
     'WarehouseOperator': [
         'wms:view', 'wms:pick', 'wms:count_execute', 'wms:replen_execute'
@@ -100,7 +100,7 @@ PERMISSION_MODULES = {
     'Rebalanceo': ['rebalancing:view', 'rebalancing:run'],
     'Inventario lento': ['slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view'],
     'Planner': ['planner:view', 'planner:operate', 'planner:manage', 'planner:approve', 'planner:assign_picker'],
-    'WMS': ['wms:view', 'wms:moves', 'wms:pick', 'wms:kpis', 'wms:count_manage', 'wms:count_execute', 'wms:replen_manage', 'wms:replen_execute'],
+    'WMS': ['wms:view', 'wms:moves', 'wms:pick', 'wms:kpis', 'wms:count_manage', 'wms:count_execute', 'wms:replen_manage', 'wms:replen_execute', 'wms:receive_manage'],
     'Administración': ['admin:users', 'admin:reset', 'audit:view', 'users:manage', 'roles:manage'],
 }
 MIN_WEEKS = 3  # mínimo de semanas de historia requeridas por SKU–Tienda
@@ -1403,6 +1403,57 @@ class WmsReplenishmentTask(db.Model):
     source_loc = db.relationship('WmsLocation', foreign_keys=[source_location_id])
     dest_loc = db.relationship('WmsLocation', foreign_keys=[dest_location_id])
     completed_by = db.relationship('User', foreign_keys=[completed_by_user_id])
+
+
+# ------------------ Receiving (Recepción simple) ------------------
+WMS_RECV_RUN_STATUSES = ['DRAFT', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED']
+WMS_RECV_LINE_STATUSES = ['OPEN', 'RECEIVED', 'CANCELLED']
+WMS_RECV_SOURCE_TYPES = ['PURCHASE', 'RETURN', 'TRANSFER', 'ADJUSTMENT', 'OTHER']
+
+
+class WmsReceivingRun(db.Model):
+    __tablename__ = 'wms_receiving_run'
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(40), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='DRAFT')
+    source_type = db.Column(db.String(20), nullable=False, default='PURCHASE')
+    external_reference = db.Column(db.String(200), nullable=True)
+    note = db.Column(db.Text, nullable=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    completed_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+
+    created_by = db.relationship('User', foreign_keys=[created_by_user_id])
+    completed_by = db.relationship('User', foreign_keys=[completed_by_user_id])
+    lines = db.relationship('WmsReceivingLine', backref='run', lazy='dynamic',
+                            cascade='all, delete-orphan')
+
+
+class WmsReceivingLine(db.Model):
+    __tablename__ = 'wms_receiving_line'
+    id = db.Column(db.Integer, primary_key=True)
+    run_id = db.Column(db.Integer, db.ForeignKey('wms_receiving_run.id'), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=True)
+    sku = db.Column(db.String(64), nullable=False, index=True)
+    product_name = db.Column(db.String(255), nullable=True)
+    category = db.Column(db.String(100), nullable=True)
+    qty_expected = db.Column(db.Integer, nullable=True)
+    qty_received = db.Column(db.Integer, nullable=False, default=0)
+    warehouse_code = db.Column(db.String(20), nullable=False, default='MAIN')
+    location_id = db.Column(db.Integer, db.ForeignKey('wms_location.id'), nullable=True)
+    location = db.Column(db.String(100), nullable=True)
+    box_number = db.Column(db.String(50), nullable=True)
+    location_code = db.Column(db.String(100), nullable=True)
+    stock_bucket = db.Column(db.String(10), nullable=False, default='MAIN')
+    status = db.Column(db.String(20), nullable=False, default='OPEN')
+    received_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    received_at = db.Column(db.DateTime, nullable=True)
+    note = db.Column(db.Text, nullable=True)
+
+    product = db.relationship('Product')
+    loc = db.relationship('WmsLocation')
+    received_by = db.relationship('User')
 
 
 # ------------------ Operational Stock Helpers ------------------
@@ -24337,6 +24388,395 @@ def wms_mobile_replenishment_confirm(run_id, task_id):
     else:
         flash(err or 'Error al confirmar.', 'danger')
     return redirect(url_for('wms_mobile_replenishment_run', run_id=run_id))
+
+
+# ====================================================================
+# Receiving (Recepción simple) — engine + routes
+# ====================================================================
+def _next_recv_code():
+    last = WmsReceivingRun.query.order_by(WmsReceivingRun.id.desc()).first()
+    n = (last.id + 1) if last else 1
+    return f"RCV-{datetime.utcnow().strftime('%Y%m%d')}-{n:04d}"
+
+
+def _resolve_or_create_location(warehouse_id, location, box_number, location_code):
+    """Find existing WmsLocation by code; if missing, create a non-PICK BULK-style
+    location for receiving. Returns (loc, created_bool)."""
+    wh = WmsWarehouse.query.get(warehouse_id)
+    if not wh:
+        wh = WmsWarehouse.query.first()
+        if not wh:
+            return None, False
+        warehouse_id = wh.id
+
+    code = (location_code or '').strip()
+    if not code:
+        loc_part = (location or '').strip()
+        box_part = (box_number or '').strip()
+        if loc_part and box_part:
+            code = f"{loc_part}-{box_part}"
+        else:
+            code = loc_part or box_part
+    code = code.strip().upper()
+    if not code:
+        return None, False
+
+    existing = WmsLocation.query.filter_by(warehouse_id=warehouse_id, location_code=code).first()
+    if existing:
+        return existing, False
+
+    new_loc = WmsLocation(
+        warehouse_id=warehouse_id,
+        location_code=code,
+        location_type='BULK',
+        is_active=True,
+        location=(location or '').strip() or None,
+        box_number=(box_number or '').strip() or None,
+    )
+    db.session.add(new_loc)
+    db.session.flush()
+    return new_loc, True
+
+
+def _resolve_or_create_product(sku, name=None, category=None):
+    """Find Product by normalized SKU; if missing, create stub. Returns Product."""
+    sku_norm = normalize_sku(sku)
+    if not sku_norm:
+        return None
+    p = Product.query.filter_by(sku=sku_norm).first()
+    if p:
+        return p
+    p = Product(
+        sku=sku_norm,
+        name=(str(name).strip() if name else sku_norm) or sku_norm,
+        category=(str(category).strip() if category else None),
+        eligible_for_distribution=False,
+        is_on_hold=False,
+    )
+    db.session.add(p)
+    db.session.flush()
+    print(f"[RCV] product stub created sku={sku_norm}")
+    return p
+
+
+def confirm_receiving_run(run_id, user_id):
+    """Atomic confirm: increases WmsInventory.on_hand_units by qty_received per
+    line, creates audit WmsMoveRun/WmsMoveLine + WmsInventoryEvent. Single
+    transaction; rollback on any failure. Returns (ok, err)."""
+    try:
+        run = WmsReceivingRun.query.get(run_id)
+        if not run:
+            return False, 'Recepción no encontrada.'
+        if run.status not in ('DRAFT', 'IN_PROGRESS'):
+            return False, f'Estado inválido: {run.status}.'
+
+        lines = list(run.lines)
+        open_lines = [ln for ln in lines if ln.status == 'OPEN']
+        if not open_lines:
+            return False, 'No hay líneas abiertas para confirmar.'
+
+        move_run = WmsMoveRun(
+            status='POSTED',
+            created_by_user_id=user_id,
+            note=f'Recepción {run.code} ({run.source_type})',
+        )
+        db.session.add(move_run)
+        db.session.flush()
+
+        total_units = 0
+        for ln in open_lines:
+            qty = int(ln.qty_received or 0)
+            if qty <= 0:
+                continue
+            if ln.stock_bucket not in WMS_STOCK_BUCKETS:
+                raise ValueError(f'Bucket inválido en línea {ln.id}: {ln.stock_bucket}')
+
+            loc, _ = _resolve_or_create_location(
+                warehouse_id=(ln.loc.warehouse_id if ln.loc else None) or
+                             (WmsWarehouse.query.first().id if WmsWarehouse.query.first() else None),
+                location=ln.location, box_number=ln.box_number, location_code=ln.location_code
+            )
+            if not loc:
+                raise ValueError(f'No se pudo resolver ubicación en línea {ln.id}')
+
+            prod = ln.product or _resolve_or_create_product(ln.sku, ln.product_name, ln.category)
+            if not prod:
+                raise ValueError(f'SKU inválido en línea {ln.id}: {ln.sku}')
+
+            inv = WmsInventory.query.filter_by(
+                location_id=loc.id, product_id=prod.id, stock_bucket=ln.stock_bucket
+            ).first()
+            old_qty = int(inv.on_hand_units) if inv else 0
+            if not inv:
+                inv = WmsInventory(
+                    warehouse_id=loc.warehouse_id,
+                    location_id=loc.id, product_id=prod.id, stock_bucket=ln.stock_bucket,
+                    on_hand_units=qty, allocated_units=0,
+                )
+                db.session.add(inv)
+            else:
+                inv.on_hand_units = old_qty + qty
+            db.session.flush()
+
+            db.session.add(WmsMoveLine(
+                move_run_id=move_run.id, product_id=prod.id,
+                from_location_id=loc.id, to_location_id=loc.id,
+                units=qty, reason=f'RECEIVING/{ln.stock_bucket}/{run.code}',
+            ))
+            db.session.add(WmsInventoryEvent(
+                event_type='RECEIVING_IN',
+                ref_type='wms_receiving_line', ref_id=str(ln.id),
+                warehouse_id=loc.warehouse_id, location_id=loc.id,
+                product_id=prod.id, delta_units=qty,
+                note=f'bucket={ln.stock_bucket} run={run.code}',
+            ))
+
+            ln.status = 'RECEIVED'
+            ln.received_at = datetime.utcnow()
+            ln.received_by_user_id = user_id
+            ln.location_id = loc.id
+            ln.product_id = prod.id
+            ln.location_code = loc.location_code
+            total_units += qty
+            print(f"[RCV] inventory updated sku={prod.sku} old={old_qty} new={inv.on_hand_units} bucket={ln.stock_bucket} loc={loc.location_code}")
+
+        move_run.total_lines = len(open_lines)
+        move_run.total_units = total_units
+        run.status = 'COMPLETED'
+        run.completed_at = datetime.utcnow()
+        run.completed_by_user_id = user_id
+        db.session.commit()
+        try:
+            log_audit('wms_receiving_confirm', message=f'run_id={run.id} code={run.code} units={total_units}', entity_type='WmsReceivingRun', entity_id=run.id)
+        except Exception as ae:
+            print(f"[RCV] audit log failed (non-fatal): {ae}")
+        print(f"[RCV] run completed id={run.id} code={run.code} units={total_units}")
+        return True, None
+    except Exception as e:
+        db.session.rollback()
+        print(f"[RCV] confirm failed: {e}")
+        return False, f'Error al confirmar recepción: {e}'
+
+
+def _parse_recv_upload(file_storage):
+    """Parse CSV/XLSX upload; returns (rows, errors). Each row dict includes
+    sku, qty_received, warehouse, location, box_number, stock_bucket, product_name, note."""
+    import io
+    rows, errors = [], []
+    fname = (file_storage.filename or '').lower()
+    try:
+        if fname.endswith('.csv'):
+            df = pd.read_csv(file_storage)
+        else:
+            df = pd.read_excel(file_storage)
+    except Exception as e:
+        return [], [f'No se pudo leer el archivo: {e}']
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    required = ['sku', 'qty_received', 'location', 'stock_bucket']
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        return [], [f'Faltan columnas: {", ".join(missing)}']
+    for idx, r in df.iterrows():
+        try:
+            sku = normalize_sku(r.get('sku'))
+            qty = int(float(r.get('qty_received') or 0))
+            bucket = str(r.get('stock_bucket') or '').strip().upper() or 'MAIN'
+            loc = str(r.get('location') or '').strip()
+            if not sku or qty <= 0 or bucket not in WMS_STOCK_BUCKETS or not loc:
+                errors.append(f'Fila {idx+2}: datos inválidos (sku={sku} qty={qty} bucket={bucket} loc={loc})')
+                continue
+            rows.append({
+                'sku': sku,
+                'qty_received': qty,
+                'warehouse': str(r.get('warehouse') or 'MAIN').strip() or 'MAIN',
+                'location': loc,
+                'box_number': str(r.get('box_number') or '').strip(),
+                'stock_bucket': bucket,
+                'product_name': str(r.get('product_name') or '').strip() or None,
+                'note': str(r.get('note') or '').strip() or None,
+            })
+        except Exception as e:
+            errors.append(f'Fila {idx+2}: {e}')
+    return rows, errors
+
+
+@app.route('/wms/receiving')
+@login_required
+@require_permission('wms:receive_manage')
+def wms_receiving():
+    status_f = (request.args.get('status') or '').strip().upper()
+    src_f = (request.args.get('source') or '').strip().upper()
+    q = WmsReceivingRun.query
+    if status_f in WMS_RECV_RUN_STATUSES:
+        q = q.filter(WmsReceivingRun.status == status_f)
+    if src_f in WMS_RECV_SOURCE_TYPES:
+        q = q.filter(WmsReceivingRun.source_type == src_f)
+    runs = q.order_by(WmsReceivingRun.created_at.desc()).limit(200).all()
+    return render_template('wms_receiving.html', runs=runs,
+                           statuses=WMS_RECV_RUN_STATUSES,
+                           source_types=WMS_RECV_SOURCE_TYPES,
+                           status_f=status_f, src_f=src_f)
+
+
+@app.route('/wms/receiving/new', methods=['GET', 'POST'])
+@login_required
+@require_permission('wms:receive_manage')
+def wms_receiving_new():
+    wh_default = WmsWarehouse.query.first()
+    if request.method == 'POST':
+        action = request.form.get('action', 'create')
+        source_type = (request.form.get('source_type') or 'PURCHASE').upper()
+        if source_type not in WMS_RECV_SOURCE_TYPES:
+            source_type = 'OTHER'
+        ext_ref = (request.form.get('external_reference') or '').strip() or None
+        note = (request.form.get('note') or '').strip() or None
+
+        upload = request.files.get('upload_file')
+        upload_rows, upload_errs = [], []
+        if upload and upload.filename:
+            upload_rows, upload_errs = _parse_recv_upload(upload)
+
+        manual_rows = []
+        idx = 0
+        while True:
+            if f'sku_{idx}' not in request.form:
+                break
+            sku = normalize_sku(request.form.get(f'sku_{idx}', ''))
+            try:
+                qty = int(float(request.form.get(f'qty_{idx}', '0') or 0))
+            except Exception:
+                qty = 0
+            bucket = (request.form.get(f'bucket_{idx}', 'MAIN') or 'MAIN').upper()
+            loc = (request.form.get(f'location_{idx}', '') or '').strip()
+            box = (request.form.get(f'box_{idx}', '') or '').strip()
+            wh_code = (request.form.get(f'wh_{idx}', 'MAIN') or 'MAIN').strip()
+            pname = (request.form.get(f'pname_{idx}', '') or '').strip() or None
+            if sku and qty > 0 and bucket in WMS_STOCK_BUCKETS and loc:
+                manual_rows.append({
+                    'sku': sku, 'qty_received': qty, 'stock_bucket': bucket,
+                    'location': loc, 'box_number': box, 'warehouse': wh_code,
+                    'product_name': pname, 'note': None,
+                })
+            idx += 1
+
+        all_rows = manual_rows + upload_rows
+        if action == 'preview':
+            return render_template('wms_receiving_new.html', wh=wh_default,
+                                   source_types=WMS_RECV_SOURCE_TYPES,
+                                   buckets=WMS_STOCK_BUCKETS,
+                                   preview_rows=all_rows, preview_errors=upload_errs,
+                                   form_data={'source_type': source_type,
+                                              'external_reference': ext_ref or '',
+                                              'note': note or ''})
+
+        if not all_rows:
+            flash('Agrega al menos una línea válida.', 'warning')
+            return render_template('wms_receiving_new.html', wh=wh_default,
+                                   source_types=WMS_RECV_SOURCE_TYPES,
+                                   buckets=WMS_STOCK_BUCKETS,
+                                   preview_rows=[], preview_errors=upload_errs,
+                                   form_data={'source_type': source_type,
+                                              'external_reference': ext_ref or '',
+                                              'note': note or ''})
+
+        run = WmsReceivingRun(
+            code=_next_recv_code(), created_by_user_id=current_user.id,
+            status='DRAFT', source_type=source_type,
+            external_reference=ext_ref, note=note,
+        )
+        db.session.add(run)
+        db.session.flush()
+        wh_id = wh_default.id if wh_default else None
+        for r in all_rows:
+            ln = WmsReceivingLine(
+                run_id=run.id, sku=r['sku'], product_name=r.get('product_name'),
+                qty_received=int(r['qty_received']), warehouse_code=r.get('warehouse', 'MAIN'),
+                location=r['location'], box_number=r.get('box_number'),
+                location_code=(r.get('location') + ('-' + r.get('box_number') if r.get('box_number') else '')).upper(),
+                stock_bucket=r['stock_bucket'], status='OPEN', note=r.get('note'),
+            )
+            db.session.add(ln)
+        db.session.commit()
+        log_audit('wms_receiving_create', message=f'run_id={run.id} code={run.code} lines={len(all_rows)}', entity_type='WmsReceivingRun', entity_id=run.id)
+        print(f"[RCV] run created id={run.id} code={run.code} lines={len(all_rows)}")
+        for r in all_rows:
+            print(f"[RCV] line sku={r['sku']} qty={r['qty_received']} location={r['location']} box={r.get('box_number')} bucket={r['stock_bucket']}")
+        flash(f'Recepción {run.code} creada con {len(all_rows)} línea(s).', 'success')
+        return redirect(url_for('wms_receiving_detail', run_id=run.id))
+
+    return render_template('wms_receiving_new.html', wh=wh_default,
+                           source_types=WMS_RECV_SOURCE_TYPES,
+                           buckets=WMS_STOCK_BUCKETS,
+                           preview_rows=[], preview_errors=[],
+                           form_data={'source_type': 'PURCHASE',
+                                      'external_reference': '', 'note': ''})
+
+
+@app.route('/wms/receiving/<int:run_id>')
+@login_required
+@require_permission('wms:receive_manage')
+def wms_receiving_detail(run_id):
+    run = WmsReceivingRun.query.get_or_404(run_id)
+    lines = list(run.lines.order_by(WmsReceivingLine.id.asc()))
+    main_units = sum(int(ln.qty_received or 0) for ln in lines if ln.stock_bucket == 'MAIN')
+    web_units = sum(int(ln.qty_received or 0) for ln in lines if ln.stock_bucket == 'WEB')
+    return render_template('wms_receiving_detail.html', run=run, lines=lines,
+                           main_units=main_units, web_units=web_units,
+                           total_units=main_units + web_units)
+
+
+@app.route('/wms/receiving/<int:run_id>/confirm', methods=['POST'])
+@login_required
+@require_permission('wms:receive_manage')
+def wms_receiving_confirm(run_id):
+    ok, err = confirm_receiving_run(run_id, current_user.id)
+    if ok:
+        flash('Recepción confirmada y stock actualizado.', 'success')
+    else:
+        flash(err or 'Error al confirmar.', 'danger')
+    return redirect(url_for('wms_receiving_detail', run_id=run_id))
+
+
+@app.route('/wms/receiving/<int:run_id>/cancel', methods=['POST'])
+@login_required
+@require_permission('wms:receive_manage')
+def wms_receiving_cancel(run_id):
+    run = WmsReceivingRun.query.get_or_404(run_id)
+    if run.status not in ('DRAFT', 'IN_PROGRESS'):
+        flash('No se puede cancelar en este estado.', 'warning')
+        return redirect(url_for('wms_receiving_detail', run_id=run_id))
+    run.status = 'CANCELLED'
+    for ln in run.lines:
+        if ln.status == 'OPEN':
+            ln.status = 'CANCELLED'
+    db.session.commit()
+    log_audit('wms_receiving_cancel', message=f'run_id={run.id}', entity_type='WmsReceivingRun', entity_id=run.id)
+    flash('Recepción cancelada.', 'info')
+    return redirect(url_for('wms_receiving_detail', run_id=run_id))
+
+
+@app.route('/wms/receiving/<int:run_id>/export')
+@login_required
+@require_permission('wms:receive_manage')
+def wms_receiving_export(run_id):
+    import io
+    run = WmsReceivingRun.query.get_or_404(run_id)
+    lines = list(run.lines.order_by(WmsReceivingLine.id.asc()))
+    rows = [{
+        'SKU': ln.sku, 'Producto': ln.product_name or '',
+        'Qty recibida': ln.qty_received,
+        'Ubicación': ln.location or '', 'Caja': ln.box_number or '',
+        'Código ubicación': ln.location_code or '',
+        'Bucket': ln.stock_bucket, 'Estado': ln.status,
+    } for ln in lines]
+    df = pd.DataFrame(rows)
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine='openpyxl') as w:
+        df.to_excel(w, index=False, sheet_name='Recepción')
+    buf.seek(0)
+    return send_file(buf, as_attachment=True,
+                     download_name=f'recepcion_{run.code}.xlsx',
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
 def init_database():
