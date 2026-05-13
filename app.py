@@ -54,6 +54,7 @@ ROLE_PERMISSIONS = {
         'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view',
         'planner:view', 'planner:operate', 'planner:manage', 'planner:approve', 'planner:assign_picker',
         'wms:view', 'wms:moves', 'wms:pick', 'wms:kpis', 'wms:count_manage', 'wms:count_execute',
+        'wms:replen_manage', 'wms:replen_execute',
         'users:manage', 'roles:manage'
     ],
     'Management': [
@@ -71,16 +72,18 @@ ROLE_PERMISSIONS = {
         'dashboard:view', 'stock_store:upload', 'stock_cd:upload', 'stock:query', 'stock:upload',
         'distribution:export', 'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view',
         'planner:view', 'planner:operate', 'planner:assign_picker', 'wms:view', 'wms:moves', 'wms:kpis',
-        'wms:count_manage', 'wms:count_execute'
+        'wms:count_manage', 'wms:count_execute',
+        'wms:replen_manage', 'wms:replen_execute'
     ],
     'WarehouseManager': [
         'dashboard:view', 'stock:query', 'stock_store:upload', 'stock_cd:upload', 'stock:upload',
         'planner:view', 'planner:operate', 'planner:assign_picker', 'planner:approve',
         'wms:view', 'wms:moves', 'wms:kpis', 'alerts:view', 'store_health:view',
-        'wms:count_manage', 'wms:count_execute'
+        'wms:count_manage', 'wms:count_execute',
+        'wms:replen_manage', 'wms:replen_execute'
     ],
     'WarehouseOperator': [
-        'wms:view', 'wms:pick', 'wms:count_execute'
+        'wms:view', 'wms:pick', 'wms:count_execute', 'wms:replen_execute'
     ],
     'Viewer': [
         'dashboard:view', 'stock:query', 'alerts:view'
@@ -97,7 +100,7 @@ PERMISSION_MODULES = {
     'Rebalanceo': ['rebalancing:view', 'rebalancing:run'],
     'Inventario lento': ['slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view'],
     'Planner': ['planner:view', 'planner:operate', 'planner:manage', 'planner:approve', 'planner:assign_picker'],
-    'WMS': ['wms:view', 'wms:moves', 'wms:pick', 'wms:kpis', 'wms:count_manage', 'wms:count_execute'],
+    'WMS': ['wms:view', 'wms:moves', 'wms:pick', 'wms:kpis', 'wms:count_manage', 'wms:count_execute', 'wms:replen_manage', 'wms:replen_execute'],
     'Administración': ['admin:users', 'admin:reset', 'audit:view', 'users:manage', 'roles:manage'],
 }
 MIN_WEEKS = 3  # mínimo de semanas de historia requeridas por SKU–Tienda
@@ -1005,6 +1008,8 @@ class WmsLocation(db.Model):
     rack = db.Column(db.String(50), nullable=True)
     level = db.Column(db.String(50), nullable=True)
     pallet_position = db.Column(db.String(50), nullable=True)
+    min_units = db.Column(db.Integer, nullable=True)
+    target_units = db.Column(db.Integer, nullable=True)
 
     warehouse = db.relationship('WmsWarehouse', backref='locations')
 
@@ -1344,6 +1349,60 @@ class WmsInventoryAdjustmentLog(db.Model):
     product = db.relationship('Product')
     location = db.relationship('WmsLocation')
     approved_by = db.relationship('User')
+
+
+# ------------------ Internal Replenishment (Reabastecimiento interno) ------------------
+WMS_REPLEN_RUN_STATUSES = ['DRAFT', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'CLOSED']
+WMS_REPLEN_TASK_STATUSES = ['OPEN', 'IN_PROGRESS', 'DONE', 'CANCELLED']
+
+
+class WmsReplenishmentRun(db.Model):
+    __tablename__ = 'wms_replenishment_run'
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(40), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    assigned_to_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='DRAFT')
+    stock_bucket = db.Column(db.String(10), nullable=False, default='MAIN')
+    note = db.Column(db.Text, nullable=True)
+    closed_at = db.Column(db.DateTime, nullable=True)
+
+    created_by = db.relationship('User', foreign_keys=[created_by_user_id])
+    assigned_to = db.relationship('User', foreign_keys=[assigned_to_user_id])
+    tasks = db.relationship('WmsReplenishmentTask', backref='run', lazy='dynamic',
+                            cascade='all, delete-orphan')
+
+
+class WmsReplenishmentTask(db.Model):
+    __tablename__ = 'wms_replenishment_task'
+    id = db.Column(db.Integer, primary_key=True)
+    run_id = db.Column(db.Integer, db.ForeignKey('wms_replenishment_run.id'), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    sku = db.Column(db.String(64), nullable=False, index=True)
+    product_name = db.Column(db.String(255), nullable=True)
+    stock_bucket = db.Column(db.String(10), nullable=False, default='MAIN')
+    source_location_id = db.Column(db.Integer, db.ForeignKey('wms_location.id'), nullable=False)
+    source_location = db.Column(db.String(100), nullable=True)
+    source_box_number = db.Column(db.String(50), nullable=True)
+    source_location_code = db.Column(db.String(100), nullable=True)
+    dest_location_id = db.Column(db.Integer, db.ForeignKey('wms_location.id'), nullable=False)
+    dest_location = db.Column(db.String(100), nullable=True)
+    dest_box_number = db.Column(db.String(50), nullable=True)
+    dest_location_code = db.Column(db.String(100), nullable=True)
+    qty_suggested = db.Column(db.Integer, nullable=False, default=0)
+    qty_confirmed = db.Column(db.Integer, nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='OPEN')
+    is_urgent = db.Column(db.Boolean, nullable=False, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    completed_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    note = db.Column(db.Text, nullable=True)
+
+    product = db.relationship('Product')
+    source_loc = db.relationship('WmsLocation', foreign_keys=[source_location_id])
+    dest_loc = db.relationship('WmsLocation', foreign_keys=[dest_location_id])
+    completed_by = db.relationship('User', foreign_keys=[completed_by_user_id])
 
 
 # ------------------ Operational Stock Helpers ------------------
@@ -1812,6 +1871,8 @@ def _ensure_wms_defaults(session=None):
         _loc_new_migrations = {
             'location': "ALTER TABLE wms_location ADD COLUMN location VARCHAR(100)",
             'box_number': "ALTER TABLE wms_location ADD COLUMN box_number VARCHAR(50)",
+            'min_units': "ALTER TABLE wms_location ADD COLUMN min_units INTEGER",
+            'target_units': "ALTER TABLE wms_location ADD COLUMN target_units INTEGER",
         }
         loc_new_added = []
         for col_name, sql_stmt in _loc_new_migrations.items():
@@ -23638,6 +23699,644 @@ def seed_rbac():
     except Exception as e:
         db.session.rollback()
         print(f"[RBAC] Seed warning: {e}")
+
+
+# ====================================================================
+# ============ Internal Replenishment (Reabastecimiento) =============
+# ====================================================================
+
+def _replen_loc_label(loc):
+    """Compact display label for a WmsLocation."""
+    if not loc:
+        return ''
+    if loc.location and loc.box_number:
+        return f"{loc.location} | Caja {loc.box_number}"
+    return loc.location_code or ''
+
+
+def generate_replenishment_suggestions(stock_bucket=None, location_filter=None,
+                                       sku_filter=None, only_urgent=False):
+    """
+    Scan PICK locations and produce internal replenishment suggestions
+    BULK→PICK (or any non-PICK→PICK) within the same stock bucket.
+
+    Returns a list of dicts (not persisted).
+    """
+    suggestions = []
+    buckets_to_scan = [stock_bucket] if stock_bucket else list(WMS_STOCK_BUCKETS)
+
+    pick_q = WmsLocation.query.filter(
+        WmsLocation.is_active == True,
+        WmsLocation.location_type == 'PICK',
+        WmsLocation.min_units.isnot(None),
+        WmsLocation.target_units.isnot(None),
+    )
+    if location_filter:
+        like = f"%{location_filter.strip()}%"
+        pick_q = pick_q.filter(db.or_(
+            WmsLocation.location_code.ilike(like),
+            WmsLocation.location.ilike(like),
+        ))
+    pick_locs = pick_q.all()
+
+    for pick_loc in pick_locs:
+        min_u = int(pick_loc.min_units or 0)
+        tgt_u = int(pick_loc.target_units or 0)
+        if min_u <= 0 or tgt_u <= min_u:
+            continue
+
+        for bucket in buckets_to_scan:
+            inv_rows = (db.session.query(WmsInventory, Product)
+                        .join(Product, Product.id == WmsInventory.product_id)
+                        .filter(WmsInventory.location_id == pick_loc.id,
+                                WmsInventory.stock_bucket == bucket)
+                        .all())
+
+            for inv, prod in inv_rows:
+                if sku_filter and sku_filter.strip().lower() not in (prod.sku or '').lower():
+                    continue
+                available = int(inv.on_hand_units or 0) - int(inv.allocated_units or 0)
+                if available >= min_u:
+                    continue
+
+                needed = tgt_u - available
+                if needed <= 0:
+                    continue
+                is_urgent = int(inv.allocated_units or 0) > 0
+                if only_urgent and not is_urgent:
+                    continue
+
+                src_q = (db.session.query(WmsInventory, WmsLocation)
+                         .join(WmsLocation, WmsLocation.id == WmsInventory.location_id)
+                         .filter(WmsInventory.product_id == prod.id,
+                                 WmsInventory.stock_bucket == bucket,
+                                 WmsLocation.is_active == True,
+                                 WmsLocation.id != pick_loc.id,
+                                 WmsLocation.warehouse_id == pick_loc.warehouse_id,
+                                 WmsLocation.location_type != 'PICK')
+                         .all())
+
+                src_rows = sorted(
+                    src_q,
+                    key=lambda t: (
+                        0 if (t[1].location_type or '').upper() == 'BULK' else 1,
+                        -(int(t[0].on_hand_units or 0) - int(t[0].allocated_units or 0)),
+                    )
+                )
+
+                remaining = needed
+                for src_inv, src_loc in src_rows:
+                    if remaining <= 0:
+                        break
+                    src_avail = int(src_inv.on_hand_units or 0) - int(src_inv.allocated_units or 0)
+                    if src_avail <= 0:
+                        continue
+                    take = min(src_avail, remaining)
+                    if take <= 0:
+                        continue
+                    suggestions.append({
+                        'product_id': prod.id,
+                        'sku': prod.sku,
+                        'product_name': prod.name or prod.sku,
+                        'stock_bucket': bucket,
+                        'source_location_id': src_loc.id,
+                        'source_location': src_loc.location,
+                        'source_box_number': src_loc.box_number,
+                        'source_location_code': src_loc.location_code,
+                        'source_location_label': _replen_loc_label(src_loc),
+                        'source_location_type': src_loc.location_type or 'BULK',
+                        'source_available': src_avail,
+                        'dest_location_id': pick_loc.id,
+                        'dest_location': pick_loc.location,
+                        'dest_box_number': pick_loc.box_number,
+                        'dest_location_code': pick_loc.location_code,
+                        'dest_location_label': _replen_loc_label(pick_loc),
+                        'dest_available': available,
+                        'min_units': min_u,
+                        'target_units': tgt_u,
+                        'qty_suggested': take,
+                        'is_urgent': is_urgent,
+                    })
+                    print(f"[REPL] suggestion sku={prod.sku} bucket={bucket} "
+                          f"source={src_loc.location_code} dest={pick_loc.location_code} qty={take}"
+                          + (" URGENT" if is_urgent else ""))
+                    remaining -= take
+
+                if remaining > 0 and needed > 0 and not src_rows:
+                    print(f"[REPL] blocked because source stock insufficient sku={prod.sku} "
+                          f"bucket={bucket} dest={pick_loc.location_code} needed={needed}")
+
+    suggestions.sort(key=lambda s: (0 if s['is_urgent'] else 1, s['sku']))
+    return suggestions
+
+
+def _next_replen_code():
+    last = WmsReplenishmentRun.query.order_by(WmsReplenishmentRun.id.desc()).first()
+    n = (last.id + 1) if last else 1
+    return f"REPL-{datetime.utcnow().strftime('%Y%m%d')}-{n:04d}"
+
+
+def _create_replen_run(suggestions, bucket, user_id, note=None):
+    """Persist a replenishment run + tasks. Returns the run."""
+    run = WmsReplenishmentRun(
+        code=_next_replen_code(),
+        created_by_user_id=user_id,
+        status='DRAFT',
+        stock_bucket=bucket,
+        note=note,
+    )
+    db.session.add(run)
+    db.session.flush()
+
+    for s in suggestions:
+        if int(s.get('qty_suggested') or 0) <= 0:
+            continue
+        t = WmsReplenishmentTask(
+            run_id=run.id,
+            product_id=s['product_id'],
+            sku=s['sku'],
+            product_name=s.get('product_name'),
+            stock_bucket=s['stock_bucket'],
+            source_location_id=s['source_location_id'],
+            source_location=s.get('source_location'),
+            source_box_number=s.get('source_box_number'),
+            source_location_code=s.get('source_location_code'),
+            dest_location_id=s['dest_location_id'],
+            dest_location=s.get('dest_location'),
+            dest_box_number=s.get('dest_box_number'),
+            dest_location_code=s.get('dest_location_code'),
+            qty_suggested=int(s['qty_suggested']),
+            is_urgent=bool(s.get('is_urgent')),
+            status='OPEN',
+        )
+        db.session.add(t)
+
+    db.session.commit()
+    print(f"[REPL] run created id={run.id} code={run.code} tasks={run.tasks.count()} bucket={bucket}")
+    return run
+
+
+def _apply_replen_task(task, qty_confirmed, user_id):
+    """
+    Apply a confirmed replenishment task: decrement source, increment dest,
+    write WmsMoveRun + WmsMoveLine + WmsInventoryEvent.
+    Atomic: single commit at end, full rollback on any error.
+    Returns (ok, error_msg).
+    """
+    qty = int(qty_confirmed or 0)
+    if qty <= 0:
+        return False, 'Cantidad debe ser > 0.'
+    if qty > int(task.qty_suggested or 0):
+        return False, f'Cantidad excede la sugerida ({task.qty_suggested}).'
+
+    try:
+        # Re-read task in this transaction to detect concurrent confirmation
+        live_task = (db.session.query(WmsReplenishmentTask)
+                     .filter(WmsReplenishmentTask.id == task.id)
+                     .with_for_update(of=WmsReplenishmentTask, nowait=False)
+                     .first()) if db.engine.dialect.name != 'sqlite' else \
+                    db.session.get(WmsReplenishmentTask, task.id)
+        if not live_task:
+            return False, 'Tarea no encontrada.'
+        if live_task.status == 'DONE':
+            return False, 'Tarea ya completada.'
+        if live_task.status == 'CANCELLED':
+            return False, 'Tarea cancelada.'
+
+        src_inv = (WmsInventory.query
+                   .filter_by(location_id=live_task.source_location_id,
+                              product_id=live_task.product_id,
+                              stock_bucket=live_task.stock_bucket)
+                   .first())
+        if not src_inv:
+            return False, 'No hay inventario en origen para este SKU/bucket.'
+        src_avail = int(src_inv.on_hand_units or 0) - int(src_inv.allocated_units or 0)
+        if src_avail < qty:
+            print(f"[REPL] blocked because source stock insufficient sku={live_task.sku} "
+                  f"available={src_avail} requested={qty}")
+            return False, f'Origen sólo tiene {src_avail} disponibles.'
+
+        dest_loc = db.session.get(WmsLocation, live_task.dest_location_id)
+        src_loc = db.session.get(WmsLocation, live_task.source_location_id)
+        if not dest_loc:
+            return False, 'Ubicación destino inexistente.'
+        if not src_loc:
+            return False, 'Ubicación origen inexistente.'
+        if src_loc.warehouse_id != dest_loc.warehouse_id:
+            return False, 'Origen y destino están en almacenes distintos.'
+
+        dest_inv = (WmsInventory.query
+                    .filter_by(location_id=live_task.dest_location_id,
+                               product_id=live_task.product_id,
+                               stock_bucket=live_task.stock_bucket)
+                    .first())
+        if not dest_inv:
+            dest_inv = WmsInventory(
+                warehouse_id=dest_loc.warehouse_id,
+                location_id=dest_loc.id,
+                product_id=live_task.product_id,
+                stock_bucket=live_task.stock_bucket,
+                on_hand_units=0,
+                allocated_units=0,
+            )
+            db.session.add(dest_inv)
+            db.session.flush()
+
+        if dest_loc.target_units is not None:
+            new_dest_total = int(dest_inv.on_hand_units or 0) + qty
+            if new_dest_total > int(dest_loc.target_units):
+                return False, f'Destino se pasaría de target ({dest_loc.target_units}).'
+
+        src_inv.on_hand_units = int(src_inv.on_hand_units or 0) - qty
+        dest_inv.on_hand_units = int(dest_inv.on_hand_units or 0) + qty
+
+        move_run = WmsMoveRun(
+            created_by_user_id=user_id,
+            note=f"REPL run #{live_task.run_id} task #{live_task.id} sku={live_task.sku} bucket={live_task.stock_bucket}",
+            status='POSTED',
+            total_lines=1,
+            total_units=qty,
+        )
+        db.session.add(move_run)
+        db.session.flush()
+        db.session.add(WmsMoveLine(
+            move_run_id=move_run.id,
+            from_location_id=live_task.source_location_id,
+            to_location_id=live_task.dest_location_id,
+            product_id=live_task.product_id,
+            units=qty,
+            pallets=0,
+            reason=f"REPL #{live_task.run_id}/{live_task.id}",
+        ))
+        db.session.add(WmsInventoryEvent(
+            event_type='REPLEN_OUT', ref_type='replen_task', ref_id=str(live_task.id),
+            warehouse_id=src_loc.warehouse_id, location_id=live_task.source_location_id,
+            product_id=live_task.product_id, delta_units=-qty,
+            note=f"REPL run #{live_task.run_id} bucket={live_task.stock_bucket}",
+        ))
+        db.session.add(WmsInventoryEvent(
+            event_type='REPLEN_IN', ref_type='replen_task', ref_id=str(live_task.id),
+            warehouse_id=dest_loc.warehouse_id, location_id=live_task.dest_location_id,
+            product_id=live_task.product_id, delta_units=qty,
+            note=f"REPL run #{live_task.run_id} bucket={live_task.stock_bucket}",
+        ))
+
+        live_task.qty_confirmed = qty
+        live_task.status = 'DONE'
+        live_task.completed_at = datetime.utcnow()
+        live_task.completed_by_user_id = user_id
+
+        run = db.session.get(WmsReplenishmentRun, live_task.run_id)
+        if run and run.status in ('DRAFT', 'ASSIGNED'):
+            run.status = 'IN_PROGRESS'
+        if run:
+            # Count remaining open tasks INCLUDING the one we just marked DONE in session
+            open_left = (db.session.query(WmsReplenishmentTask)
+                         .filter(WmsReplenishmentTask.run_id == run.id,
+                                 WmsReplenishmentTask.status.in_(['OPEN', 'IN_PROGRESS']),
+                                 WmsReplenishmentTask.id != live_task.id)
+                         .count())
+            if open_left == 0:
+                run.status = 'COMPLETED'
+
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        print(f"[REPL] ERROR confirming task #{task.id}: {e}")
+        return False, f'Error interno: {e}'
+
+    print(f"[REPL] task confirmed sku={task.sku} qty={qty} "
+          f"source={task.source_location_code} dest={task.dest_location_code}")
+    try:
+        log_audit('wms_replen_confirm', status='success',
+                  message=f"Replen task #{task.id} sku={task.sku} qty={qty}",
+                  entity_type='replen_task', entity_id=task.id,
+                  metadata={'run_id': task.run_id, 'sku': task.sku, 'qty': qty,
+                            'bucket': task.stock_bucket})
+    except Exception:
+        pass
+    return True, None
+
+
+# ---------- Desktop routes ----------
+@app.route('/wms/replenishment')
+@login_required
+@require_permission('wms:replen_manage')
+def wms_replenishment_list():
+    runs = WmsReplenishmentRun.query.order_by(WmsReplenishmentRun.id.desc()).limit(200).all()
+    return render_template('wms_replenishment.html', runs=runs,
+                           statuses=WMS_REPLEN_RUN_STATUSES)
+
+
+@app.route('/wms/replenishment/new', methods=['GET', 'POST'])
+@login_required
+@require_permission('wms:replen_manage')
+def wms_replenishment_new():
+    suggestions = []
+    selected_ids = set()
+    bucket = request.values.get('stock_bucket', '').strip().upper() or None
+    loc_filter = request.values.get('location_filter', '').strip() or None
+    sku_filter = request.values.get('sku_filter', '').strip() or None
+    only_urgent = request.values.get('only_urgent') in ('1', 'on', 'true')
+
+    if request.method == 'POST' and request.form.get('action') == 'create_run':
+        items = []
+        for key, val in request.form.items():
+            if not key.startswith('sel_'):
+                continue
+            try:
+                idx = int(key[4:])
+            except ValueError:
+                continue
+            try:
+                qty = int(request.form.get(f'qty_{idx}') or 0)
+            except (ValueError, TypeError):
+                qty = 0
+            if qty <= 0:
+                continue
+            row_bucket = (request.form.get(f'bucket_{idx}') or '').upper()
+            if row_bucket not in WMS_STOCK_BUCKETS:
+                continue
+            try:
+                items.append({
+                    'product_id': int(request.form.get(f'pid_{idx}')),
+                    'sku': request.form.get(f'sku_{idx}', ''),
+                    'product_name': request.form.get(f'pname_{idx}', ''),
+                    'stock_bucket': row_bucket,
+                    'source_location_id': int(request.form.get(f'srcid_{idx}')),
+                    'source_location': request.form.get(f'srcloc_{idx}', ''),
+                    'source_box_number': request.form.get(f'srcbox_{idx}', '') or None,
+                    'source_location_code': request.form.get(f'srccode_{idx}', ''),
+                    'dest_location_id': int(request.form.get(f'dstid_{idx}')),
+                    'dest_location': request.form.get(f'dstloc_{idx}', ''),
+                    'dest_box_number': request.form.get(f'dstbox_{idx}', '') or None,
+                    'dest_location_code': request.form.get(f'dstcode_{idx}', ''),
+                    'qty_suggested': qty,
+                    'is_urgent': request.form.get(f'urg_{idx}') in ('1', 'on', 'true'),
+                })
+            except (ValueError, TypeError):
+                continue
+        if not items:
+            flash('No se seleccionaron tareas.', 'warning')
+            return redirect(url_for('wms_replenishment_new'))
+        # Group by bucket to enforce never-mix rule: one run per bucket
+        by_bucket = {}
+        for it in items:
+            by_bucket.setdefault(it['stock_bucket'], []).append(it)
+        note_txt = request.form.get('note', '').strip() or None
+        created = []
+        for buck, items_b in by_bucket.items():
+            run = _create_replen_run(items_b, buck, current_user.id, note=note_txt)
+            log_audit('wms_replen_run_create', status='success',
+                      message=f"Replen run {run.code} con {len(items_b)} tareas",
+                      entity_type='replen_run', entity_id=run.id,
+                      metadata={'bucket': buck, 'tasks': len(items_b)})
+            created.append(run)
+        if len(created) == 1:
+            r = created[0]
+            flash(f'Run {r.code} creado con {len(by_bucket[r.stock_bucket])} tareas.', 'success')
+            return redirect(url_for('wms_replenishment_detail', run_id=r.id))
+        flash(f'{len(created)} runs creados (uno por bucket): ' +
+              ', '.join(r.code for r in created), 'success')
+        return redirect(url_for('wms_replenishment_list'))
+
+    do_generate = request.method == 'POST' and request.form.get('action') == 'generate'
+    if do_generate or request.args.get('generate') == '1':
+        suggestions = generate_replenishment_suggestions(
+            stock_bucket=bucket, location_filter=loc_filter,
+            sku_filter=sku_filter, only_urgent=only_urgent)
+        selected_ids = set(range(len(suggestions)))
+
+    return render_template('wms_replenishment_new.html',
+                           suggestions=suggestions,
+                           selected_ids=selected_ids,
+                           buckets=WMS_STOCK_BUCKETS,
+                           bucket=bucket or '',
+                           location_filter=loc_filter or '',
+                           sku_filter=sku_filter or '',
+                           only_urgent=only_urgent)
+
+
+@app.route('/wms/replenishment/<int:run_id>')
+@login_required
+@require_permission('wms:replen_manage')
+def wms_replenishment_detail(run_id):
+    run = db.session.get(WmsReplenishmentRun, run_id)
+    if not run:
+        flash('Run no encontrado.', 'danger')
+        return redirect(url_for('wms_replenishment_list'))
+    tasks = run.tasks.order_by(WmsReplenishmentTask.is_urgent.desc(),
+                               WmsReplenishmentTask.sku).all()
+    operators = _users_with_permission('wms:replen_execute')
+    return render_template('wms_replenishment_detail.html',
+                           run=run, tasks=tasks, operators=operators,
+                           statuses=WMS_REPLEN_RUN_STATUSES)
+
+
+@app.route('/wms/replenishment/<int:run_id>/assign', methods=['POST'])
+@login_required
+@require_permission('wms:replen_manage')
+def wms_replenishment_assign(run_id):
+    run = db.session.get(WmsReplenishmentRun, run_id)
+    if not run:
+        flash('Run no encontrado.', 'danger')
+        return redirect(url_for('wms_replenishment_list'))
+    if run.status not in ('DRAFT', 'ASSIGNED'):
+        flash(f'Run en estado {run.status}: no se puede reasignar.', 'warning')
+        return redirect(url_for('wms_replenishment_detail', run_id=run_id))
+    try:
+        uid = int(request.form.get('assigned_to_user_id') or 0) or None
+    except ValueError:
+        uid = None
+    run.assigned_to_user_id = uid
+    run.status = 'ASSIGNED' if uid else 'DRAFT'
+    db.session.commit()
+    log_audit('wms_replen_assign', status='success',
+              message=f"Replen run {run.code} assigned to user_id={uid}",
+              entity_type='replen_run', entity_id=run.id)
+    flash('Asignación actualizada.', 'success')
+    return redirect(url_for('wms_replenishment_detail', run_id=run_id))
+
+
+@app.route('/wms/replenishment/<int:run_id>/task/<int:task_id>/confirm', methods=['POST'])
+@login_required
+def wms_replenishment_confirm_task(run_id, task_id):
+    if not (current_user.has_permission('wms:replen_manage') or
+            current_user.has_permission('wms:replen_execute')):
+        flash('Sin permiso.', 'danger')
+        return redirect(url_for('wms_replenishment_list'))
+    task = db.session.get(WmsReplenishmentTask, task_id)
+    if not task or task.run_id != run_id:
+        flash('Tarea no encontrada.', 'danger')
+        return redirect(url_for('wms_replenishment_detail', run_id=run_id))
+    run = db.session.get(WmsReplenishmentRun, run_id)
+    if (not current_user.has_permission('wms:replen_manage') and
+            run and run.assigned_to_user_id != current_user.id):
+        flash('Run no asignado a ti.', 'warning')
+        return redirect(url_for('wms_replenishment_detail', run_id=run_id))
+    try:
+        qty = int(request.form.get('qty_confirmed') or 0)
+    except ValueError:
+        qty = 0
+    ok, err = _apply_replen_task(task, qty, current_user.id)
+    if ok:
+        flash(f'Tarea {task.sku} confirmada por {qty} uds.', 'success')
+    else:
+        flash(err or 'Error al confirmar tarea.', 'danger')
+    return redirect(url_for('wms_replenishment_detail', run_id=run_id))
+
+
+@app.route('/wms/replenishment/<int:run_id>/task/<int:task_id>/cancel', methods=['POST'])
+@login_required
+@require_permission('wms:replen_manage')
+def wms_replenishment_cancel_task(run_id, task_id):
+    task = db.session.get(WmsReplenishmentTask, task_id)
+    if not task or task.run_id != run_id:
+        flash('Tarea no encontrada.', 'danger')
+        return redirect(url_for('wms_replenishment_detail', run_id=run_id))
+    if task.status == 'DONE':
+        flash('No se puede cancelar una tarea ya completada.', 'warning')
+        return redirect(url_for('wms_replenishment_detail', run_id=run_id))
+    task.status = 'CANCELLED'
+    task.note = (task.note or '') + ' [cancelada]'
+    db.session.commit()
+    flash('Tarea cancelada.', 'info')
+    return redirect(url_for('wms_replenishment_detail', run_id=run_id))
+
+
+@app.route('/wms/replenishment/<int:run_id>/close', methods=['POST'])
+@login_required
+@require_permission('wms:replen_manage')
+def wms_replenishment_close(run_id):
+    run = db.session.get(WmsReplenishmentRun, run_id)
+    if not run:
+        flash('Run no encontrado.', 'danger')
+        return redirect(url_for('wms_replenishment_list'))
+    run.status = 'CLOSED'
+    run.closed_at = datetime.utcnow()
+    db.session.commit()
+    log_audit('wms_replen_close', status='success',
+              message=f"Replen run {run.code} closed",
+              entity_type='replen_run', entity_id=run.id)
+    flash('Run cerrado.', 'success')
+    return redirect(url_for('wms_replenishment_detail', run_id=run_id))
+
+
+# ---------- Thresholds page ----------
+@app.route('/wms/locations/thresholds', methods=['GET', 'POST'])
+@login_required
+@require_permission('wms:replen_manage')
+def wms_location_thresholds():
+    if request.method == 'POST':
+        updated = 0
+        for key, val in request.form.items():
+            if not key.startswith('min_'):
+                continue
+            try:
+                loc_id = int(key[4:])
+            except ValueError:
+                continue
+            loc = db.session.get(WmsLocation, loc_id)
+            if not loc:
+                continue
+            min_raw = (request.form.get(f'min_{loc_id}') or '').strip()
+            tgt_raw = (request.form.get(f'tgt_{loc_id}') or '').strip()
+            try:
+                min_v = int(min_raw) if min_raw != '' else None
+                tgt_v = int(tgt_raw) if tgt_raw != '' else None
+            except ValueError:
+                continue
+            if min_v is not None and tgt_v is not None and tgt_v <= min_v:
+                continue
+            if (loc.min_units or None) != min_v or (loc.target_units or None) != tgt_v:
+                loc.min_units = min_v
+                loc.target_units = tgt_v
+                updated += 1
+        if updated:
+            db.session.commit()
+            log_audit('wms_replen_thresholds', status='success',
+                      message=f"Updated thresholds on {updated} locations")
+        flash(f'{updated} ubicaciones actualizadas.', 'success' if updated else 'info')
+        return redirect(url_for('wms_location_thresholds'))
+
+    q = (WmsLocation.query
+         .filter(WmsLocation.is_active == True,
+                 WmsLocation.location_type == 'PICK')
+         .order_by(WmsLocation.location_code))
+    locs = q.all()
+    return render_template('wms_location_thresholds.html', locations=locs)
+
+
+# ---------- Mobile routes ----------
+@app.route('/wms/mobile/replenishment')
+@login_required
+@require_permission('wms:replen_execute')
+def wms_mobile_replenishment_list():
+    runs = (WmsReplenishmentRun.query
+            .filter(WmsReplenishmentRun.assigned_to_user_id == current_user.id,
+                    WmsReplenishmentRun.status.in_(['ASSIGNED', 'IN_PROGRESS']))
+            .order_by(WmsReplenishmentRun.id.desc()).all())
+    return render_template('wms_mobile_replenishment.html', runs=runs)
+
+
+@app.route('/wms/mobile/replenishment/<int:run_id>')
+@login_required
+@require_permission('wms:replen_execute')
+def wms_mobile_replenishment_run(run_id):
+    run = db.session.get(WmsReplenishmentRun, run_id)
+    if not run:
+        flash('Run no encontrado.', 'danger')
+        return redirect(url_for('wms_mobile_replenishment_list'))
+    if run.assigned_to_user_id != current_user.id and not current_user.has_permission('wms:replen_manage'):
+        flash('Run no asignado a ti.', 'warning')
+        return redirect(url_for('wms_mobile_replenishment_list'))
+    tasks_open = (run.tasks.filter(WmsReplenishmentTask.status.in_(['OPEN', 'IN_PROGRESS']))
+                  .order_by(WmsReplenishmentTask.is_urgent.desc(),
+                            WmsReplenishmentTask.sku).all())
+    tasks_done = (run.tasks.filter(WmsReplenishmentTask.status == 'DONE')
+                  .order_by(WmsReplenishmentTask.completed_at.desc()).all())
+    current = tasks_open[0] if tasks_open else None
+    return render_template('wms_mobile_replen_run.html',
+                           run=run, current=current,
+                           open_count=len(tasks_open), done_count=len(tasks_done))
+
+
+@app.route('/wms/mobile/replenishment/<int:run_id>/task/<int:task_id>/confirm', methods=['POST'])
+@login_required
+@require_permission('wms:replen_execute')
+def wms_mobile_replenishment_confirm(run_id, task_id):
+    task = db.session.get(WmsReplenishmentTask, task_id)
+    if not task or task.run_id != run_id:
+        flash('Tarea no encontrada.', 'danger')
+        return redirect(url_for('wms_mobile_replenishment_list'))
+    run = db.session.get(WmsReplenishmentRun, run_id)
+    if run and run.assigned_to_user_id != current_user.id and not current_user.has_permission('wms:replen_manage'):
+        flash('Run no asignado a ti.', 'warning')
+        return redirect(url_for('wms_mobile_replenishment_list'))
+
+    src_scan = (request.form.get('src_scan') or '').strip()
+    dst_scan = (request.form.get('dst_scan') or '').strip()
+    if src_scan and src_scan.upper() not in (
+        (task.source_location_code or '').upper(),
+        (task.source_location or '').upper()):
+        flash(f'Origen escaneado no coincide ({src_scan}).', 'danger')
+        return redirect(url_for('wms_mobile_replenishment_run', run_id=run_id))
+    if dst_scan and dst_scan.upper() not in (
+        (task.dest_location_code or '').upper(),
+        (task.dest_location or '').upper()):
+        flash(f'Destino escaneado no coincide ({dst_scan}).', 'danger')
+        return redirect(url_for('wms_mobile_replenishment_run', run_id=run_id))
+
+    try:
+        qty = int(request.form.get('qty_confirmed') or 0)
+    except ValueError:
+        qty = 0
+    ok, err = _apply_replen_task(task, qty, current_user.id)
+    if ok:
+        flash(f'OK: {task.sku} {qty} uds.', 'success')
+    else:
+        flash(err or 'Error al confirmar.', 'danger')
+    return redirect(url_for('wms_mobile_replenishment_run', run_id=run_id))
 
 
 def init_database():

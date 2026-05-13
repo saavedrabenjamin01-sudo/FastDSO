@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Umbrales de ubicación{% endblock %}
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h3 class="mb-0"><i class="bi bi-sliders text-primary"></i> Umbrales de ubicaciones PICK</h3>
+      <small class="text-muted">Configura <strong>min_units</strong> y <strong>target_units</strong> para activar reabastecimiento</small>
+    </div>
+    <a href="{{ url_for('wms_replenishment_list') }}" class="btn btn-outline-secondary">
+      <i class="bi bi-arrow-left"></i> Volver
+    </a>
+  </div>
+
+  <form method="POST" class="card shadow-sm">
+    <div class="card-header d-flex justify-content-between">
+      <span>{{ locations|length }} ubicaciones PICK activas</span>
+      <button class="btn btn-primary btn-sm"><i class="bi bi-save"></i> Guardar cambios</button>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>Código</th>
+            <th>Ubicación</th>
+            <th>Caja</th>
+            <th style="width:140px">Min units</th>
+            <th style="width:140px">Target units</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for loc in locations %}
+          <tr>
+            <td><strong>{{ loc.location_code }}</strong></td>
+            <td><small>{{ loc.location or '—' }}</small></td>
+            <td><small>{{ loc.box_number or '—' }}</small></td>
+            <td><input type="number" min="0" name="min_{{ loc.id }}" value="{{ loc.min_units if loc.min_units is not none else '' }}" class="form-control form-control-sm"></td>
+            <td><input type="number" min="0" name="tgt_{{ loc.id }}" value="{{ loc.target_units if loc.target_units is not none else '' }}" class="form-control form-control-sm"></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-muted py-4">No hay ubicaciones PICK activas.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card-footer text-muted">
+      <small><i class="bi bi-info-circle"></i> Reglas: <code>target_units &gt; min_units</code>. Deja en blanco para desactivar reabastecimiento de esa ubicación.</small>
+    </div>
+  </form>
+</div>
+{% endblock %}

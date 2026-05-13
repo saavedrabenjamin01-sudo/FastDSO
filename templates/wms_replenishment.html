@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Reabastecimiento interno{% endblock %}
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h3 class="mb-0"><i class="bi bi-arrow-down-up text-primary"></i> Reabastecimiento interno</h3>
+      <small class="text-muted">Movimientos BULK → PICK dentro del CD</small>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('wms_location_thresholds') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-sliders"></i> Umbrales (min/target)
+      </a>
+      <a href="{{ url_for('wms_replenishment_new') }}" class="btn btn-primary">
+        <i class="bi bi-plus-lg"></i> Nuevo run
+      </a>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-body p-0">
+      {% if runs %}
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>Código</th>
+              <th>Estado</th>
+              <th>Bucket</th>
+              <th>Asignado a</th>
+              <th>Tareas</th>
+              <th>Creado</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in runs %}
+            <tr>
+              <td><strong>{{ r.code }}</strong></td>
+              <td>
+                {% set badge = {'DRAFT':'secondary','ASSIGNED':'info','IN_PROGRESS':'warning','COMPLETED':'success','CLOSED':'dark'} %}
+                <span class="badge bg-{{ badge.get(r.status,'secondary') }}">{{ r.status }}</span>
+              </td>
+              <td><span class="badge bg-{{ 'primary' if r.stock_bucket=='MAIN' else 'purple' }}" style="{% if r.stock_bucket=='WEB' %}background:#7c3aed;{% endif %}">{{ r.stock_bucket }}</span></td>
+              <td>{{ r.assigned_to.username if r.assigned_to else '—' }}</td>
+              <td>{{ r.tasks.count() }}</td>
+              <td><small>{{ r.created_at.strftime('%Y-%m-%d %H:%M') }}</small></td>
+              <td class="text-end">
+                <a href="{{ url_for('wms_replenishment_detail', run_id=r.id) }}" class="btn btn-sm btn-outline-primary">
+                  <i class="bi bi-eye"></i> Detalle
+                </a>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-center p-5 text-muted">
+        <i class="bi bi-inbox" style="font-size:2.5rem;"></i>
+        <p class="mt-2 mb-0">No hay runs de reabastecimiento.</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

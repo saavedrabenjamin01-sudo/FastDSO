@@ -1,0 +1,39 @@
+{% extends "mobile_base.html" %}
+{% block title %}Reabastecimiento{% endblock %}
+{% block topbar_logo %}<div class="m-topbar-logo"><i class="bi bi-arrow-down-up"></i></div>{% endblock %}
+{% block topbar_title %}Reabastecimiento<small>Mis runs asignados</small>{% endblock %}
+{% block nav_moves_active %}active{% endblock %}
+
+{% block content %}
+<div style="padding: 12px;">
+  {% if runs %}
+    {% for r in runs %}
+    <a href="{{ url_for('wms_mobile_replenishment_run', run_id=r.id) }}" class="text-decoration-none">
+      <div style="background:#fff; border-radius:14px; box-shadow:var(--m-shadow); padding:14px; margin-bottom:10px; border-left:4px solid var(--m-blue);">
+        <div class="d-flex justify-content-between align-items-center">
+          <div>
+            <div style="font-weight:700; color:var(--m-text); font-size:1rem;">{{ r.code }}</div>
+            <div style="font-size:.78rem; color:var(--m-muted);">
+              Bucket <strong>{{ r.stock_bucket }}</strong> · {{ r.tasks.count() }} tareas
+            </div>
+          </div>
+          <div>
+            {% set badge = {'ASSIGNED':'#2563eb','IN_PROGRESS':'#f59e0b'} %}
+            <span style="background:{{ badge.get(r.status,'#6b7280') }}; color:#fff; padding:4px 10px; border-radius:8px; font-size:.72rem; font-weight:700;">{{ r.status }}</span>
+          </div>
+        </div>
+      </div>
+    </a>
+    {% endfor %}
+  {% else %}
+    <div style="text-align:center; padding:60px 20px; color:var(--m-muted);">
+      <i class="bi bi-inbox" style="font-size:3rem;"></i>
+      <p class="mt-2">No tienes runs de reabastecimiento asignados.</p>
+    </div>
+  {% endif %}
+
+  <a href="{{ url_for('wms_mobile_moves') }}" class="m-btn m-btn-secondary w-100 mt-3">
+    <i class="bi bi-arrow-left"></i> Volver a Movimientos
+  </a>
+</div>
+{% endblock %}

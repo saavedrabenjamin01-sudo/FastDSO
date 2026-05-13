@@ -1,0 +1,74 @@
+{% extends "mobile_base.html" %}
+{% block title %}{{ run.code }}{% endblock %}
+{% block topbar_back %}<a href="{{ url_for('wms_mobile_replenishment_list') }}" class="m-topbar-back"><i class="bi bi-arrow-left"></i></a>{% endblock %}
+{% block topbar_logo %}{% endblock %}
+{% block topbar_title %}{{ run.code }}<small>{{ open_count }} pendientes · {{ done_count }} hechas</small>{% endblock %}
+{% block nav_moves_active %}active{% endblock %}
+
+{% block content %}
+<div style="padding: 12px;">
+  {% if current %}
+  <div style="background:#fff; border-radius:16px; box-shadow:var(--m-shadow); overflow:hidden;">
+    {% if current.is_urgent %}
+    <div style="background:#fee2e2; color:#991b1b; padding:8px 14px; font-weight:700; font-size:.8rem; text-align:center;">
+      <i class="bi bi-exclamation-triangle"></i> TAREA URGENTE
+    </div>
+    {% endif %}
+    <div style="padding:16px;">
+      <div style="text-align:center; margin-bottom:14px;">
+        <div style="font-size:1.4rem; font-weight:800; color:var(--m-text);">{{ current.sku }}</div>
+        <div style="font-size:.85rem; color:var(--m-muted);">{{ current.product_name }}</div>
+        <span style="display:inline-block; margin-top:6px; padding:3px 10px; border-radius:6px; font-size:.7rem; font-weight:700; background:{{ '#3b82f6' if current.stock_bucket=='MAIN' else '#7c3aed' }}; color:#fff;">{{ current.stock_bucket }}</span>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px;">
+        <div style="background:#fef3c7; border-radius:10px; padding:10px; text-align:center;">
+          <div style="font-size:.7rem; color:#92400e; font-weight:700; text-transform:uppercase;">Origen</div>
+          <div style="font-weight:700; margin-top:4px;">{{ current.source_location_code }}</div>
+          {% if current.source_box_number %}<div style="font-size:.75rem; color:var(--m-muted);">Caja {{ current.source_box_number }}</div>{% endif %}
+        </div>
+        <div style="background:#dbeafe; border-radius:10px; padding:10px; text-align:center;">
+          <div style="font-size:.7rem; color:#1e40af; font-weight:700; text-transform:uppercase;">Destino</div>
+          <div style="font-weight:700; margin-top:4px;">{{ current.dest_location_code }}</div>
+          {% if current.dest_box_number %}<div style="font-size:.75rem; color:var(--m-muted);">Caja {{ current.dest_box_number }}</div>{% endif %}
+        </div>
+      </div>
+
+      <form method="POST" action="{{ url_for('wms_mobile_replenishment_confirm', run_id=run.id, task_id=current.id) }}">
+        <div style="margin-bottom:10px;">
+          <label style="display:block; font-size:.78rem; font-weight:700; color:#374151; margin-bottom:4px;">
+            <i class="bi bi-upc-scan"></i> Escanear origen
+          </label>
+          <input type="text" name="src_scan" inputmode="text" autocomplete="off" placeholder="{{ current.source_location_code }}" style="width:100%; padding:12px; border-radius:10px; border:1.5px solid #cbd5e1; font-size:.95rem;">
+        </div>
+        <div style="margin-bottom:10px;">
+          <label style="display:block; font-size:.78rem; font-weight:700; color:#374151; margin-bottom:4px;">
+            <i class="bi bi-upc-scan"></i> Escanear destino
+          </label>
+          <input type="text" name="dst_scan" inputmode="text" autocomplete="off" placeholder="{{ current.dest_location_code }}" style="width:100%; padding:12px; border-radius:10px; border:1.5px solid #cbd5e1; font-size:.95rem;">
+        </div>
+        <div style="margin-bottom:14px;">
+          <label style="display:block; font-size:.78rem; font-weight:700; color:#374151; margin-bottom:4px;">
+            Cantidad confirmada (sugerida: <strong>{{ current.qty_suggested }}</strong>)
+          </label>
+          <input type="number" name="qty_confirmed" min="1" max="{{ current.qty_suggested }}" value="{{ current.qty_suggested }}" style="width:100%; padding:14px; border-radius:10px; border:1.5px solid #cbd5e1; font-size:1.3rem; font-weight:800; text-align:center;">
+        </div>
+        <button type="submit" class="m-btn m-btn-primary w-100" style="font-size:1rem;">
+          <i class="bi bi-check2-circle"></i> Confirmar reabastecimiento
+        </button>
+      </form>
+    </div>
+  </div>
+  {% else %}
+  <div style="text-align:center; padding:60px 20px; color:var(--m-muted);">
+    <i class="bi bi-check2-all" style="font-size:3rem; color:#10b981;"></i>
+    <p class="mt-2" style="font-weight:700; color:var(--m-text);">Run completado</p>
+    <p style="font-size:.85rem;">{{ done_count }} tareas confirmadas.</p>
+  </div>
+  {% endif %}
+
+  <a href="{{ url_for('wms_mobile_replenishment_list') }}" class="m-btn m-btn-secondary w-100 mt-3">
+    <i class="bi bi-list"></i> Mis runs
+  </a>
+</div>
+{% endblock %}

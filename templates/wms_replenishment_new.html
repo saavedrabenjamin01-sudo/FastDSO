@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}Generar reabastecimiento{% endblock %}
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h3 class="mb-0"><i class="bi bi-magic text-primary"></i> Generar sugerencias de reabastecimiento</h3>
+      <small class="text-muted">Ubicaciones PICK por debajo de su mínimo</small>
+    </div>
+    <a href="{{ url_for('wms_replenishment_list') }}" class="btn btn-outline-secondary">
+      <i class="bi bi-arrow-left"></i> Volver
+    </a>
+  </div>
+
+  <form method="POST" class="card shadow-sm mb-3">
+    <div class="card-body">
+      <div class="row g-2 align-items-end">
+        <div class="col-md-2">
+          <label class="form-label small mb-1">Bucket</label>
+          <select class="form-select form-select-sm" name="stock_bucket">
+            <option value="">Todos</option>
+            {% for b in buckets %}
+            <option value="{{ b }}" {% if bucket==b %}selected{% endif %}>{{ b }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small mb-1">Ubicación (contiene)</label>
+          <input class="form-control form-control-sm" name="location_filter" value="{{ location_filter }}" placeholder="ej: A-01">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small mb-1">SKU (contiene)</label>
+          <input class="form-control form-control-sm" name="sku_filter" value="{{ sku_filter }}">
+        </div>
+        <div class="col-md-2">
+          <div class="form-check mt-3">
+            <input class="form-check-input" type="checkbox" name="only_urgent" id="onlyUrg" {% if only_urgent %}checked{% endif %}>
+            <label class="form-check-label small" for="onlyUrg">Solo urgentes</label>
+          </div>
+        </div>
+        <div class="col-md-2">
+          <button type="submit" name="action" value="generate" class="btn btn-primary btn-sm w-100">
+            <i class="bi bi-search"></i> Generar
+          </button>
+        </div>
+      </div>
+    </div>
+  </form>
+
+  {% if suggestions %}
+  <form method="POST">
+    <div class="card shadow-sm">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>{{ suggestions|length }} sugerencias</strong>
+        <div class="d-flex gap-2 align-items-center">
+          <input class="form-control form-control-sm" name="note" placeholder="Nota del run (opcional)" style="width:280px">
+          <button type="submit" name="action" value="create_run" class="btn btn-success btn-sm">
+            <i class="bi bi-check2-circle"></i> Crear run de reabastecimiento
+          </button>
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th style="width:32px"><input type="checkbox" id="selAll" checked></th>
+              <th>SKU</th>
+              <th>Producto</th>
+              <th>Bucket</th>
+              <th>Origen</th>
+              <th>Disp. origen</th>
+              <th>Destino</th>
+              <th>Disp. dest</th>
+              <th>Min / Target</th>
+              <th>Cant. sugerida</th>
+              <th>Urgente</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for s in suggestions %}
+            <tr>
+              <td>
+                <input type="checkbox" name="sel_{{ loop.index0 }}" {% if loop.index0 in selected_ids %}checked{% endif %} class="row-sel">
+                <input type="hidden" name="pid_{{ loop.index0 }}" value="{{ s.product_id }}">
+                <input type="hidden" name="sku_{{ loop.index0 }}" value="{{ s.sku }}">
+                <input type="hidden" name="pname_{{ loop.index0 }}" value="{{ s.product_name }}">
+                <input type="hidden" name="bucket_{{ loop.index0 }}" value="{{ s.stock_bucket }}">
+                <input type="hidden" name="srcid_{{ loop.index0 }}" value="{{ s.source_location_id }}">
+                <input type="hidden" name="srcloc_{{ loop.index0 }}" value="{{ s.source_location or '' }}">
+                <input type="hidden" name="srcbox_{{ loop.index0 }}" value="{{ s.source_box_number or '' }}">
+                <input type="hidden" name="srccode_{{ loop.index0 }}" value="{{ s.source_location_code or '' }}">
+                <input type="hidden" name="dstid_{{ loop.index0 }}" value="{{ s.dest_location_id }}">
+                <input type="hidden" name="dstloc_{{ loop.index0 }}" value="{{ s.dest_location or '' }}">
+                <input type="hidden" name="dstbox_{{ loop.index0 }}" value="{{ s.dest_box_number or '' }}">
+                <input type="hidden" name="dstcode_{{ loop.index0 }}" value="{{ s.dest_location_code or '' }}">
+                {% if s.is_urgent %}<input type="hidden" name="urg_{{ loop.index0 }}" value="1">{% endif %}
+              </td>
+              <td><strong>{{ s.sku }}</strong></td>
+              <td><small>{{ s.product_name }}</small></td>
+              <td><span class="badge bg-{{ 'primary' if s.stock_bucket=='MAIN' else 'dark' }}" {% if s.stock_bucket=='WEB' %}style="background:#7c3aed!important"{% endif %}>{{ s.stock_bucket }}</span></td>
+              <td>
+                <small>{{ s.source_location_label }}</small>
+                <span class="badge bg-{{ 'warning text-dark' if s.source_location_type=='BULK' else 'secondary' }} ms-1">{{ s.source_location_type }}</span>
+              </td>
+              <td class="text-end">{{ s.source_available }}</td>
+              <td><small>{{ s.dest_location_label }}</small><span class="badge bg-info ms-1">PICK</span></td>
+              <td class="text-end {% if s.dest_available < 0 %}text-danger{% endif %}">{{ s.dest_available }}</td>
+              <td class="text-center"><small>{{ s.min_units }} / {{ s.target_units }}</small></td>
+              <td><input type="number" min="1" max="{{ s.qty_suggested }}" name="qty_{{ loop.index0 }}" value="{{ s.qty_suggested }}" class="form-control form-control-sm" style="width:90px"></td>
+              <td>{% if s.is_urgent %}<span class="badge bg-danger">URGENTE</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </form>
+  <script>
+    document.getElementById('selAll').addEventListener('change', function(){
+      document.querySelectorAll('.row-sel').forEach(cb => cb.checked = this.checked);
+    });
+  </script>
+  {% elif request.method == 'POST' or request.args.get('generate') == '1' %}
+  <div class="alert alert-info">
+    <i class="bi bi-info-circle"></i> No hay sugerencias. Verifica que las ubicaciones PICK tengan <strong>min_units</strong> y <strong>target_units</strong> configurados, y que existan stocks por debajo del mínimo.
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

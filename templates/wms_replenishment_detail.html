@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Run {{ run.code }}{% endblock %}
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h3 class="mb-0"><i class="bi bi-arrow-down-up text-primary"></i> {{ run.code }}</h3>
+      <small class="text-muted">Reabastecimiento interno · creado {{ run.created_at.strftime('%Y-%m-%d %H:%M') }}</small>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('wms_replenishment_list') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Volver
+      </a>
+      {% if run.status not in ('CLOSED',) %}
+      <form method="POST" action="{{ url_for('wms_replenishment_close', run_id=run.id) }}" onsubmit="return confirm('¿Cerrar run?');">
+        <button class="btn btn-outline-dark"><i class="bi bi-lock"></i> Cerrar run</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-md-3">
+      <div class="card shadow-sm h-100"><div class="card-body">
+        <small class="text-muted">Estado</small>
+        {% set badge = {'DRAFT':'secondary','ASSIGNED':'info','IN_PROGRESS':'warning','COMPLETED':'success','CLOSED':'dark'} %}
+        <h4><span class="badge bg-{{ badge.get(run.status,'secondary') }}">{{ run.status }}</span></h4>
+      </div></div>
+    </div>
+    <div class="col-md-3">
+      <div class="card shadow-sm h-100"><div class="card-body">
+        <small class="text-muted">Bucket</small>
+        <h4><span class="badge bg-{{ 'primary' if run.stock_bucket=='MAIN' else 'dark' }}" {% if run.stock_bucket=='WEB' %}style="background:#7c3aed!important"{% endif %}>{{ run.stock_bucket }}</span></h4>
+      </div></div>
+    </div>
+    <div class="col-md-6">
+      <div class="card shadow-sm h-100"><div class="card-body">
+        <small class="text-muted">Asignar a operador</small>
+        <form method="POST" action="{{ url_for('wms_replenishment_assign', run_id=run.id) }}" class="d-flex gap-2 mt-1">
+          <select class="form-select form-select-sm" name="assigned_to_user_id" {% if run.status not in ('DRAFT','ASSIGNED') %}disabled{% endif %}>
+            <option value="">— Sin asignar —</option>
+            {% for u in operators %}
+            <option value="{{ u.id }}" {% if run.assigned_to_user_id==u.id %}selected{% endif %}>{{ u.username }}</option>
+            {% endfor %}
+          </select>
+          <button class="btn btn-primary btn-sm" {% if run.status not in ('DRAFT','ASSIGNED') %}disabled{% endif %}>Guardar</button>
+        </form>
+      </div></div>
+    </div>
+  </div>
+
+  {% if run.note %}<div class="alert alert-light"><strong>Nota:</strong> {{ run.note }}</div>{% endif %}
+
+  <div class="card shadow-sm">
+    <div class="card-header"><strong>Tareas ({{ tasks|length }})</strong></div>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>SKU</th>
+            <th>Producto</th>
+            <th>Origen</th>
+            <th>Destino</th>
+            <th>Sugerida</th>
+            <th>Confirmada</th>
+            <th>Estado</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in tasks %}
+          <tr {% if t.is_urgent and t.status in ('OPEN','IN_PROGRESS') %}class="table-warning"{% endif %}>
+            <td>
+              <strong>{{ t.sku }}</strong>
+              {% if t.is_urgent %}<span class="badge bg-danger ms-1">URGENTE</span>{% endif %}
+            </td>
+            <td><small>{{ t.product_name }}</small></td>
+            <td><small>{{ t.source_location_code }}{% if t.source_box_number %} · Caja {{ t.source_box_number }}{% endif %}</small></td>
+            <td><small>{{ t.dest_location_code }}{% if t.dest_box_number %} · Caja {{ t.dest_box_number }}{% endif %}</small></td>
+            <td class="text-end">{{ t.qty_suggested }}</td>
+            <td class="text-end">{{ t.qty_confirmed if t.qty_confirmed is not none else '—' }}</td>
+            <td>
+              {% set tb = {'OPEN':'secondary','IN_PROGRESS':'warning','DONE':'success','CANCELLED':'dark'} %}
+              <span class="badge bg-{{ tb.get(t.status,'secondary') }}">{{ t.status }}</span>
+            </td>
+            <td>
+              {% if t.status in ('OPEN','IN_PROGRESS') %}
+              <form method="POST" action="{{ url_for('wms_replenishment_confirm_task', run_id=run.id, task_id=t.id) }}" class="d-inline-flex gap-1">
+                <input type="number" min="1" max="{{ t.qty_suggested }}" name="qty_confirmed" value="{{ t.qty_suggested }}" class="form-control form-control-sm" style="width:78px">
+                <button class="btn btn-success btn-sm"><i class="bi bi-check"></i></button>
+              </form>
+              <form method="POST" action="{{ url_for('wms_replenishment_cancel_task', run_id=run.id, task_id=t.id) }}" class="d-inline" onsubmit="return confirm('¿Cancelar tarea?');">
+                <button class="btn btn-outline-danger btn-sm"><i class="bi bi-x"></i></button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="8" class="text-center text-muted py-4">Sin tareas.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
