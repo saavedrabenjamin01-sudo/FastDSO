@@ -1,71 +1,257 @@
 {% extends "mobile_base.html" %}
 {% block title %}Portal WMS{% endblock %}
-{% block topbar_title %}Portal WMS<small>{{ current_user.username }}</small>{% endblock %}
+{% block topbar_title %}Portal WMS<small>Operación de bodega</small>{% endblock %}
 {% block topbar_back %}
-<div class="m-topbar-back" style="background:transparent;cursor:default">
+<div class="m-topbar-back" style="background:transparent;cursor:default" aria-hidden="true">
   <i class="bi bi-boxes"></i>
 </div>
 {% endblock %}
+{% block topbar_right %}
+<a href="{{ url_for('logout') }}" class="m-topbar-icon-btn" title="Salir">
+  <i class="bi bi-box-arrow-right"></i>
+</a>
+{% endblock %}
+
+{% block head %}
+<style>
+  .h-page { padding: 12px 12px 24px; max-width: 560px; margin: 0 auto; }
+
+  /* Welcome / context strip */
+  .h-welcome {
+    background: linear-gradient(135deg, #0b2b7a 0%, #1e40af 60%, #3b82f6 100%);
+    color: #fff; border-radius: 18px; padding: 14px 16px;
+    box-shadow: 0 4px 16px rgba(11,43,122,.25);
+    margin-bottom: 14px;
+  }
+  .h-welcome-row { display:flex; align-items:center; gap:12px; }
+  .h-avatar {
+    width: 44px; height: 44px; border-radius: 12px; flex-shrink:0;
+    background: rgba(255,255,255,.2);
+    display:flex; align-items:center; justify-content:center;
+    font-size: 1.3rem;
+  }
+  .h-welcome-text { flex:1; min-width:0; }
+  .h-welcome-name { font-size: 1.05rem; font-weight: 800; line-height:1.1; }
+  .h-welcome-role { font-size: .72rem; opacity:.9; margin-top:2px; letter-spacing:.3px; text-transform:uppercase; }
+  .h-context-strip {
+    margin-top: 12px; padding-top: 10px;
+    border-top: 1px solid rgba(255,255,255,.18);
+    display:flex; gap:14px; font-size:.72rem; opacity:.92;
+  }
+  .h-context-strip span i { margin-right:4px; }
+
+  /* Section label */
+  .h-section {
+    font-size: .72rem; font-weight: 800; color: var(--m-muted);
+    text-transform: uppercase; letter-spacing: .6px;
+    padding: 6px 4px 8px; display:flex; align-items:center; gap:6px;
+  }
+  .h-section i { color: var(--m-blue); }
+
+  /* KPI summary cards */
+  .h-kpi-grid {
+    display:grid; grid-template-columns: repeat(2, 1fr); gap: 10px;
+  }
+  .h-kpi {
+    background: #fff; border-radius: 14px; padding: 12px;
+    box-shadow: var(--m-shadow);
+    display:flex; align-items:center; gap:10px;
+    border-left: 4px solid var(--m-blue);
+  }
+  .h-kpi.k-blue   { border-left-color: #3b82f6; }
+  .h-kpi.k-red    { border-left-color: #dc2626; }
+  .h-kpi.k-orange { border-left-color: #d97706; }
+  .h-kpi.k-green  { border-left-color: #16a34a; }
+  .h-kpi-icon {
+    width:38px; height:38px; flex-shrink:0; border-radius:10px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:1.1rem;
+  }
+  .h-kpi.k-blue   .h-kpi-icon { background:#dbeafe; color:#1d4ed8; }
+  .h-kpi.k-red    .h-kpi-icon { background:#fee2e2; color:#b91c1c; }
+  .h-kpi.k-orange .h-kpi-icon { background:#fef3c7; color:#92400e; }
+  .h-kpi.k-green  .h-kpi-icon { background:#dcfce7; color:#166534; }
+  .h-kpi-text { flex:1; min-width:0; }
+  .h-kpi-val { font-size:1.45rem; font-weight:800; line-height:1; color:var(--m-text); }
+  .h-kpi-lbl { font-size:.7rem; color:var(--m-muted); margin-top:3px;
+                text-transform:uppercase; letter-spacing:.3px; font-weight:600; }
+
+  /* Action grid */
+  .h-actions { display:grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .h-action {
+    position:relative; background:#fff; border-radius:16px;
+    padding: 14px 12px 12px; min-height: 124px;
+    box-shadow: var(--m-shadow);
+    text-decoration:none; color:inherit;
+    display:flex; flex-direction:column; gap:6px;
+    transition: transform .12s, box-shadow .12s;
+    border: 1px solid transparent;
+  }
+  .h-action:active { transform: scale(.97); box-shadow: 0 1px 6px rgba(0,0,0,.12); }
+  .h-action-icon {
+    width:42px; height:42px; border-radius:12px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:1.25rem;
+  }
+  .h-action-title { font-size:.95rem; font-weight:800; color:var(--m-text); line-height:1.15; }
+  .h-action-sub   { font-size:.72rem; color:var(--m-muted); line-height:1.25; flex:1; }
+  .h-action-cta   {
+    display:flex; align-items:center; justify-content:space-between;
+    font-size:.7rem; color:var(--m-blue); font-weight:700;
+    text-transform:uppercase; letter-spacing:.3px;
+  }
+  .h-count-pill {
+    position:absolute; top:10px; right:10px;
+    min-width:24px; height:22px; padding:0 7px;
+    background:#dc2626; color:#fff;
+    border-radius:99px; font-size:.7rem; font-weight:800;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow: 0 2px 6px rgba(220,38,38,.4);
+  }
+  .h-count-pill.neutral { background:#3b82f6; box-shadow: 0 2px 6px rgba(59,130,246,.35); }
+
+  .a-blue   .h-action-icon { background:#dbeafe; color:#1d4ed8; }
+  .a-red    .h-action-icon { background:#fee2e2; color:#b91c1c; }
+  .a-purple .h-action-icon { background:#ede9fe; color:#6d28d9; }
+  .a-slate  .h-action-icon { background:#e2e8f0; color:#0b2b7a; }
+  .a-orange .h-action-icon { background:#fef3c7; color:#92400e; }
+  .a-green  .h-action-icon { background:#dcfce7; color:#166534; }
+  .a-pink   .h-action-icon { background:#fce7f3; color:#be185d; }
+
+  .h-logout-wrap { margin-top: 18px; }
+  .h-logout {
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    width:100%; padding:12px; border-radius:14px;
+    background:#fff; color:var(--m-red);
+    border:1.5px solid #fecaca; font-weight:700;
+    text-decoration:none; font-size:.92rem;
+  }
+</style>
+{% endblock %}
 
 {% block content %}
-<div class="m-page-wrap" style="padding:14px 12px 20px">
+<div class="h-page">
 
-  <div class="m-section-label" style="padding:4px 4px 8px">Operación</div>
-
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-    <a href="{{ url_for('wms_mobile_my_waves') }}" class="m-card" style="margin:0;text-decoration:none;color:inherit">
-      <div class="m-card-body" style="text-align:center;padding:18px 10px">
-        <div style="font-size:2rem;color:var(--m-blue)"><i class="bi bi-list-task"></i></div>
-        <div style="font-weight:800;margin-top:6px">Mis Waves</div>
-        <div class="m-badge m-badge-blue" style="margin-top:6px">Picking</div>
+  <!-- Welcome / context -->
+  <div class="h-welcome">
+    <div class="h-welcome-row">
+      <div class="h-avatar"><i class="bi bi-person-badge"></i></div>
+      <div class="h-welcome-text">
+        <div class="h-welcome-name">{{ current_user.username }}</div>
+        <div class="h-welcome-role">{{ role_label }}</div>
       </div>
-    </a>
-
-    <a href="{{ url_for('wms_mobile_issues') }}" class="m-card" style="margin:0;text-decoration:none;color:inherit">
-      <div class="m-card-body" style="text-align:center;padding:18px 10px">
-        <div style="font-size:2rem;color:var(--m-red)"><i class="bi bi-exclamation-triangle"></i></div>
-        <div style="font-weight:800;margin-top:6px">Incidencias</div>
-        <div class="m-badge m-badge-red" style="margin-top:6px">Excepciones</div>
+      <div style="text-align:right;font-size:.72rem;opacity:.9">
+        <div style="font-weight:700">{{ today_es }}</div>
+        <div style="opacity:.8">Hoy</div>
       </div>
-    </a>
-
-    <a href="{{ url_for('wms_mobile_moves') }}" class="m-card" style="margin:0;text-decoration:none;color:inherit">
-      <div class="m-card-body" style="text-align:center;padding:18px 10px">
-        <div style="font-size:2rem;color:var(--m-purple)"><i class="bi bi-arrow-left-right"></i></div>
-        <div style="font-weight:800;margin-top:6px">Movimientos</div>
-        <div class="m-badge m-badge-purple" style="margin-top:6px">Internos</div>
-      </div>
-    </a>
-
-    <a href="{{ url_for('wms_mobile_inventory') }}" class="m-card" style="margin:0;text-decoration:none;color:inherit">
-      <div class="m-card-body" style="text-align:center;padding:18px 10px">
-        <div style="font-size:2rem;color:var(--m-blue-deep)"><i class="bi bi-boxes"></i></div>
-        <div style="font-weight:800;margin-top:6px">Inventario</div>
-        <div class="m-badge m-badge-blue" style="margin-top:6px">Consulta</div>
-      </div>
-    </a>
-
-    <a href="{{ url_for('wms_mobile_counts') }}" class="m-card" style="margin:0;text-decoration:none;color:inherit">
-      <div class="m-card-body" style="text-align:center;padding:18px 10px">
-        <div style="font-size:2rem;color:var(--m-orange)"><i class="bi bi-clipboard-check"></i></div>
-        <div style="font-weight:800;margin-top:6px">Conteos</div>
-        <div class="m-badge m-badge-medium" style="margin-top:6px">Cíclicos</div>
-      </div>
-    </a>
-
-    <a href="{{ url_for('wms_mobile_replenishment') }}" class="m-card" style="margin:0;text-decoration:none;color:inherit">
-      <div class="m-card-body" style="text-align:center;padding:18px 10px">
-        <div style="font-size:2rem;color:var(--m-green)"><i class="bi bi-arrow-repeat"></i></div>
-        <div style="font-weight:800;margin-top:6px">Reabastec.</div>
-        <div class="m-badge m-badge-green" style="margin-top:6px">Reposición</div>
-      </div>
-    </a>
+    </div>
+    <div class="h-context-strip">
+      <span><i class="bi bi-boxes"></i>FastWMS</span>
+      <span><i class="bi bi-building"></i>Bodega CD</span>
+      <span><i class="bi bi-shield-check"></i>Sesión activa</span>
+    </div>
   </div>
 
-  <div class="m-section-label" style="padding:18px 4px 8px">Sesión</div>
-  <a href="{{ url_for('logout') }}" class="m-btn m-btn-danger">
-    <i class="bi bi-box-arrow-right"></i> Salir
-  </a>
+  <!-- Operational summary -->
+  <div class="h-section"><i class="bi bi-graph-up"></i> Tu trabajo de hoy</div>
+  <div class="h-kpi-grid">
+    <div class="h-kpi k-blue">
+      <div class="h-kpi-icon"><i class="bi bi-list-task"></i></div>
+      <div class="h-kpi-text">
+        <div class="h-kpi-val">{{ kpi.waves }}</div>
+        <div class="h-kpi-lbl">Waves activas</div>
+      </div>
+    </div>
+    <div class="h-kpi k-red">
+      <div class="h-kpi-icon"><i class="bi bi-exclamation-triangle"></i></div>
+      <div class="h-kpi-text">
+        <div class="h-kpi-val">{{ kpi.issues }}</div>
+        <div class="h-kpi-lbl">Incidencias</div>
+      </div>
+    </div>
+    <div class="h-kpi k-orange">
+      <div class="h-kpi-icon"><i class="bi bi-clipboard-check"></i></div>
+      <div class="h-kpi-text">
+        <div class="h-kpi-val">{{ kpi.counts }}</div>
+        <div class="h-kpi-lbl">Conteos pend.</div>
+      </div>
+    </div>
+    <div class="h-kpi k-green">
+      <div class="h-kpi-icon"><i class="bi bi-arrow-repeat"></i></div>
+      <div class="h-kpi-text">
+        <div class="h-kpi-val">{{ kpi.replen }}</div>
+        <div class="h-kpi-lbl">Reabastec. pend.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Action grid -->
+  <div class="h-section" style="margin-top:18px"><i class="bi bi-grid-3x3-gap"></i> Operación</div>
+  <div class="h-actions">
+
+    <a href="{{ url_for('wms_mobile_my_waves') }}" class="h-action a-blue">
+      {% if kpi.waves %}<span class="h-count-pill neutral">{{ kpi.waves }}</span>{% endif %}
+      <div class="h-action-icon"><i class="bi bi-list-task"></i></div>
+      <div class="h-action-title">Mis Waves</div>
+      <div class="h-action-sub">Picking asignado</div>
+      <div class="h-action-cta"><span>Abrir</span><i class="bi bi-arrow-right"></i></div>
+    </a>
+
+    <a href="{{ url_for('wms_mobile_issues') }}" class="h-action a-red">
+      {% if kpi.issues %}<span class="h-count-pill">{{ kpi.issues }}</span>{% endif %}
+      <div class="h-action-icon"><i class="bi bi-exclamation-triangle"></i></div>
+      <div class="h-action-title">Incidencias</div>
+      <div class="h-action-sub">Faltantes y alertas</div>
+      <div class="h-action-cta"><span>Revisar</span><i class="bi bi-arrow-right"></i></div>
+    </a>
+
+    <a href="{{ url_for('wms_mobile_moves') }}" class="h-action a-purple">
+      <div class="h-action-icon"><i class="bi bi-arrow-left-right"></i></div>
+      <div class="h-action-title">Movimientos</div>
+      <div class="h-action-sub">Traslados internos</div>
+      <div class="h-action-cta"><span>Abrir</span><i class="bi bi-arrow-right"></i></div>
+    </a>
+
+    <a href="{{ url_for('wms_mobile_inventory') }}" class="h-action a-slate">
+      <div class="h-action-icon"><i class="bi bi-boxes"></i></div>
+      <div class="h-action-title">Inventario</div>
+      <div class="h-action-sub">Consulta por ubicación</div>
+      <div class="h-action-cta"><span>Consultar</span><i class="bi bi-arrow-right"></i></div>
+    </a>
+
+    <a href="{{ url_for('wms_mobile_counts_list') }}" class="h-action a-orange">
+      {% if kpi.counts %}<span class="h-count-pill neutral">{{ kpi.counts }}</span>{% endif %}
+      <div class="h-action-icon"><i class="bi bi-clipboard-check"></i></div>
+      <div class="h-action-title">Conteos</div>
+      <div class="h-action-sub">Conteo cíclico</div>
+      <div class="h-action-cta"><span>Ejecutar</span><i class="bi bi-arrow-right"></i></div>
+    </a>
+
+    <a href="{{ url_for('wms_mobile_replenishment_list') }}" class="h-action a-green">
+      {% if kpi.replen %}<span class="h-count-pill neutral">{{ kpi.replen }}</span>{% endif %}
+      <div class="h-action-icon"><i class="bi bi-arrow-repeat"></i></div>
+      <div class="h-action-title">Reabastec.</div>
+      <div class="h-action-sub">Reposición interna</div>
+      <div class="h-action-cta"><span>Ejecutar</span><i class="bi bi-arrow-right"></i></div>
+    </a>
+
+    {% if can_pack %}
+    <a href="{{ url_for('wms_packing') }}" class="h-action a-pink" style="grid-column: span 2; min-height: 96px; flex-direction:row; align-items:center">
+      <div class="h-action-icon" style="margin-right:4px"><i class="bi bi-box-seam"></i></div>
+      <div style="flex:1">
+        <div class="h-action-title">Packing</div>
+        <div class="h-action-sub">Empacar y despachar</div>
+      </div>
+      <i class="bi bi-arrow-right" style="color:#be185d;font-size:1.1rem"></i>
+    </a>
+    {% endif %}
+  </div>
+
+  <div class="h-logout-wrap">
+    <a href="{{ url_for('logout') }}" class="h-logout">
+      <i class="bi bi-box-arrow-right"></i> Salir
+    </a>
+  </div>
 </div>
 {% endblock %}
 

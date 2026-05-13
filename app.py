@@ -4827,7 +4827,39 @@ def home():
 @login_required
 @require_wms_mobile_access
 def wms_mobile_home():
-    return render_template('wms_mobile_home.html')
+    uid = current_user.id
+    kpi = {'waves': 0, 'issues': 0, 'counts': 0, 'replen': 0}
+    try:
+        wave_ids = [w.id for w in db.session.query(WmsPickWave.id)
+                    .filter(WmsPickWave.assigned_to == uid,
+                            WmsPickWave.status.in_(('ASSIGNED', 'IN_PROGRESS', 'NEEDS_REVIEW'))).all()]
+        kpi['waves'] = len(wave_ids)
+        if wave_ids:
+            kpi['issues'] = db.session.query(WmsPickIssue.id).filter(
+                WmsPickIssue.wave_id.in_(wave_ids)).count()
+        kpi['counts'] = db.session.query(WmsCycleCountRun.id).filter(
+            WmsCycleCountRun.assigned_to == uid,
+            WmsCycleCountRun.status.in_(('ASSIGNED', 'IN_PROGRESS'))).count()
+        kpi['replen'] = db.session.query(WmsReplenishmentRun.id).filter(
+            WmsReplenishmentRun.assigned_to_user_id == uid,
+            WmsReplenishmentRun.status.in_(('ASSIGNED', 'IN_PROGRESS'))).count()
+    except Exception as e:
+        print(f"[WMS MOBILE HOME] kpi error: {e}")
+    can_pack = False
+    try:
+        can_pack = current_user.has_permission('wms:pack_manage')
+    except Exception:
+        pass
+    role_label = {
+        'WarehouseManager': 'Jefe de Bodega',
+        'WarehouseOps': 'Supervisor de Bodega',
+        'WarehouseOperator': 'Operario de Bodega',
+        'Admin': 'Administrador',
+    }.get(current_user.role or '', current_user.role or 'Usuario')
+    today_es = datetime.now().strftime('%d/%m/%Y')
+    return render_template('wms_mobile_home.html',
+                           kpi=kpi, can_pack=can_pack,
+                           role_label=role_label, today_es=today_es)
 
 from datetime import date, timedelta
 from sqlalchemy import func

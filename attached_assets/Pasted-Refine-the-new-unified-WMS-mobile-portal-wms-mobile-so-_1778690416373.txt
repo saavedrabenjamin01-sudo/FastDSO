@@ -1,0 +1,237 @@
+Refine the new unified WMS mobile portal (/wms/mobile) so it feels executive, operational, and visually aligned with the rest of FastDSO/FastWMS.
+
+GOAL
+The WMS mobile hub already exists, but now it must look like a proper operational control screen for warehouse users, not just a simple list of links.
+
+We want a clean, professional, mobile-first landing page for:
+- WarehouseManager
+- WarehouseOP
+- WarehouseOperator
+
+This page must feel useful immediately when opening it from a phone.
+
+==================================================
+PART 1 — OVERALL VISUAL DIRECTION
+==================================================
+
+The WMS mobile hub must feel:
+- executive
+- operational
+- fast to read
+- easy to use with one hand
+- visually consistent with FastDSO/FastWMS
+
+Avoid:
+- plain text link lists
+- generic bootstrap-like clutter
+- desktop layout leftovers
+- excessive white noise without hierarchy
+
+Use:
+- strong cards
+- status chips/badges
+- compact summaries
+- clear sections
+- large tap targets
+- clean spacing
+- subtle shadow and rounded corners
+
+==================================================
+PART 2 — MOBILE HUB STRUCTURE
+==================================================
+
+Refine /wms/mobile into this structure:
+
+1) Top header / welcome area
+Show:
+- Portal WMS
+- current user name
+- current user role label
+- optional short subtitle:
+  "Operación de bodega"
+
+2) Operational summary cards row
+Show compact KPI cards such as:
+- Waves activas
+- Incidencias abiertas
+- Reabastecimientos pendientes
+- Conteos pendientes
+
+These can be small but readable and visually strong.
+
+3) Main action grid
+Show large action cards/buttons for:
+- Mis Waves
+- Incidencias
+- Movimientos
+- Inventario
+- Conteos
+- Reabastecimiento
+- Packing (if already available)
+- Salir
+
+4) Secondary live context section
+Recommended:
+- "Tu trabajo de hoy"
+- or "Pendientes"
+Show:
+- waves assigned count
+- open issues count
+- pending count tasks
+- pending replenishment tasks
+
+==================================================
+PART 3 — CARD DESIGN
+==================================================
+
+Each module card must feel like a real operational entry point.
+
+Each main card should include:
+- icon
+- module title
+- short subtitle/description
+- optional count badge
+- arrow or CTA hint
+
+Examples:
+- Mis Waves
+  "Picking asignado"
+- Incidencias
+  "Faltantes y alertas"
+- Movimientos
+  "Traslados internos"
+- Inventario
+  "Consulta por ubicación"
+- Conteos
+  "Conteo cíclico"
+- Reabastecimiento
+  "Reposición interna"
+
+Cards must be:
+- full-width or 2-column grid depending on screen width
+- minimum comfortable tap size
+- visually consistent
+- not overcrowded
+
+==================================================
+PART 4 — COLOR / BADGE SYSTEM
+==================================================
+
+Keep FastDSO/FastWMS design language, but make the mobile hub more informative.
+
+Use consistent status chips:
+- MAIN = blue
+- WEB = purple
+- urgent = red
+- pending = orange
+- done/completed = green
+- info/neutral = slate/gray-blue
+
+Do not overuse colors.
+Use them intentionally for:
+- badges
+- counts
+- urgency
+- stock bucket context
+
+==================================================
+PART 5 — INFORMATION DENSITY
+==================================================
+
+This is a mobile operational page.
+It must not feel empty, but it also must not overload the user.
+
+Rules:
+- compact but clear
+- important numbers visible at a glance
+- one primary action per card
+- no long paragraphs
+- no wide tables
+
+==================================================
+PART 6 — TYPOGRAPHY / SPACING
+==================================================
+
+Use:
+- slightly larger headings than current mobile screens
+- readable body text
+- numeric highlights for operational counts
+- monospace only where useful (not everywhere)
+
+Spacing:
+- enough padding around cards
+- clean vertical rhythm
+- good separation between summary and action areas
+
+==================================================
+PART 7 — INTERACTION DETAILS
+==================================================
+
+Recommended refinements:
+- subtle pressed/hover state on cards
+- clear active state in bottom nav if one exists
+- smooth but minimal transitions
+- large logout button but visually secondary to operational actions
+
+==================================================
+PART 8 — OPTIONAL OPERATOR CONTEXT
+==================================================
+
+If easy, add a compact "context strip" near the top:
+- Usuario: <name>
+- Rol: <role>
+- Turno/Fecha actual (optional)
+- Bodega / contexto actual (optional)
+
+This helps the hub feel more like a real operational console.
+
+==================================================
+PART 9 — TEMPLATE / IMPLEMENTATION
+==================================================
+
+Update:
+- templates/wms_mobile_home.html
+- mobile_base.html if needed
+
+Do NOT break:
+- /wms/mobile/my-waves
+- /wms/mobile/issues
+- /wms/mobile/moves
+- /wms/mobile/inventory
+- /wms/mobile/counts
+- /wms/mobile/replenishment
+
+This prompt is focused on visual/UX refinement of the WMS mobile hub.
+
+==================================================
+PART 10 — LABELS IN SPANISH
+==================================================
+
+Everything visible to the user must remain in Spanish.
+
+Suggested labels:
+- Portal WMS
+- Operación de bodega
+- Tu trabajo de hoy
+- Waves activas
+- Incidencias abiertas
+- Conteos pendientes
+- Reabastecimientos pendientes
+- Mis Waves
+- Movimientos
+- Inventario
+- Conteos
+- Reabastecimiento
+- Salir
+
+==================================================
+DELIVERABLES
+==================================================
+
+Deliver:
+- visually refined /wms/mobile hub
+- stronger operational summary area
+- more executive and useful card layout
+- cleaner mobile-first design
+- no desktop leftovers
+- no breaking changes to the existing WMS mobile routes
