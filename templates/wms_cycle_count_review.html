@@ -6,7 +6,7 @@
   'COMPLETED': 'success', 'REVIEW_PENDING': 'warning', 'CLOSED': 'dark'
 } %}
 {% set var_colors = {'MATCH': 'success', 'SHORT': 'danger', 'OVER': 'warning', 'NOT_COUNTED': 'secondary'} %}
-{% set task_status_colors = {'OPEN': 'secondary', 'COUNTED': 'info', 'REVIEWED': 'primary', 'ADJUSTED': 'success'} %}
+{% set task_status_colors = {'OPEN': 'secondary', 'COUNTED': 'info', 'REVIEWED': 'primary', 'ADJUSTED': 'success', 'REJECTED': 'dark'} %}
 
 <div class="query-wrap" style="max-width:1400px;">
 
@@ -27,7 +27,7 @@
         <i class="bi bi-arrow-left me-1"></i>Volver
       </a>
       {% if run.status == 'REVIEW_PENDING' and current_user.has_permission('wms:count_manage') %}
-      {% set reviewed_count = summary.total - summary.pending - summary.counted - summary.adjusted %}
+      {% set reviewed_count = summary.reviewed %}
       {% if reviewed_count > 0 %}
       <form method="post" action="{{ url_for('wms_cycle_count_apply_all', run_id=run.id) }}"
             onsubmit="return confirm('¿Aplicar TODOS los ajustes de inventario para tareas REVIEWED?\n\nLas tareas con allocated > contado serán bloqueadas automáticamente. Esta acción modifica el stock del sistema.');">
@@ -239,6 +239,11 @@
                   <i class="bi bi-check-lg"></i> Revisar
                 </button>
               </form>
+              <button type="button" class="btn btn-sm btn-outline-danger ms-1"
+                      data-bs-toggle="modal" data-bs-target="#rejectModal{{ t.id }}"
+                      title="Rechazar tarea">
+                <i class="bi bi-x-lg"></i>
+              </button>
               {% elif t.status == 'REVIEWED' %}
               <form method="post" action="{{ url_for('wms_cycle_count_task_apply', run_id=run.id, task_id=t.id) }}" class="d-inline"
                     onsubmit="return confirm('¿Aplicar el ajuste de inventario para esta tarea? Stock pasará de {{ t.expected_qty }} a {{ t.counted_qty }}.');">
@@ -246,10 +251,53 @@
                   <i class="bi bi-clipboard-data"></i> Aplicar
                 </button>
               </form>
+              <button type="button" class="btn btn-sm btn-outline-danger ms-1"
+                      data-bs-toggle="modal" data-bs-target="#rejectModal{{ t.id }}"
+                      title="Rechazar ajuste">
+                <i class="bi bi-x-lg"></i>
+              </button>
               {% elif t.status == 'ADJUSTED' %}
               <span class="badge bg-success"><i class="bi bi-check2-all me-1"></i>Ajustado</span>
+              {% elif t.status == 'REJECTED' %}
+              <span class="badge bg-dark" title="{{ t.rejection_reason or '' }}"><i class="bi bi-x-circle me-1"></i>Rechazada</span>
               {% else %}
               <span class="text-muted small">—</span>
+              {% endif %}
+
+              {% if t.status in ['COUNTED', 'REVIEWED'] %}
+              <div class="modal fade" id="rejectModal{{ t.id }}" tabindex="-1" aria-hidden="true">
+                <div class="modal-dialog">
+                  <div class="modal-content">
+                    <form method="post" action="{{ url_for('wms_cycle_count_task_reject', run_id=run.id, task_id=t.id) }}">
+                      <div class="modal-header">
+                        <h5 class="modal-title">Rechazar tarea #{{ t.id }}</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                      </div>
+                      <div class="modal-body">
+                        <p class="small mb-2">
+                          <strong>{{ t.location_code or t.location or '—' }}</strong> ·
+                          <code>{{ t.sku }}</code> · Bucket {{ t.stock_bucket }}<br>
+                          Sistema: {{ t.expected_qty }} · Contado: {{ t.counted_qty if t.counted_qty is not none else '—' }}
+                          {% if t.variance_qty %}· Diferencia <strong class="{% if t.variance_qty < 0 %}text-danger{% else %}text-warning{% endif %}">{{ "{:+,}".format(t.variance_qty) }}</strong>{% endif %}
+                        </p>
+                        <label class="form-label fw-semibold">Motivo del rechazo</label>
+                        <textarea name="rejection_reason" class="form-control" rows="3"
+                                  placeholder="Ej: re-conteo necesario, conteo dudoso, ubicación equivocada..." required></textarea>
+                        <div class="alert alert-warning small mt-2 mb-0">
+                          <i class="bi bi-exclamation-triangle me-1"></i>
+                          La tarea no se aplicará al inventario. Esta acción queda registrada en el audit log.
+                        </div>
+                      </div>
+                      <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                        <button type="submit" class="btn btn-danger">
+                          <i class="bi bi-x-circle me-1"></i>Confirmar rechazo
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              </div>
               {% endif %}
             </td>
             {% endif %}

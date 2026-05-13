@@ -1263,7 +1263,7 @@ class WmsPickIssue(db.Model):
 
 # ------------------ Cycle Counting (Conteo cíclico) ------------------
 WMS_CC_RUN_STATUSES = ['DRAFT', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'REVIEW_PENDING', 'CLOSED']
-WMS_CC_TASK_STATUSES = ['OPEN', 'COUNTED', 'REVIEWED', 'ADJUSTED']
+WMS_CC_TASK_STATUSES = ['OPEN', 'COUNTED', 'REVIEWED', 'ADJUSTED', 'REJECTED']
 WMS_CC_VARIANCE_TYPES = ['MATCH', 'SHORT', 'OVER', 'NOT_COUNTED']
 
 
@@ -1313,12 +1313,16 @@ class WmsCycleCountTask(db.Model):
     variance_type = db.Column(db.String(20), nullable=True)
     counted_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     counted_at = db.Column(db.DateTime, nullable=True)
+    reviewed_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    reviewed_at = db.Column(db.DateTime, nullable=True)
+    rejection_reason = db.Column(db.Text, nullable=True)
     status = db.Column(db.String(20), nullable=False, default='OPEN')
     note = db.Column(db.Text, nullable=True)
 
     location_ref = db.relationship('WmsLocation')
     product = db.relationship('Product')
-    counted_by = db.relationship('User')
+    counted_by = db.relationship('User', foreign_keys=[counted_by_user_id])
+    reviewed_by = db.relationship('User', foreign_keys=[reviewed_by_user_id])
 
 
 class WmsInventoryAdjustmentLog(db.Model):
@@ -12409,7 +12413,9 @@ def wms_cycle_counts_review(run_id):
         'with_variance': sum(1 for t in all_tasks if t.variance_type in ('SHORT', 'OVER')),
         'pending': sum(1 for t in all_tasks if t.status == 'OPEN'),
         'counted': sum(1 for t in all_tasks if t.status == 'COUNTED'),
+        'reviewed': sum(1 for t in all_tasks if t.status == 'REVIEWED'),
         'adjusted': sum(1 for t in all_tasks if t.status == 'ADJUSTED'),
+        'rejected': sum(1 for t in all_tasks if t.status == 'REJECTED'),
     }
 
     eligible_operators = _users_with_permission('wms:count_execute')
@@ -12493,8 +12499,40 @@ def wms_cycle_count_task_review(run_id, task_id):
         return redirect(url_for('wms_cycle_counts_review', run_id=run.id))
 
     task.status = 'REVIEWED'
+    task.reviewed_by_user_id = current_user.id
+    task.reviewed_at = datetime.utcnow()
     db.session.commit()
-    print(f"[COUNT] task reviewed run={run.id} task={task.id}")
+    print(f"[COUNT] task reviewed run={run.id} task={task.id} by_user_id={current_user.id}")
+    return redirect(url_for('wms_cycle_counts_review', run_id=run.id))
+
+
+@app.route('/wms/cycle-counts/<int:run_id>/task/<int:task_id>/reject', methods=['POST'])
+@login_required
+@require_permission('wms:count_manage')
+def wms_cycle_count_task_reject(run_id, task_id):
+    run = WmsCycleCountRun.query.get_or_404(run_id)
+    task = WmsCycleCountTask.query.get_or_404(task_id)
+    if task.run_id != run.id:
+        abort(404)
+    if run.status not in ('REVIEW_PENDING', 'COMPLETED'):
+        flash('El conteo no está en revisión.', 'warning')
+        return redirect(url_for('wms_cycle_counts_review', run_id=run.id))
+    if task.status not in ('COUNTED', 'REVIEWED'):
+        flash(f'Sólo se pueden rechazar tareas en estado COUNTED o REVIEWED (actual: {task.status}).', 'warning')
+        return redirect(url_for('wms_cycle_counts_review', run_id=run.id))
+
+    reason = (request.form.get('rejection_reason', '') or '').strip()
+    task.status = 'REJECTED'
+    task.reviewed_by_user_id = current_user.id
+    task.reviewed_at = datetime.utcnow()
+    task.rejection_reason = reason or 'Sin motivo especificado'
+    db.session.commit()
+    print(f"[COUNT] adjustment rejected task={task.id} run={run.id} by_user_id={current_user.id} "
+          f"reason={task.rejection_reason!r}")
+    log_audit('cycle_count.reject', status='success',
+              message=f'Conteo {run.code} tarea #{task.id} rechazada: {task.rejection_reason}',
+              entity_type='WmsCycleCountTask', entity_id=task.id)
+    flash(f'Tarea #{task.id} rechazada. No se aplicará al inventario.', 'info')
     return redirect(url_for('wms_cycle_counts_review', run_id=run.id))
 
 
@@ -12634,6 +12672,8 @@ def wms_cycle_count_apply_all(run_id):
         flash('El conteo no está en revisión.', 'warning')
         return redirect(url_for('wms_cycle_counts_review', run_id=run.id))
 
+    # Note: REJECTED tasks are intentionally excluded — they were rejected by
+    # the supervisor and must not be applied to inventory.
     eligible = run.tasks.filter(WmsCycleCountTask.status == 'REVIEWED').all()
     counts = {'applied': 0, 'noop': 0, 'blocked': 0, 'invalid': 0}
     blocked_msgs = []
@@ -23605,6 +23645,22 @@ def init_database():
         _ensure_wms_defaults()
         db.session.commit()
         print("[WMS] Default warehouse and location ensured")
+
+    # Cycle count task: auto-add review/reject columns for existing DBs
+    cc_inspector = inspect(db.engine)
+    if 'wms_cycle_count_task' in cc_inspector.get_table_names():
+        cc_cols = [c['name'] for c in cc_inspector.get_columns('wms_cycle_count_task')]
+        _cc_migrations = {
+            'reviewed_by_user_id': "ALTER TABLE wms_cycle_count_task ADD COLUMN reviewed_by_user_id INTEGER",
+            'reviewed_at': "ALTER TABLE wms_cycle_count_task ADD COLUMN reviewed_at DATETIME",
+            'rejection_reason': "ALTER TABLE wms_cycle_count_task ADD COLUMN rejection_reason TEXT",
+        }
+        for col_name, sql_stmt in _cc_migrations.items():
+            if col_name not in cc_cols:
+                with db.engine.connect() as conn:
+                    conn.execute(text(sql_stmt))
+                    conn.commit()
+                print(f"[COUNT] Added column wms_cycle_count_task.{col_name}")
     
     inspector = inspect(db.engine)
     
