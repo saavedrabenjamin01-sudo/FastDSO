@@ -72,10 +72,15 @@
       <form method="POST" action="{{ url_for('wms_moves_create') }}">
 
         <div class="mform-field">
-          <label class="mform-label">SKU <span class="mform-req">*</span></label>
-          <input type="text" name="sku" class="mform-input"
-                 placeholder="p. ej. ABC-001"
-                 autocomplete="off" autocapitalize="characters" spellcheck="false" required />
+          <label class="mform-label">
+            <i class="bi bi-upc-scan me-1"></i>SKU <span class="mform-req">*</span>
+            <small class="text-muted ms-1" style="font-weight:400;">— escanea o escribe</small>
+          </label>
+          <input type="text" name="sku" class="mform-input" id="move-sku-input"
+                 placeholder="Escanea o escribe el SKU"
+                 value="{{ prefill_sku or '' }}"
+                 autocomplete="off" autocapitalize="characters" spellcheck="false"
+                 inputmode="text" required {% if not prefill_sku %}autofocus{% endif %} />
         </div>
 
         <div class="mform-separator">
@@ -83,11 +88,13 @@
         </div>
 
         <div class="mform-field">
-          <label class="mform-label">Ubicación origen <span class="mform-req">*</span></label>
+          <label class="mform-label">
+            <i class="bi bi-geo-alt me-1"></i>Ubicación origen <span class="mform-req">*</span>
+          </label>
           <select name="from_location_id" class="mform-select" required>
             <option value="">— Seleccionar —</option>
             {% for loc in location_options %}
-            <option value="{{ loc.id }}">{{ loc.label }}</option>
+            <option value="{{ loc.id }}" {% if prefill_from_loc_id and prefill_from_loc_id|string == loc.id|string %}selected{% endif %}>{{ loc.label }}</option>
             {% endfor %}
           </select>
         </div>
@@ -97,7 +104,9 @@
         </div>
 
         <div class="mform-field">
-          <label class="mform-label">Ubicación destino <span class="mform-req">*</span></label>
+          <label class="mform-label">
+            <i class="bi bi-geo-alt-fill me-1"></i>Ubicación destino <span class="mform-req">*</span>
+          </label>
           <select name="to_location_id" class="mform-select" required>
             <option value="">— Seleccionar —</option>
             {% for loc in location_options %}
@@ -158,7 +167,8 @@
       <div class="move-run-stats">
         <span><strong>{{ run.total_units }}</strong> uds</span>
         <span><strong>{{ run.total_lines }}</strong> línea{{ 's' if run.total_lines != 1 }}</span>
-        <span class="m-badge m-badge-green" style="font-size:.65rem;padding:2px 7px;">{{ run.status }}</span>
+        {% set _sclass = 'm-badge-green' if run.status in ('OK', 'DONE', 'COMPLETED') else ('m-badge-blue' if run.status == 'PENDING' else ('m-badge-red' if run.status in ('ERROR', 'FAILED') else 'm-badge-gray')) %}
+        <span class="m-badge {{ _sclass }}" style="font-size:.65rem;padding:2px 7px;">{{ run.status }}</span>
       </div>
     </div>
   </div>

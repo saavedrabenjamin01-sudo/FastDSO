@@ -10414,6 +10414,7 @@ def _wms_inventory_query(args):
             WmsInventory.on_hand_pallets,
             WmsInventory.id.label('inv_id'),
             WmsInventory.stock_bucket,
+            WmsLocation.id.label('location_id'),
         )
         .join(WmsLocation, WmsInventory.location_id == WmsLocation.id)
         .join(WmsWarehouse, WmsInventory.warehouse_id == WmsWarehouse.id)
@@ -10492,6 +10493,7 @@ def _wms_inventory_query(args):
             'on_hand_pallets': pallets,
             'inv_id': r.inv_id,
             'stock_bucket': r.stock_bucket or 'MAIN',
+            'location_id': r.location_id,
         })
         total_units += units
         total_available += avail
@@ -12971,9 +12973,14 @@ def wms_mobile_moves():
             'to_loc': to_loc.location_code if to_loc else '?',
             'first_sku': prod.sku if prod else '?',
         })
+    # Optional prefill from inventory "Mover" action
+    prefill_sku = (request.args.get('sku') or '').strip()
+    prefill_from_loc_id = request.args.get('from_loc_id', type=int)
     return render_template('wms_mobile_moves.html',
                            location_options=location_options,
-                           recent_runs=runs_data)
+                           recent_runs=runs_data,
+                           prefill_sku=prefill_sku,
+                           prefill_from_loc_id=prefill_from_loc_id)
 
 
 @app.route('/wms/mobile/inventory', methods=['GET'])

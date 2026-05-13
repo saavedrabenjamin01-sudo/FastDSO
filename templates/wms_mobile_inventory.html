@@ -23,7 +23,8 @@
     color: var(--m-text); margin-bottom: 8px;
   }
   .inv-search-input:focus { outline: none; }
-  .inv-filter-row { display: flex; gap: 6px; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
+  .inv-filter-row { display: flex; gap: 6px; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; }
+  .inv-filter-row > * { scroll-snap-align: start; }
   .inv-filter-row::-webkit-scrollbar { display: none; }
   .inv-filter-select {
     flex-shrink: 0; padding: 7px 10px; border-radius: 9px;
@@ -182,7 +183,7 @@
     </div>
 
     <div class="inv-card-footer">
-      <a href="{{ url_for('wms_mobile_moves') }}" class="inv-action-btn">
+      <a href="{{ url_for('wms_mobile_moves', sku=row.sku, **({'from_loc_id': row.location_id} if row.location_id else {})) }}" class="inv-action-btn">
         <i class="bi bi-arrow-left-right"></i> Mover
       </a>
       <a href="{{ url_for('wms_mobile_inventory') }}?q={{ row.sku|urlencode }}" class="inv-action-btn">

@@ -6,6 +6,8 @@
 <a href="{{ url_for('wms_mobile_count_run', run_id=run.id) }}" class="m-topbar-icon-btn"><i class="bi bi-arrow-left"></i></a>
 {% endblock %}
 
+{% block nav_inventory_active %}active{% endblock %}
+
 {% block topbar_title %}
 Contar
 <small>{{ run.code }}</small>

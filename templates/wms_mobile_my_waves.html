@@ -66,15 +66,15 @@ Mis Waves
         <div class="wave-badges">
           {# Source type badge #}
           {% if w.src_badge == 'WEB' %}
-          <span class="m-badge" style="background:#7c3aed;color:#fff;font-size:.62rem;letter-spacing:.3px;">
+          <span class="m-badge m-badge-purple" style="font-size:.62rem;letter-spacing:.3px;">
             <i class="bi bi-globe" style="font-size:.6rem;"></i> WEB
           </span>
           {% elif w.src_badge == 'MANUAL' %}
-          <span class="m-badge" style="background:#0369a1;color:#fff;font-size:.62rem;letter-spacing:.3px;">
+          <span class="m-badge m-badge-blue" style="font-size:.62rem;letter-spacing:.3px;">
             <i class="bi bi-pencil" style="font-size:.6rem;"></i> MANUAL
           </span>
           {% else %}
-          <span class="m-badge" style="background:#1e40af;color:#fff;font-size:.62rem;letter-spacing:.3px;">
+          <span class="m-badge m-badge-blue" style="font-size:.62rem;letter-spacing:.3px;background:#dbeafe;color:#1e40af;">
             <i class="bi bi-kanban" style="font-size:.6rem;"></i> PLANNER
           </span>
           {% endif %}

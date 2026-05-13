@@ -6,6 +6,8 @@
 <a href="{{ url_for('wms_mobile_counts_list') }}" class="m-topbar-icon-btn"><i class="bi bi-arrow-left"></i></a>
 {% endblock %}
 
+{% block nav_inventory_active %}active{% endblock %}
+
 {% block topbar_title %}
 {{ run.code }}
 <small>{{ run.warehouse_code }} · {{ run.stock_bucket or 'Todos' }}</small>

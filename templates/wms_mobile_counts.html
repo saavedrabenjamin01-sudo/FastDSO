@@ -6,6 +6,8 @@
 <div class="m-topbar-logo"><i class="bi bi-clipboard-check"></i></div>
 {% endblock %}
 
+{% block nav_inventory_active %}active{% endblock %}
+
 {% block topbar_title %}
 Mis Conteos
 <small>Conteos cíclicos asignados</small>
@@ -68,7 +70,7 @@ Mis Conteos
       </div>
 
       <div class="cc-actions">
-        <a href="{{ url_for('wms_mobile_count_run', run_id=r.id) }}" class="btn btn-primary w-100">
+        <a href="{{ url_for('wms_mobile_count_run', run_id=r.id) }}" class="m-btn m-btn-primary">
           <i class="bi bi-play-fill me-1"></i>Continuar conteo
         </a>
       </div>

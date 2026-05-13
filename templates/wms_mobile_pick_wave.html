@@ -25,7 +25,7 @@
 </span>
 {% endblock %}
 
-{% block nav_pick_active %}active{% endblock %}
+{% block nav_waves_active %}active{% endblock %}
 
 {% block content_class %}no-bottom-pad{% endblock %}
 
@@ -233,7 +233,7 @@
       <span class="mpick-card-title"><i class="bi bi-hand-index-thumb me-1"></i>Siguiente reservación</span>
       <div style="display:flex;gap:6px;align-items:center;">
         {% if next_res.is_reallocation %}
-        <span class="m-badge" style="background:#7c3aed;color:#fff;font-size:.67rem;">
+        <span class="m-badge m-badge-purple" style="font-size:.67rem;">
           <i class="bi bi-arrow-repeat me-1"></i>Reasignada
         </span>
         {% endif %}
