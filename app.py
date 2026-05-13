@@ -2653,6 +2653,53 @@ def inject_globals():
     }
 
 
+WMS_MOBILE_ROLES = {'WarehouseOps', 'WarehouseManager', 'WarehouseOperator',
+                    'warehouse_op', 'warehouse_manager', 'warehouse_operator'}
+WMS_MOBILE_PERMS = ('wms:view', 'wms:pick', 'wms:moves', 'wms:count_execute',
+                    'wms:replen_execute', 'wms:replenishment_execute')
+
+
+def is_wms_mobile_user(user):
+    """True if user belongs to a WMS operational role or has core WMS permissions."""
+    try:
+        if not user or not getattr(user, 'is_authenticated', False):
+            return False
+        role = (getattr(user, 'role', '') or '').strip()
+        if role in WMS_MOBILE_ROLES:
+            return True
+        for p in WMS_MOBILE_PERMS:
+            try:
+                if user.has_permission(p):
+                    return True
+            except Exception:
+                continue
+    except Exception:
+        return False
+    return False
+
+
+def is_mobile_request(req):
+    """Lightweight UA-based mobile device detection."""
+    try:
+        ua = (req.headers.get('User-Agent', '') or '').lower()
+    except Exception:
+        return False
+    return any(m in ua for m in ('iphone', 'ipod', 'android', 'mobile', 'blackberry', 'windows phone'))
+
+
+def require_wms_mobile_access(f):
+    """Decorator: only WMS mobile users (or Admin) can access."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not current_user.is_authenticated:
+            return redirect(url_for('login'))
+        if (current_user.role or '') == 'Admin' or is_wms_mobile_user(current_user):
+            return f(*args, **kwargs)
+        flash('Acceso restringido al portal móvil WMS.', 'warning')
+        return redirect(url_for('home'))
+    return decorated
+
+
 def require_permission(permission):
     """Decorator to require a specific permission to access a route."""
     def decorator(f):
@@ -4747,6 +4794,8 @@ def login():
             next_url = request.args.get('next') or request.form.get('next')
             if next_url and next_url.startswith('/') and not next_url.startswith('//'):
                 return redirect(next_url)
+            if is_mobile_request(request) and is_wms_mobile_user(user):
+                return redirect(url_for('wms_mobile_home'))
             return redirect(url_for('home'))
 
         flash('Credenciales inválidas.', 'danger')
@@ -4769,7 +4818,16 @@ def index():
 @app.route('/home')
 @login_required
 def home():
+    if is_mobile_request(request) and is_wms_mobile_user(current_user) and (current_user.role or '') != 'Admin':
+        return redirect(url_for('wms_mobile_home'))
     return render_template('home.html')
+
+
+@app.route('/wms/mobile')
+@login_required
+@require_wms_mobile_access
+def wms_mobile_home():
+    return render_template('wms_mobile_home.html')
 
 from datetime import date, timedelta
 from sqlalchemy import func

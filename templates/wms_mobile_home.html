@@ -1,0 +1,72 @@
+{% extends "mobile_base.html" %}
+{% block title %}Portal WMS{% endblock %}
+{% block topbar_title %}Portal WMS<small>{{ current_user.username }}</small>{% endblock %}
+{% block topbar_back %}
+<div class="m-topbar-back" style="background:transparent;cursor:default">
+  <i class="bi bi-boxes"></i>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="m-page-wrap" style="padding:14px 12px 20px">
+
+  <div class="m-section-label" style="padding:4px 4px 8px">Operación</div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+    <a href="{{ url_for('wms_mobile_my_waves') }}" class="m-card" style="margin:0;text-decoration:none;color:inherit">
+      <div class="m-card-body" style="text-align:center;padding:18px 10px">
+        <div style="font-size:2rem;color:var(--m-blue)"><i class="bi bi-list-task"></i></div>
+        <div style="font-weight:800;margin-top:6px">Mis Waves</div>
+        <div class="m-badge m-badge-blue" style="margin-top:6px">Picking</div>
+      </div>
+    </a>
+
+    <a href="{{ url_for('wms_mobile_issues') }}" class="m-card" style="margin:0;text-decoration:none;color:inherit">
+      <div class="m-card-body" style="text-align:center;padding:18px 10px">
+        <div style="font-size:2rem;color:var(--m-red)"><i class="bi bi-exclamation-triangle"></i></div>
+        <div style="font-weight:800;margin-top:6px">Incidencias</div>
+        <div class="m-badge m-badge-red" style="margin-top:6px">Excepciones</div>
+      </div>
+    </a>
+
+    <a href="{{ url_for('wms_mobile_moves') }}" class="m-card" style="margin:0;text-decoration:none;color:inherit">
+      <div class="m-card-body" style="text-align:center;padding:18px 10px">
+        <div style="font-size:2rem;color:var(--m-purple)"><i class="bi bi-arrow-left-right"></i></div>
+        <div style="font-weight:800;margin-top:6px">Movimientos</div>
+        <div class="m-badge m-badge-purple" style="margin-top:6px">Internos</div>
+      </div>
+    </a>
+
+    <a href="{{ url_for('wms_mobile_inventory') }}" class="m-card" style="margin:0;text-decoration:none;color:inherit">
+      <div class="m-card-body" style="text-align:center;padding:18px 10px">
+        <div style="font-size:2rem;color:var(--m-blue-deep)"><i class="bi bi-boxes"></i></div>
+        <div style="font-weight:800;margin-top:6px">Inventario</div>
+        <div class="m-badge m-badge-blue" style="margin-top:6px">Consulta</div>
+      </div>
+    </a>
+
+    <a href="{{ url_for('wms_mobile_counts') }}" class="m-card" style="margin:0;text-decoration:none;color:inherit">
+      <div class="m-card-body" style="text-align:center;padding:18px 10px">
+        <div style="font-size:2rem;color:var(--m-orange)"><i class="bi bi-clipboard-check"></i></div>
+        <div style="font-weight:800;margin-top:6px">Conteos</div>
+        <div class="m-badge m-badge-medium" style="margin-top:6px">Cíclicos</div>
+      </div>
+    </a>
+
+    <a href="{{ url_for('wms_mobile_replenishment') }}" class="m-card" style="margin:0;text-decoration:none;color:inherit">
+      <div class="m-card-body" style="text-align:center;padding:18px 10px">
+        <div style="font-size:2rem;color:var(--m-green)"><i class="bi bi-arrow-repeat"></i></div>
+        <div style="font-weight:800;margin-top:6px">Reabastec.</div>
+        <div class="m-badge m-badge-green" style="margin-top:6px">Reposición</div>
+      </div>
+    </a>
+  </div>
+
+  <div class="m-section-label" style="padding:18px 4px 8px">Sesión</div>
+  <a href="{{ url_for('logout') }}" class="m-btn m-btn-danger">
+    <i class="bi bi-box-arrow-right"></i> Salir
+  </a>
+</div>
+{% endblock %}
+
+{% block nav_waves_active %}{% endblock %}

@@ -1,0 +1,159 @@
+Consolidate all mobile WMS functionality into a single mobile operator module, and auto-redirect warehouse users into it when they log in from a phone.
+
+GOAL
+Create one unified WMS mobile module/portal for warehouse users.
+If a warehouse operational user logs in from a mobile device, they must land automatically in that mobile WMS module instead of the normal home/dashboard.
+
+BUSINESS RULES
+The mobile WMS portal must be available only for warehouse operational profiles:
+- WarehouseManager
+- WarehouseOP
+- WarehouseOperator
+
+IMPORTANT:
+Do not rely only on role name strings if the RBAC system is already in place.
+Use a safe helper that supports:
+- matching known warehouse roles
+- OR checking core WMS permissions
+
+==================================================
+PART 1 — CREATE A SINGLE MOBILE WMS HUB
+==================================================
+
+1) Create a new route:
+- /wms/mobile
+
+This must become the single entry point / home for all mobile warehouse operations.
+
+2) Create template:
+- templates/wms_mobile_home.html
+using:
+- mobile_base.html
+
+3) The mobile WMS home must show large cards/buttons for:
+- Mis Waves
+- Incidencias
+- Movimientos
+- Inventario
+- Conteos
+- Reabastecimiento
+- (Packing later if available)
+- Salir
+
+4) Keep the existing subroutes, but make them live under this unified mobile module:
+- /wms/mobile/my-waves
+- /wms/mobile/issues
+- /wms/mobile/moves
+- /wms/mobile/inventory
+- /wms/mobile/counts
+- /wms/mobile/replenishment
+
+==================================================
+PART 2 — ACCESS CONTROL
+==================================================
+
+1) Create helper:
+is_wms_mobile_user(user)
+
+Return True if:
+- role name is one of:
+   warehouse_manager
+   warehouse_op
+   warehouse_operator
+or equivalent existing canonical names
+OR
+- user has core WMS permissions such as:
+   wms:view
+   wms:pick
+   wms:moves
+   wms:count_execute
+   wms:replenishment_execute
+
+2) Restrict /wms/mobile* routes:
+- only authenticated users
+- only WMS operational users
+- admins may still access for supervision/testing if desired
+
+3) Non-WMS users must not access the mobile WMS portal.
+If they try:
+- redirect to /home or show controlled access denied
+
+==================================================
+PART 3 — AUTO REDIRECT AFTER LOGIN
+==================================================
+
+1) Update login success flow:
+- if "next" exists and is valid, still respect it
+- otherwise:
+   if request comes from a mobile device AND current_user is a WMS mobile user:
+      redirect to /wms/mobile
+   else:
+      redirect to /home
+
+2) Mobile device detection
+Implement a lightweight helper such as:
+is_mobile_request(request)
+
+Use simple user-agent detection for:
+- iphone
+- android
+- mobile
+- similar markers
+
+3) Do not overcomplicate detection.
+This is just to provide a better default landing page.
+
+==================================================
+PART 4 — OPTIONAL HOME REDIRECT SAFETY
+==================================================
+
+If a WMS mobile user manually opens /home from a phone:
+- optionally redirect them to /wms/mobile
+This is recommended to keep the experience clean and prevent them from landing in the general portal by mistake.
+
+Desktop behavior:
+- if the same user opens the portal from desktop, /home may remain available normally
+
+==================================================
+PART 5 — MOBILE UI CONSOLIDATION
+==================================================
+
+1) The /wms/mobile page must look like a dedicated mobile operator home, not a generic menu.
+2) Use:
+- big cards
+- strong WMS status badges
+- clean spacing
+- same FastDSO/FastWMS design language
+3) No desktop sidebar
+4) Keep everything in Spanish
+
+Labels:
+- Portal WMS
+- Mis Waves
+- Incidencias
+- Movimientos
+- Inventario
+- Conteos
+- Reabastecimiento
+- Salir
+
+==================================================
+PART 6 — MENU / NAV CLEANUP
+==================================================
+
+For WMS mobile users on phone:
+- prioritize the WMS mobile portal
+- avoid exposing unrelated dashboard/navigation noise
+- if possible, hide irrelevant non-WMS links in the mobile layout
+
+==================================================
+PART 7 — DELIVERABLES
+==================================================
+
+Deliver:
+- unified /wms/mobile hub
+- dedicated wms_mobile_home.html
+- role/permission-based WMS mobile access helper
+- mobile-device login redirect for warehouse users
+- clean operator-focused navigation
+- no breaking changes to desktop behavior
