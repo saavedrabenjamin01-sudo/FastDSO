@@ -12498,6 +12498,189 @@ def wms_cycle_count_task_review(run_id, task_id):
     return redirect(url_for('wms_cycle_counts_review', run_id=run.id))
 
 
+# ---------- Phase 3: inventory adjustments ----------
+
+def _apply_count_adjustment(task, run, user):
+    """
+    Apply a single cycle-count task adjustment to WmsInventory.
+    Returns (status, message) where status in {'applied', 'blocked', 'noop', 'invalid'}.
+    Safety rules:
+      - Task must be in REVIEWED status.
+      - Bucket must be set (never mix MAIN/WEB).
+      - Block when allocated_units > counted_qty (would oversell allocated stock).
+      - Always write WmsInventoryAdjustmentLog when on_hand_units changes.
+    """
+    if task.status != 'REVIEWED':
+        return ('invalid', f'La tarea debe estar REVIEWED (actual: {task.status}).')
+
+    if task.counted_qty is None:
+        return ('invalid', 'La tarea no tiene cantidad contada.')
+
+    if int(task.counted_qty) < 0:
+        return ('invalid', 'La cantidad contada no puede ser negativa.')
+
+    if not task.product_id:
+        return ('invalid', 'La tarea no tiene producto asociado.')
+
+    if not task.location_id:
+        return ('invalid', 'La tarea no tiene ubicación asociada.')
+
+    bucket = task.stock_bucket
+    if not bucket or bucket not in WMS_STOCK_BUCKETS:
+        return ('invalid', 'La tarea no tiene un bucket de stock válido.')
+
+    # MATCH = no-op, just close out the task
+    if task.variance_type == 'MATCH' or (task.variance_qty or 0) == 0:
+        task.status = 'ADJUSTED'
+        print(f"[COUNT] adjustment approved task={task.id} type=NOOP variance=0")
+        return ('noop', 'Sin diferencia: tarea cerrada sin cambios.')
+
+    # Resolve warehouse
+    wh = WmsWarehouse.query.filter_by(code=run.warehouse_code).first()
+    if not wh:
+        return ('invalid', f'Warehouse {run.warehouse_code} no existe.')
+
+    # Locate the exact (warehouse, location, product, bucket) inventory row
+    inv = (db.session.query(WmsInventory)
+           .filter(WmsInventory.warehouse_id == wh.id,
+                   WmsInventory.location_id == task.location_id,
+                   WmsInventory.product_id == task.product_id,
+                   WmsInventory.stock_bucket == bucket)
+           .first())
+
+    counted = int(task.counted_qty)
+    old_qty = int(inv.on_hand_units) if inv else 0
+    allocated = int(inv.allocated_units) if inv else 0
+
+    # SAFETY: never reduce on_hand below already-allocated stock
+    if allocated > counted:
+        print(f"[COUNT] adjustment blocked task={task.id} reason=allocated_gt_counted "
+              f"allocated={allocated} counted={counted} bucket={bucket}")
+        return ('blocked',
+                f'Bloqueado: hay {allocated} unidades comprometidas (allocated) y el conteo es {counted}. '
+                f'Libera la asignación antes de ajustar.')
+
+    # Apply: update or create the inventory row
+    if inv:
+        inv.on_hand_units = counted
+        inv.updated_at = datetime.utcnow()
+    else:
+        inv = WmsInventory(
+            warehouse_id=wh.id,
+            location_id=task.location_id,
+            product_id=task.product_id,
+            stock_bucket=bucket,
+            on_hand_units=counted,
+            allocated_units=0,
+        )
+        db.session.add(inv)
+
+    # Audit trail: WmsInventoryAdjustmentLog
+    adj_log = WmsInventoryAdjustmentLog(
+        task_id=task.id,
+        product_id=task.product_id,
+        sku=task.sku or '',
+        location_id=task.location_id,
+        location_code=task.location_code,
+        stock_bucket=bucket,
+        old_qty=old_qty,
+        new_qty=counted,
+        variance_qty=counted - old_qty,
+        approved_by_user_id=user.id,
+        note=f'Cycle count {run.code} task #{task.id}',
+    )
+    db.session.add(adj_log)
+
+    task.status = 'ADJUSTED'
+    print(f"[COUNT] adjustment approved task={task.id} bucket={bucket} "
+          f"old={old_qty} new={counted} variance={counted - old_qty}")
+    return ('applied', f'Ajuste aplicado: {old_qty} → {counted} ({counted - old_qty:+d}).')
+
+
+@app.route('/wms/cycle-counts/<int:run_id>/task/<int:task_id>/apply', methods=['POST'])
+@login_required
+@require_permission('wms:count_manage')
+def wms_cycle_count_task_apply(run_id, task_id):
+    run = WmsCycleCountRun.query.get_or_404(run_id)
+    task = WmsCycleCountTask.query.get_or_404(task_id)
+    if task.run_id != run.id:
+        abort(404)
+    if run.status not in ('REVIEW_PENDING', 'COMPLETED'):
+        flash('El conteo no está en revisión.', 'warning')
+        return redirect(url_for('wms_cycle_counts_review', run_id=run.id))
+
+    status, msg = _apply_count_adjustment(task, run, current_user)
+    if status in ('invalid', 'blocked'):
+        db.session.rollback()
+        flash(msg, 'danger' if status == 'blocked' else 'warning')
+        log_audit('cycle_count.adjust', status='failed',
+                  message=f'Conteo {run.code} tarea #{task.id}: {msg}',
+                  entity_type='WmsCycleCountTask', entity_id=task.id)
+    else:
+        db.session.commit()
+        flash(msg, 'success')
+        log_audit('cycle_count.adjust', status='success',
+                  message=f'Conteo {run.code} tarea #{task.id}: {msg}',
+                  entity_type='WmsCycleCountTask', entity_id=task.id)
+    return redirect(url_for('wms_cycle_counts_review', run_id=run.id))
+
+
+@app.route('/wms/cycle-counts/<int:run_id>/apply-all', methods=['POST'])
+@login_required
+@require_permission('wms:count_manage')
+def wms_cycle_count_apply_all(run_id):
+    run = WmsCycleCountRun.query.get_or_404(run_id)
+    if run.status not in ('REVIEW_PENDING', 'COMPLETED'):
+        flash('El conteo no está en revisión.', 'warning')
+        return redirect(url_for('wms_cycle_counts_review', run_id=run.id))
+
+    eligible = run.tasks.filter(WmsCycleCountTask.status == 'REVIEWED').all()
+    counts = {'applied': 0, 'noop': 0, 'blocked': 0, 'invalid': 0}
+    blocked_msgs = []
+
+    for task in eligible:
+        # Per-task savepoint so a single failure (DB integrity, etc.)
+        # never poisons the rest of the batch.
+        sp = db.session.begin_nested()
+        try:
+            status, msg = _apply_count_adjustment(task, run, current_user)
+            if status in ('applied', 'noop'):
+                sp.commit()
+            else:
+                sp.rollback()
+        except Exception as exc:  # noqa: BLE001
+            sp.rollback()
+            status = 'invalid'
+            msg = f'Error al procesar tarea: {exc}'
+            print(f"[COUNT] adjustment blocked task={task.id} reason=exception err={exc}")
+
+        counts[status] = counts.get(status, 0) + 1
+        if status == 'blocked':
+            blocked_msgs.append(f'#{task.id} ({task.sku}): {msg}')
+        elif status == 'invalid':
+            blocked_msgs.append(f'#{task.id} ({task.sku}): {msg}')
+
+    db.session.commit()
+
+    parts = [f"Aplicados: {counts['applied']}",
+             f"sin diferencia: {counts['noop']}",
+             f"bloqueados: {counts['blocked']}"]
+    if counts['invalid']:
+        parts.append(f"inválidos: {counts['invalid']}")
+    summary = ', '.join(parts)
+    print(f"[COUNT] apply-all run={run.id} code={run.code} {summary}")
+    log_audit('cycle_count.adjust_all', status='success',
+              message=f'Conteo {run.code} apply-all: {summary}',
+              entity_type='WmsCycleCountRun', entity_id=run.id)
+
+    if counts['blocked']:
+        flash(f'{summary}. Tareas bloqueadas: ' + ' | '.join(blocked_msgs[:3])
+              + ('...' if len(blocked_msgs) > 3 else ''), 'warning')
+    else:
+        flash(summary, 'success')
+    return redirect(url_for('wms_cycle_counts_review', run_id=run.id))
+
+
 @app.route('/wms/cycle-counts/<int:run_id>/close', methods=['POST'])
 @login_required
 @require_permission('wms:count_manage')
