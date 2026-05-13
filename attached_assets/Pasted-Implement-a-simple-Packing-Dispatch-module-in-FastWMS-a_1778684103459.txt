@@ -1,0 +1,323 @@
+Implement a simple Packing / Dispatch module in FastWMS as the next outbound operational step after picking.
+
+GOAL
+Add a practical packing and dispatch workflow so picked waves/orders can be:
+- consolidated
+- packed
+- assigned to parcels/packages
+- marked as ready for dispatch
+- closed with traceability
+
+IMPORTANT
+This is a simple operational packing/dispatch module for V1.
+Do NOT build a full transport management system.
+Do NOT implement complex carrier integrations yet.
+
+This module must work for:
+- Planner/store-distribution waves
+- MANUAL_WEB waves
+- MANUAL_OTHER waves
+
+==================================================
+PART 1 — BUSINESS SCOPE
+==================================================
+
+We need an outbound workflow after picking:
+
+1) Picking finishes
+2) Order/folio/wave enters packing stage
+3) User can consolidate picked units into packages
+4) Packages can be closed
+5) Run can be marked ready for dispatch / dispatched
+
+This must support two main realities:
+- Store distribution folios
+- WEB/manual orders
+
+==================================================
+PART 2 — DATA MODEL
+==================================================
+
+Add these models/tables:
+
+1) WmsPackingRun
+- id
+- code/reference
+- wave_id nullable
+- plan_id nullable
+- created_at
+- created_by_user_id
+- packing_type
+  allowed values:
+   STORE_TRANSFER
+   WEB_ORDER
+   MANUAL
+- external_reference nullable
+- status
+  allowed values:
+   DRAFT
+   IN_PROGRESS
+   PACKED
+   READY_TO_DISPATCH
+   DISPATCHED
+   CLOSED
+- note nullable
+
+2) WmsPackingLine
+- id
+- packing_run_id
+- product_id
+- sku
+- product_name
+- stock_bucket
+- qty_picked
+- qty_packed
+- qty_pending
+- status
+  allowed values:
+   OPEN
+   PARTIAL
+   PACKED
+- note nullable
+
+3) WmsPackage
+- id
+- packing_run_id
+- package_code
+- package_number
+- status
+  allowed values:
+   OPEN
+   CLOSED
+   DISPATCHED
+- weight nullable
+- volume nullable
+- note nullable
+- created_at
+- closed_at nullable
+
+4) WmsPackageLine
+- id
+- package_id
+- packing_line_id
+- product_id
+- sku
+- qty_packed
+- note nullable
+
+==================================================
+PART 3 — PACKING RUN CREATION
+==================================================
+
+Create module/pages:
+- /wms/packing
+- /wms/packing/new
+- /wms/packing/<packing_run_id>
+
+Permissions:
+- warehouse_manager or admin
+- or permission such as wms:pack_manage
+
+Packing run can be created from:
+1) completed pick wave
+2) completed planner folio
+3) manual WEB wave
+4) manual OTHER wave
+
+Rules:
+- if wave is not PICKED / CLOSED, packing cannot start
+- use actual picked quantities as source
+- never pack more than actually picked
+
+==================================================
+PART 4 — PACKING RUN BUILD LOGIC
+==================================================
+
+Create service:
+create_packing_run_from_wave_or_plan(...)
+
+Behavior:
+1) Read actual picked quantities from WMS tasks/reservations
+2) Aggregate by SKU
+3) Create WmsPackingRun
+4) Create WmsPackingLine rows:
+   qty_picked = actual picked
+   qty_packed = 0
+   qty_pending = qty_picked
+   status = OPEN
+
+Packing type mapping:
+- Planner/store folio -> STORE_TRANSFER
+- MANUAL_WEB -> WEB_ORDER
+- MANUAL_OTHER -> MANUAL
+
+==================================================
+PART 5 — PACKING UI
+==================================================
+
+Packing run detail page must show:
+
+A) Header
+- reference / folio / wave / external reference
+- type badge
+- status
+- created_at
+- operator/responsible if useful
+
+B) Summary cards
+- total SKUs
+- total picked units
+- total packed units
+- total pending units
+- total packages
+
+C) Packing lines table
+Columns:
+- SKU
+- Producto
+- Qty pickeada
+- Qty empacada
+- Qty pendiente
+- Estado
+
+D) Package section
+List packages/bultos:
+- package number/code
+- status
+- total lines
+- total units
+- optional weight/volume
+
+Actions:
+- Crear bulto
+- Agregar a bulto
+- Cerrar bulto
+- Marcar listo para despacho
+- Marcar despachado
+
+==================================================
+PART 6 — PACKAGE ASSIGNMENT LOGIC
+==================================================
+
+1) User can create one or more packages per packing run
+2) For each package:
+- add SKU quantities from open packing lines
+- decrement qty_pending
+- increment qty_packed
+- update packing line status:
+   OPEN / PARTIAL / PACKED
+
+3) Rules:
+- cannot pack more than qty_pending
+- cannot close run while qty_pending > 0 unless business chooses partial shipping
+For V1:
+- allow READY_TO_DISPATCH only when all qty_pending = 0
+
+==================================================
+PART 7 — DISPATCH STATUS FLOW
+==================================================
+
+Packing run status flow:
+- DRAFT
+- IN_PROGRESS
+- PACKED
+- READY_TO_DISPATCH
+- DISPATCHED
+- CLOSED
+
+Rules:
+1) once first package activity occurs -> IN_PROGRESS
+2) when all qty_pending = 0 -> PACKED
+3) supervisor/user can mark -> READY_TO_DISPATCH
+4) then -> DISPATCHED
+5) optional final -> CLOSED
+
+==================================================
+PART 8 — INTEGRATION WITH EXISTING FLOWS
+==================================================
+
+1) Planner/store distribution folios
+- after picking is complete and folio is in Empacado, packing run can be created
+- packing run can serve as the operational bridge before final dispatch/close if useful
+
+2) WEB/manual waves
+- after wave is picked, packing run can be created
+- this is especially important for ecommerce orders
+
+3) Existing folio close/store transfer logic
+Do NOT break it.
+If needed, packing can initially be informational/operational without replacing final stock transfer closure yet.
+But prepare structure so dispatch can later integrate cleanly.
+
+==================================================
+PART 9 — MOBILE / FUTURE-SAFE
+==================================================
+
+For V1, desktop-first packing is acceptable.
+Optional:
+- add mobile-friendly package confirmation later
+
+Do not overbuild mobile packing now unless easy.
+
+==================================================
+PART 10 — VISUAL / UX
+==================================================
+
+Use same FastDSO/FastWMS style:
+- clean cards
+- package cards
+- clear status badges
+- no clutter
+
+Spanish labels only:
+- Packing
+- Bultos
+- Crear bulto
+- Agregar a bulto
+- Cerrar bulto
+- Listo para despacho
+- Despachado
+- Cantidad pendiente
+- Cantidad empacada
+
+Status badges:
+- OPEN = gray
+- PARTIAL = orange
+- PACKED = green
+- READY_TO_DISPATCH = blue
+- DISPATCHED = dark/green
+
+==================================================
+PART 11 — LOGGING / AUDIT
+==================================================
+
+Add logs:
+- [PACK] run created id=...
+- [PACK] package created id=... run=...
+- [PACK] line packed sku=... qty=... package=...
+- [PACK] run marked READY_TO_DISPATCH id=...
+- [PACK] run marked DISPATCHED id=...
+
+==================================================
+PART 12 — SAFETY
+==================================================
+
+- do not pack more than actually picked
+- do not break current wave/folio closure logic
+- do not touch inventory quantities directly here unless future dispatch integration requires it
+- use transactions for package assignment changes
+- keep all packing quantities traceable
+
+==================================================
+DELIVERABLES
+==================================================
+
+Deliver:
+- WmsPackingRun model
+- WmsPackingLine model
+- WmsPackage model
+- WmsPackageLine model
+- desktop packing module
+- package creation and package assignment flow
+- packing status progression
+- no breaking changes to current Planner/WMS picking flows
