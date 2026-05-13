@@ -1,0 +1,105 @@
+{% extends 'mobile_base.html' %}
+
+{% block title %}{{ run.code }}{% endblock %}
+
+{% block topbar_back %}
+<a href="{{ url_for('wms_mobile_counts_list') }}" class="m-topbar-icon-btn"><i class="bi bi-arrow-left"></i></a>
+{% endblock %}
+
+{% block topbar_title %}
+{{ run.code }}
+<small>{{ run.warehouse_code }} · {{ run.stock_bucket or 'Todos' }}</small>
+{% endblock %}
+
+{% block content %}
+<style>
+  .cc-summary { display:flex; gap:8px; padding:12px; background:#fff; border-bottom:1px solid var(--m-border); }
+  .cc-sum-kpi { flex:1; text-align:center; background:var(--m-bg); border-radius:10px; padding:8px 6px; }
+  .cc-sum-val { font-size:1.2rem; font-weight:800; color:var(--m-text); }
+  .cc-sum-lbl { font-size:.64rem; color:var(--m-muted); text-transform:uppercase; letter-spacing:.4px; margin-top:2px; }
+
+  .cc-section-title { padding:12px 14px 6px; font-size:.75rem; text-transform:uppercase;
+                      letter-spacing:.5px; color:var(--m-muted); font-weight:700; }
+
+  .task-item {
+    display:flex; justify-content:space-between; align-items:center;
+    background:#fff; padding:12px 14px; margin:0 12px 8px;
+    border-radius:12px; box-shadow:0 1px 4px rgba(14,30,80,.08);
+    border-left:4px solid var(--m-blue);
+    text-decoration:none; color:var(--m-text);
+  }
+  .task-item.done { border-left-color:#22c55e; background:#f8fafc; }
+  .task-item.var  { border-left-color:#ef4444; }
+
+  .task-loc { font-weight:700; font-size:.95rem; }
+  .task-loc small { display:block; font-weight:400; color:var(--m-muted); font-size:.72rem; margin-top:2px; }
+  .task-sku { font-family:monospace; font-size:.78rem; color:var(--m-muted); }
+  .task-product { font-size:.78rem; color:var(--m-muted); margin-top:2px;
+                  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:180px; }
+  .task-right { text-align:right; }
+  .task-qty { font-size:1.1rem; font-weight:800; }
+  .task-qty.danger { color:#ef4444; }
+  .task-qty.warn   { color:#f59e0b; }
+  .task-qty-lbl { font-size:.62rem; color:var(--m-muted); text-transform:uppercase; }
+
+  .cc-empty { text-align:center; padding:32px 16px; color:var(--m-muted); }
+</style>
+
+<div class="cc-summary">
+  <div class="cc-sum-kpi"><div class="cc-sum-val">{{ run.total_tasks }}</div><div class="cc-sum-lbl">Total</div></div>
+  <div class="cc-sum-kpi"><div class="cc-sum-val">{{ run.counted_tasks }}</div><div class="cc-sum-lbl">Contadas</div></div>
+  <div class="cc-sum-kpi"><div class="cc-sum-val" style="color:#f59e0b;">{{ run.total_tasks - run.counted_tasks }}</div><div class="cc-sum-lbl">Pendientes</div></div>
+  <div class="cc-sum-kpi"><div class="cc-sum-val" style="{% if run.variance_tasks > 0 %}color:#ef4444;{% endif %}">{{ run.variance_tasks }}</div><div class="cc-sum-lbl">Diferencia</div></div>
+</div>
+
+<div class="cc-section-title">Pendientes ({{ pending_tasks|length }})</div>
+{% if pending_tasks %}
+  {% for t in pending_tasks %}
+  <a href="{{ url_for('wms_mobile_count_task', run_id=run.id, task_id=t.id) }}" class="task-item">
+    <div>
+      <div class="task-loc">
+        {{ t.location_code or t.location or '—' }}
+        <small>{{ t.stock_bucket or 'MAIN' }}{% if t.box_number %} · Caja {{ t.box_number }}{% endif %}</small>
+      </div>
+      <div class="task-sku">{{ t.sku or '—' }}</div>
+      <div class="task-product">{{ t.product_name or '' }}</div>
+    </div>
+    <div class="task-right">
+      <div class="task-qty">{{ t.expected_qty }}</div>
+      <div class="task-qty-lbl">Sistema</div>
+    </div>
+  </a>
+  {% endfor %}
+{% else %}
+  <div class="cc-empty">
+    <i class="bi bi-check2-circle" style="font-size:2.5rem;display:block;margin-bottom:8px;color:#22c55e;"></i>
+    <div style="font-weight:600;">¡No quedan tareas pendientes!</div>
+    <div style="font-size:.8rem;margin-top:4px;">El conteo pasará a revisión.</div>
+  </div>
+{% endif %}
+
+{% if counted_tasks %}
+<div class="cc-section-title">Recién contadas</div>
+{% for t in counted_tasks %}
+<div class="task-item done {% if t.variance_type in ['SHORT','OVER'] %}var{% endif %}">
+  <div>
+    <div class="task-loc">
+      {{ t.location_code or t.location or '—' }}
+      <small>{{ t.stock_bucket or 'MAIN' }}</small>
+    </div>
+    <div class="task-sku">{{ t.sku }}</div>
+  </div>
+  <div class="task-right">
+    <div class="task-qty {% if t.variance_qty and t.variance_qty < 0 %}danger{% elif t.variance_qty and t.variance_qty > 0 %}warn{% endif %}">
+      {{ t.counted_qty }}
+    </div>
+    <div class="task-qty-lbl">
+      {% if t.variance_qty %}{{ "{:+,}".format(t.variance_qty) }}{% else %}OK{% endif %}
+    </div>
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+
+<div style="height:24px;"></div>
+{% endblock %}

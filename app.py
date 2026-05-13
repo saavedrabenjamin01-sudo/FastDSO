@@ -12412,13 +12412,221 @@ def wms_cycle_counts_review(run_id):
         'adjusted': sum(1 for t in all_tasks if t.status == 'ADJUSTED'),
     }
 
+    eligible_operators = _users_with_permission('wms:count_execute')
+
     return render_template('wms_cycle_count_review.html',
                            run=run, tasks=tasks, summary=summary,
                            filters={'only_variance': f_only_var,
                                     'bucket': f_bucket,
                                     'task_status': f_status},
                            buckets=list(WMS_STOCK_BUCKETS),
-                           task_statuses=WMS_CC_TASK_STATUSES)
+                           task_statuses=WMS_CC_TASK_STATUSES,
+                           eligible_operators=eligible_operators)
+
+
+# ============================================================
+# Cycle Counting — Phase 2: supervisor actions + mobile execution
+# ============================================================
+
+def _compute_variance(expected_qty, counted_qty):
+    diff = int(counted_qty or 0) - int(expected_qty or 0)
+    if diff == 0:
+        return 0, 'MATCH'
+    if diff < 0:
+        return diff, 'SHORT'
+    return diff, 'OVER'
+
+
+def _can_access_count_run(run, for_execute=False):
+    """True if current_user can access this run (assigned operator OR manager)."""
+    if current_user.has_permission('wms:count_manage'):
+        return True
+    if for_execute and current_user.has_permission('wms:count_execute'):
+        return run.assigned_to == current_user.id
+    return False
+
+
+@app.route('/wms/cycle-counts/<int:run_id>/assign', methods=['POST'])
+@login_required
+@require_permission('wms:count_manage')
+def wms_cycle_count_assign(run_id):
+    run = WmsCycleCountRun.query.get_or_404(run_id)
+    if run.status not in ('DRAFT', 'ASSIGNED'):
+        flash('Sólo se puede reasignar un conteo en estado DRAFT o ASSIGNED.', 'warning')
+        return redirect(url_for('wms_cycle_counts_review', run_id=run.id))
+
+    new_operator_id = request.form.get('assigned_to', type=int)
+    if not new_operator_id:
+        flash('Debes seleccionar un operador.', 'danger')
+        return redirect(url_for('wms_cycle_counts_review', run_id=run.id))
+
+    eligible_ids = {u.id for u in _users_with_permission('wms:count_execute')}
+    if new_operator_id not in eligible_ids:
+        flash('El operador seleccionado no tiene permiso para ejecutar conteos cíclicos.', 'danger')
+        return redirect(url_for('wms_cycle_counts_review', run_id=run.id))
+
+    run.assigned_to = new_operator_id
+    run.assigned_at = datetime.utcnow()
+    run.status = 'ASSIGNED'
+    db.session.commit()
+    print(f"[COUNT] run assigned id={run.id} code={run.code} to_user_id={new_operator_id}")
+    log_audit('cycle_count.assign', status='success',
+              message=f'Conteo {run.code} asignado a usuario {new_operator_id}',
+              entity_type='WmsCycleCountRun', entity_id=run.id)
+    flash('Operador asignado correctamente.', 'success')
+    return redirect(url_for('wms_cycle_counts_review', run_id=run.id))
+
+
+@app.route('/wms/cycle-counts/<int:run_id>/task/<int:task_id>/review', methods=['POST'])
+@login_required
+@require_permission('wms:count_manage')
+def wms_cycle_count_task_review(run_id, task_id):
+    run = WmsCycleCountRun.query.get_or_404(run_id)
+    task = WmsCycleCountTask.query.get_or_404(task_id)
+    if task.run_id != run.id:
+        abort(404)
+    if run.status not in ('REVIEW_PENDING', 'COMPLETED'):
+        flash('El conteo no está en revisión.', 'warning')
+        return redirect(url_for('wms_cycle_counts_review', run_id=run.id))
+    if task.status != 'COUNTED':
+        flash(f'Sólo se pueden revisar tareas en estado COUNTED (actual: {task.status}).', 'warning')
+        return redirect(url_for('wms_cycle_counts_review', run_id=run.id))
+
+    task.status = 'REVIEWED'
+    db.session.commit()
+    print(f"[COUNT] task reviewed run={run.id} task={task.id}")
+    return redirect(url_for('wms_cycle_counts_review', run_id=run.id))
+
+
+@app.route('/wms/cycle-counts/<int:run_id>/close', methods=['POST'])
+@login_required
+@require_permission('wms:count_manage')
+def wms_cycle_count_close(run_id):
+    run = WmsCycleCountRun.query.get_or_404(run_id)
+    if run.status not in ('REVIEW_PENDING', 'COMPLETED'):
+        flash('Sólo se puede cerrar un conteo en revisión.', 'warning')
+        return redirect(url_for('wms_cycle_counts_review', run_id=run.id))
+
+    # Phase 2: close without applying inventory adjustments. Phase 3 will add
+    # the "aplicar ajustes" path that writes to WmsInventoryAdjustmentLog
+    # and updates WmsInventory rows.
+    run.status = 'CLOSED'
+    run.closed_at = datetime.utcnow()
+    run.closed_by_user_id = current_user.id
+    db.session.commit()
+    print(f"[COUNT] run closed id={run.id} code={run.code} no_adjustments=True")
+    log_audit('cycle_count.close', status='success',
+              message=f'Conteo {run.code} cerrado sin aplicar ajustes (Fase 2)',
+              entity_type='WmsCycleCountRun', entity_id=run.id)
+    flash(f'Conteo {run.code} cerrado. Los ajustes de inventario se aplicarán en la siguiente fase.', 'success')
+    return redirect(url_for('wms_cycle_counts_review', run_id=run.id))
+
+
+# ---------- Mobile execution (operator) ----------
+
+@app.route('/wms/mobile/counts')
+@login_required
+@require_permission('wms:count_execute')
+def wms_mobile_counts_list():
+    runs = (db.session.query(WmsCycleCountRun)
+            .filter(WmsCycleCountRun.assigned_to == current_user.id,
+                    WmsCycleCountRun.status.in_(('ASSIGNED', 'IN_PROGRESS')))
+            .order_by(WmsCycleCountRun.created_at.desc())
+            .all())
+    return render_template('wms_mobile_counts.html', runs=runs)
+
+
+@app.route('/wms/mobile/counts/<int:run_id>')
+@login_required
+@require_permission('wms:count_execute')
+def wms_mobile_count_run(run_id):
+    run = WmsCycleCountRun.query.get_or_404(run_id)
+    if not _can_access_count_run(run, for_execute=True):
+        abort(403)
+    if run.status not in ('ASSIGNED', 'IN_PROGRESS'):
+        flash('Este conteo ya no está disponible para ejecución.', 'warning')
+        return redirect(url_for('wms_mobile_counts_list'))
+
+    pending_tasks = (run.tasks.filter(WmsCycleCountTask.status == 'OPEN')
+                     .order_by(WmsCycleCountTask.location_code, WmsCycleCountTask.sku)
+                     .all())
+    counted_tasks = (run.tasks.filter(WmsCycleCountTask.status != 'OPEN')
+                     .order_by(WmsCycleCountTask.counted_at.desc())
+                     .limit(20).all())
+    return render_template('wms_mobile_count_run.html',
+                           run=run,
+                           pending_tasks=pending_tasks,
+                           counted_tasks=counted_tasks)
+
+
+@app.route('/wms/mobile/counts/<int:run_id>/task/<int:task_id>', methods=['GET', 'POST'])
+@login_required
+@require_permission('wms:count_execute')
+def wms_mobile_count_task(run_id, task_id):
+    run = WmsCycleCountRun.query.get_or_404(run_id)
+    task = WmsCycleCountTask.query.get_or_404(task_id)
+    if task.run_id != run.id:
+        abort(404)
+    if not _can_access_count_run(run, for_execute=True):
+        abort(403)
+    if run.status not in ('ASSIGNED', 'IN_PROGRESS'):
+        flash('Este conteo ya no está disponible para ejecución.', 'warning')
+        return redirect(url_for('wms_mobile_counts_list'))
+
+    if request.method == 'POST':
+        raw = (request.form.get('counted_qty', '') or '').strip()
+        try:
+            counted_qty = int(raw)
+        except (TypeError, ValueError):
+            flash('Cantidad inválida. Ingresa un número entero.', 'danger')
+            return redirect(url_for('wms_mobile_count_task', run_id=run.id, task_id=task.id))
+        if counted_qty < 0:
+            flash('La cantidad contada no puede ser negativa.', 'danger')
+            return redirect(url_for('wms_mobile_count_task', run_id=run.id, task_id=task.id))
+
+        note = (request.form.get('note', '') or '').strip()
+
+        was_open = task.status == 'OPEN'
+        prior_was_variance = task.variance_type in ('SHORT', 'OVER')
+
+        variance_qty, variance_type = _compute_variance(task.expected_qty, counted_qty)
+        task.counted_qty = counted_qty
+        task.variance_qty = variance_qty
+        task.variance_type = variance_type
+        task.counted_by_user_id = current_user.id
+        task.counted_at = datetime.utcnow()
+        task.status = 'COUNTED'
+        if note:
+            task.note = note
+
+        # Update run counters
+        if was_open:
+            run.counted_tasks = (run.counted_tasks or 0) + 1
+        if variance_type in ('SHORT', 'OVER') and not prior_was_variance:
+            run.variance_tasks = (run.variance_tasks or 0) + 1
+        elif variance_type == 'MATCH' and prior_was_variance:
+            run.variance_tasks = max((run.variance_tasks or 0) - 1, 0)
+
+        # Status transitions
+        if run.status == 'ASSIGNED':
+            run.status = 'IN_PROGRESS'
+
+        all_counted = (run.tasks.filter(WmsCycleCountTask.status == 'OPEN').count() == 0)
+        if all_counted:
+            run.status = 'REVIEW_PENDING'
+            run.completed_at = datetime.utcnow()
+
+        db.session.commit()
+        print(f"[COUNT] task counted run={run.id} task={task.id} expected={task.expected_qty} "
+              f"counted={counted_qty} variance={variance_qty} type={variance_type}")
+
+        if all_counted:
+            flash('¡Conteo completado! Pasó a revisión.', 'success')
+            return redirect(url_for('wms_mobile_counts_list'))
+        flash('Cantidad guardada.', 'success')
+        return redirect(url_for('wms_mobile_count_run', run_id=run.id))
+
+    return render_template('wms_mobile_count_task.html', run=run, task=task)
 
 
 @app.route('/wms/mobile/issues')

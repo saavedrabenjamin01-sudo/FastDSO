@@ -1,0 +1,87 @@
+{% extends 'mobile_base.html' %}
+
+{% block title %}Contar SKU{% endblock %}
+
+{% block topbar_back %}
+<a href="{{ url_for('wms_mobile_count_run', run_id=run.id) }}" class="m-topbar-icon-btn"><i class="bi bi-arrow-left"></i></a>
+{% endblock %}
+
+{% block topbar_title %}
+Contar
+<small>{{ run.code }}</small>
+{% endblock %}
+
+{% block content %}
+<style>
+  .ct-header {
+    background:#fff; padding:18px 16px; margin:12px; border-radius:14px;
+    box-shadow:0 2px 10px rgba(14,30,80,.10);
+  }
+  .ct-loc { font-size:1.4rem; font-weight:800; color:var(--m-text); }
+  .ct-loc small { display:block; font-size:.78rem; color:var(--m-muted); font-weight:500; margin-top:2px; }
+  .ct-sku { margin-top:10px; font-family:monospace; font-size:1rem; color:var(--m-blue); font-weight:700; }
+  .ct-product { margin-top:4px; font-size:.85rem; color:var(--m-text); }
+  .ct-bucket-badge { display:inline-block; padding:3px 10px; border-radius:8px;
+                     background:#0ea5e9; color:#fff; font-size:.7rem; font-weight:700;
+                     letter-spacing:.4px; margin-top:8px; }
+  .ct-bucket-badge.WEB { background:#7c3aed; }
+
+  .ct-expected {
+    background:#f8fafc; padding:14px 16px; margin:0 12px 12px;
+    border-radius:12px; text-align:center;
+  }
+  .ct-expected-lbl { font-size:.7rem; text-transform:uppercase; color:var(--m-muted); letter-spacing:.5px; }
+  .ct-expected-val { font-size:2.2rem; font-weight:800; color:var(--m-text); line-height:1; margin-top:4px; }
+
+  .ct-form {
+    background:#fff; padding:18px 16px; margin:0 12px 12px; border-radius:14px;
+    box-shadow:0 2px 10px rgba(14,30,80,.10);
+  }
+  .ct-input {
+    width:100%; font-size:2rem; font-weight:800; text-align:center;
+    padding:14px; border:2px solid var(--m-border); border-radius:12px;
+  }
+  .ct-input:focus { border-color:var(--m-blue); outline:none; }
+
+  .ct-submit {
+    width:100%; padding:14px; font-size:1rem; font-weight:700;
+    background:var(--m-green); color:#fff; border:none; border-radius:12px;
+    margin-top:12px;
+  }
+  .ct-submit:active { background:#16a34a; }
+
+  .ct-note { width:100%; padding:10px; border:1px solid var(--m-border);
+             border-radius:10px; font-size:.85rem; margin-top:10px; }
+</style>
+
+<div class="ct-header">
+  <div class="ct-loc">
+    {{ task.location_code or task.location or '—' }}
+    <small>
+      {% if task.location and task.location_code != task.location %}{{ task.location }}{% endif %}
+      {% if task.box_number %} · Caja {{ task.box_number }}{% endif %}
+    </small>
+  </div>
+  <div class="ct-sku">SKU: {{ task.sku or '—' }}</div>
+  <div class="ct-product">{{ task.product_name or '' }}</div>
+  <span class="ct-bucket-badge {{ task.stock_bucket }}">{{ task.stock_bucket or 'MAIN' }}</span>
+</div>
+
+<div class="ct-expected">
+  <div class="ct-expected-lbl">Stock en sistema</div>
+  <div class="ct-expected-val">{{ task.expected_qty }}</div>
+</div>
+
+<form method="post" action="{{ url_for('wms_mobile_count_task', run_id=run.id, task_id=task.id) }}" class="ct-form">
+  <label class="form-label fw-bold mb-2" style="font-size:.85rem;">Cantidad contada físicamente</label>
+  <input type="number" name="counted_qty" class="ct-input" min="0" step="1" required autofocus
+         value="{% if task.counted_qty is not none %}{{ task.counted_qty }}{% endif %}"
+         inputmode="numeric" placeholder="0">
+  <textarea name="note" class="ct-note" rows="2" placeholder="Nota (opcional)">{{ task.note or '' }}</textarea>
+  <button type="submit" class="ct-submit">
+    <i class="bi bi-check2-circle me-1"></i>Guardar conteo
+  </button>
+</form>
+
+<div style="height:24px;"></div>
+{% endblock %}

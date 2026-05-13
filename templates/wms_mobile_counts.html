@@ -1,0 +1,85 @@
+{% extends 'mobile_base.html' %}
+
+{% block title %}Mis Conteos{% endblock %}
+
+{% block topbar_logo %}
+<div class="m-topbar-logo"><i class="bi bi-clipboard-check"></i></div>
+{% endblock %}
+
+{% block topbar_title %}
+Mis Conteos
+<small>Conteos cíclicos asignados</small>
+{% endblock %}
+
+{% block content %}
+<style>
+  .cc-card {
+    background:#fff; border-radius:16px;
+    box-shadow:0 2px 10px rgba(14,30,80,.10);
+    margin:12px 12px 0;
+    border-left:5px solid var(--m-blue);
+    overflow:hidden;
+  }
+  .cc-card.s-IN_PROGRESS { border-left-color: var(--m-orange); }
+  .cc-card.s-ASSIGNED    { border-left-color: var(--m-blue); }
+
+  .cc-top { display:flex; justify-content:space-between; align-items:flex-start;
+            padding:14px 14px 10px; border-bottom:1px solid var(--m-border); }
+  .cc-code { font-size:1rem; font-weight:700; color:var(--m-text); }
+  .cc-code small { font-size:.72rem; font-weight:400; color:var(--m-muted); display:block; margin-top:1px; }
+
+  .cc-kpis { display:flex; gap:8px; padding:10px 14px; border-bottom:1px solid var(--m-border); }
+  .cc-kpi  { flex:1; background:var(--m-bg); border-radius:10px; padding:8px 6px; text-align:center; }
+  .cc-kpi-val { font-size:1.1rem; font-weight:800; color:var(--m-text); line-height:1.1; }
+  .cc-kpi-val.danger { color:var(--m-red); }
+  .cc-kpi-lbl { font-size:.64rem; color:var(--m-muted); text-transform:uppercase; letter-spacing:.4px; margin-top:2px; }
+
+  .cc-actions { padding:10px 14px 14px; }
+  .cc-empty   { text-align:center; padding:48px 16px; color:var(--m-muted); }
+</style>
+
+<div class="m-page-wrap" style="padding-bottom:8px;">
+  {% if runs %}
+    {% for r in runs %}
+    <div class="cc-card s-{{ r.status }}">
+      <div class="cc-top">
+        <div class="cc-code">
+          {{ r.code }}
+          <small>{{ r.warehouse_code }} · {{ r.stock_bucket or 'Todos' }}</small>
+        </div>
+        <span class="m-badge" style="background:{% if r.status == 'IN_PROGRESS' %}#f59e0b{% else %}#0ea5e9{% endif %};color:#fff;font-size:.62rem;letter-spacing:.3px;">
+          {{ r.status }}
+        </span>
+      </div>
+
+      <div class="cc-kpis">
+        <div class="cc-kpi">
+          <div class="cc-kpi-val">{{ r.total_tasks }}</div>
+          <div class="cc-kpi-lbl">Tareas</div>
+        </div>
+        <div class="cc-kpi">
+          <div class="cc-kpi-val">{{ r.counted_tasks }}</div>
+          <div class="cc-kpi-lbl">Contadas</div>
+        </div>
+        <div class="cc-kpi">
+          <div class="cc-kpi-val {% if r.variance_tasks > 0 %}danger{% endif %}">{{ r.variance_tasks }}</div>
+          <div class="cc-kpi-lbl">Diferencia</div>
+        </div>
+      </div>
+
+      <div class="cc-actions">
+        <a href="{{ url_for('wms_mobile_count_run', run_id=r.id) }}" class="btn btn-primary w-100">
+          <i class="bi bi-play-fill me-1"></i>Continuar conteo
+        </a>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="cc-empty">
+      <i class="bi bi-clipboard-check" style="font-size:3rem;display:block;margin-bottom:12px;opacity:.5;"></i>
+      <div style="font-weight:600;margin-bottom:4px;">Sin conteos asignados</div>
+      <div style="font-size:.85rem;">Cuando un supervisor te asigne un conteo, aparecerá aquí.</div>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}
