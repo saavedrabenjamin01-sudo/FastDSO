@@ -1,0 +1,297 @@
+Refine FastWMS into a complete mobile-first operator portal for daily warehouse execution.
+
+GOAL
+Build a truly usable operator mobile experience inside FastWMS.
+The current mobile portal must evolve from “it works” to “it is operationally comfortable and coherent”.
+
+SCOPE
+This prompt focuses on the operator experience for:
+1) My Waves
+2) Picking execution
+3) Picking issues
+4) Moves between locations
+5) Inventory by location
+
+Do NOT change desktop WMS behavior except where needed for shared logic.
+All /wms/mobile/* routes must use dedicated mobile templates and mobile-first layout.
+
+==================================================
+PART 1 — MOBILE DESIGN FOUNDATION
+==================================================
+
+1) Create/finish a dedicated mobile layout:
+- templates/mobile_base.html
+
+Requirements:
+- proper viewport meta
+- no desktop sidebar
+- compact top header with title/logo
+- optional bottom nav for operator tasks
+- mobile spacing, cards, badges, large tap targets
+- support sticky bottom action bars
+- keep FastDSO/FastWMS visual style
+
+2) Operator mobile navigation
+Provide a simple navigation structure with:
+- Mis Waves
+- Picking
+- Incidencias
+- Movimientos
+- Inventario
+- Salir
+
+Navigation must feel native/mobile, not like desktop links stacked randomly.
+
+==================================================
+PART 2 — MY WAVES (MOBILE)
+==================================================
+
+Route:
+- /wms/mobile/my-waves
+
+Requirements:
+1) Show all waves assigned to current operator:
+- assigned_to == current_user.id
+- statuses:
+   ASSIGNED
+   IN_PROGRESS
+   NEEDS_REVIEW
+
+2) Include all wave types:
+- PLANNER
+- MANUAL_WEB
+- MANUAL_OTHER
+
+3) Card content per wave:
+- Folio or Referencia
+- Tipo badge:
+   PLANNER
+   WEB
+   MANUAL
+- Bucket de stock:
+   MAIN / WEB
+- Origen físico if useful
+- Urgencia
+- Estado
+- Progress %
+- Total lines / total units
+- Assigned picker name if useful
+- Button:
+   Iniciar / Continuar
+
+4) If no waves:
+- show friendly empty state in Spanish
+
+==================================================
+PART 3 — PICKING EXECUTION SCREEN
+==================================================
+
+Route:
+- /wms/mobile/wave/<wave_id>
+
+Requirements:
+1) Show one active reservation/task at a time
+Do not dump large tables.
+
+2) Main card must show clearly:
+- Ubicación
+- Caja
+- Código ubicación
+- Bucket de stock
+- SKU
+- Producto
+- Cantidad requerida
+- Cantidad pickeada
+- Cantidad restante
+- Estado de la tarea/reserva
+
+3) Mandatory scan flow
+Location scan is required.
+SKU scan must be validated before allowing pick actions.
+
+Show scan sections with:
+- Escanear ubicación
+- Escanear SKU
+- manual fallback input if camera unavailable
+
+4) Big action buttons
+Sticky bottom action area with:
+- Pick completo
+- Pick parcial
+- Reportar incidencia
+
+5) Auto-advance
+After successful pick or issue flow:
+- move to next reservation/task automatically
+- show short success feedback
+
+6) Reallocated reservations
+If a reservation is reallocated:
+- show badge:
+   Reasignada
+- still display real physical location
+- keep shared-location / stock-bucket context
+
+==================================================
+PART 4 — MOBILE ISSUES
+==================================================
+
+Routes:
+- /wms/mobile/issues
+- /wms/mobile/issues/<issue_id>
+
+Requirements:
+1) Issue list page
+Show issue cards for:
+- current operator’s reported issues
+- optionally open issues on their assigned waves
+
+Each card shows:
+- SKU
+- Producto
+- Ubicación
+- Caja
+- Bucket de stock
+- Motivo
+- Cantidad faltante
+- Estado
+- Fecha
+
+2) Issue detail page
+Show:
+- full issue detail
+- note/operator comment
+- related wave/task/reservation references if useful
+
+3) Visual status badges
+Use strong issue colors and readable labels.
+
+==================================================
+PART 5 — MOBILE MOVES
+==================================================
+
+Route:
+- /wms/mobile/moves
+
+Requirements:
+1) Move creation must be mobile-friendly, not desktop-like.
+Use cards/sections.
+
+2) Move form fields:
+- Ubicación origen
+- Caja origen
+- SKU
+- Bucket de stock
+- Cantidad
+- Ubicación destino
+- Caja destino
+- Motivo
+
+3) Buttons:
+- Escanear origen
+- Escanear SKU
+- Escanear destino
+- Confirmar movimiento
+
+4) Validation:
+- origin and destination required
+- quantity > 0
+- stock bucket context respected
+- move must affect the correct WmsInventory row
+
+5) Recent moves section:
+- show last moves as mobile cards
+- include date, sku, origin, destination, qty, bucket
+
+==================================================
+PART 6 — MOBILE INVENTORY
+==================================================
+
+Route:
+- /wms/mobile/inventory
+
+Requirements:
+1) Do NOT render the desktop inventory table.
+Use a mobile search + card pattern.
+
+2) Search/filter bar:
+- Ubicación
+- SKU
+- Caja
+- Bucket de stock
+
+3) Inventory result cards must show:
+- Ubicación
+- Caja
+- Código ubicación
+- Bucket de stock
+- SKU
+- Producto
+- Unidades
+- Asignadas
+- Disponibles
+- Tipo ubicación
+
+4) Actions on inventory cards:
+- Ver detalle
+- Mover
+- Buscar mismo SKU
+
+5) Optional detail route:
+- /wms/mobile/inventory/<id_or_location>
+Show a mobile detail page if easy.
+
+==================================================
+PART 7 — UI / UX RULES
+==================================================
+
+1) No horizontal scrolling
+2) Minimum button height 48px
+3) Clear visual hierarchy
+4) Monospace for SKU/location codes where useful
+5) Big quantities
+6) Strong status/bucket badges:
+- MAIN = blue
+- WEB = purple
+- URGENTE = red
+- IN_PROGRESS = teal
+- PICKED/DONE = green
+- ISSUE/SHORT = orange/red
+
+7) Keep labels in Spanish
+8) Keep style aligned with current FastDSO language
+
+==================================================
+PART 8 — ACCESS / PERMISSIONS
+==================================================
+
+1) Only warehouse/operator users should access /wms/mobile/*
+2) Managers/admin may also access for supervision/testing
+3) Do not break existing desktop routes or permissions
+
+==================================================
+PART 9 — TECHNICAL SAFETY
+==================================================
+
+1) Manual/WEB waves must render without requiring planner folio objects
+2) Shared-location + stock-bucket logic must remain intact
+3) No WEB-FALLBACK in normal operation
+4) Do not break:
+- picking logic
+- issue creation
+- move creation
+- inventory queries
+
+==================================================
+PART 10 — DELIVERABLES
+==================================================
+
+Deliver:
+- improved mobile_base.html
+- polished mobile My Waves
+- polished mobile Picking screen
+- mobile Issues module
+- mobile Moves module
+- mobile Inventory module
+- no desktop-style leftovers on phone
+- no breaking changes to current WMS logic
