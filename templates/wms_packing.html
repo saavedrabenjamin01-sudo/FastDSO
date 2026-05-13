@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Packing{% endblock %}
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h3 class="mb-0"><i class="bi bi-box-seam text-primary"></i> Packing</h3>
+      <small class="text-muted">Empacar y despachar olas/folios pickeados</small>
+    </div>
+    <a href="{{ url_for('wms_packing_new') }}" class="btn btn-primary">
+      <i class="bi bi-plus-lg"></i> Crear packing
+    </a>
+  </div>
+
+  <form method="get" class="card card-body mb-3">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label small mb-1">Estado</label>
+        <select name="status" class="form-select form-select-sm">
+          <option value="">Todos</option>
+          {% for s in statuses %}
+          <option value="{{ s }}" {% if s == status_f %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small mb-1">Tipo</label>
+        <select name="type" class="form-select form-select-sm">
+          <option value="">Todos</option>
+          {% for t in types %}
+          <option value="{{ t }}" {% if t == type_f %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <button class="btn btn-sm btn-outline-primary"><i class="bi bi-funnel"></i> Filtrar</button>
+      </div>
+    </div>
+  </form>
+
+  <div class="card">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>Código</th><th>Tipo</th><th>Wave</th><th>Referencia</th>
+            <th>Estado</th><th>Creado</th><th>Por</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in runs %}
+          <tr>
+            <td><strong>{{ r.code }}</strong></td>
+            <td><span class="badge bg-info text-dark">{{ r.packing_type }}</span></td>
+            <td class="small">{{ r.wave_id or '—' }}</td>
+            <td class="small">{{ r.external_reference or '—' }}</td>
+            <td>
+              {% set badge = {'DRAFT':'secondary','IN_PROGRESS':'warning text-dark','PACKED':'success','READY_TO_DISPATCH':'primary','DISPATCHED':'dark','CLOSED':'success'}.get(r.status,'secondary') %}
+              <span class="badge bg-{{ badge }}">{{ r.status }}</span>
+            </td>
+            <td class="small">{{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '' }}</td>
+            <td class="small">{{ r.created_by.username if r.created_by else '—' }}</td>
+            <td class="text-end">
+              <a href="{{ url_for('wms_packing_detail', run_id=r.id) }}" class="btn btn-sm btn-outline-primary">
+                <i class="bi bi-eye"></i>
+              </a>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="8" class="text-center text-muted py-4">Sin packing runs.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

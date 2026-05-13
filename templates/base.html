@@ -277,6 +277,12 @@
           <span class="nav-text">Recepción</span>
         </a>
         {% endif %}
+        {% if current_user.has_permission('wms:pack_manage') %}
+        <a class="nav-link" href="{{ url_for('wms_packing') }}">
+          <span class="nav-icon"><i class="bi bi-box-seam"></i></span>
+          <span class="nav-text">Packing</span>
+        </a>
+        {% endif %}
       </div>
     </div>
     {% endif %}

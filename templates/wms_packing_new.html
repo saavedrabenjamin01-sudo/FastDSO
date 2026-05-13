@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Crear packing{% endblock %}
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h3 class="mb-0"><i class="bi bi-box-seam text-primary"></i> Crear packing</h3>
+      <small class="text-muted">Selecciona una wave/folio terminado de pickear</small>
+    </div>
+    <a href="{{ url_for('wms_packing') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Volver</a>
+  </div>
+
+  <form method="post">
+    <div class="card mb-3">
+      <div class="card-header"><strong>Waves disponibles</strong> ({{ waves|length }})</div>
+      <div class="table-responsive" style="max-height:500px;overflow:auto">
+        <table class="table table-sm table-hover mb-0 align-middle">
+          <thead class="table-light sticky-top">
+            <tr>
+              <th style="width:40px"></th>
+              <th>Wave #</th><th>Origen</th><th>Bucket</th><th>Plan/Folio</th>
+              <th>Referencia</th><th class="text-end">Pickeado</th><th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for w in waves %}
+            <tr>
+              <td><input type="radio" name="wave_id" value="{{ w.id }}" required></td>
+              <td><strong>{{ w.id }}</strong></td>
+              <td><span class="badge bg-secondary">{{ w.wave_source }}</span></td>
+              <td><span class="badge bg-{{ 'primary' if w.source_stock_bucket=='MAIN' else 'warning text-dark' }}">{{ w.source_stock_bucket }}</span></td>
+              <td class="small">{{ w.plan_id or '—' }}</td>
+              <td class="small">{{ w.external_reference or '—' }}</td>
+              <td class="text-end">{{ w.picked_units }} / {{ w.total_units }}</td>
+              <td><span class="badge bg-success">{{ w.status }}</span></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="8" class="text-center text-muted py-4">Sin waves disponibles para empacar.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-body">
+        <label class="form-label">Observación (opcional)</label>
+        <input name="note" class="form-control">
+      </div>
+    </div>
+
+    <button class="btn btn-primary"><i class="bi bi-check2"></i> Crear packing</button>
+  </form>
+</div>
+{% endblock %}

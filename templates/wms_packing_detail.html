@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}Packing {{ run.code }}{% endblock %}
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h3 class="mb-0"><i class="bi bi-box-seam text-primary"></i> Packing {{ run.code }}</h3>
+      <small class="text-muted">
+        <span class="badge bg-info text-dark">{{ run.packing_type }}</span>
+        &middot; Wave {{ run.wave_id or '—' }}
+        &middot; Plan {{ run.plan_id or '—' }}
+        &middot; Ref: {{ run.external_reference or '—' }}
+        &middot; Creado {{ run.created_at.strftime('%Y-%m-%d %H:%M') }} por {{ run.created_by.username if run.created_by else '—' }}
+      </small>
+    </div>
+    <div class="d-flex gap-2">
+      {% set badge = {'DRAFT':'secondary','IN_PROGRESS':'warning text-dark','PACKED':'success','READY_TO_DISPATCH':'primary','DISPATCHED':'dark','CLOSED':'success'}.get(run.status,'secondary') %}
+      <span class="badge bg-{{ badge }} fs-6 align-self-center">{{ run.status }}</span>
+      <a href="{{ url_for('wms_packing') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Volver</a>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-md-2"><div class="card card-body text-center"><div class="small text-muted">SKUs</div><div class="h3 mb-0">{{ total_skus }}</div></div></div>
+    <div class="col-md-2"><div class="card card-body text-center"><div class="small text-muted">Pickeado</div><div class="h3 mb-0">{{ total_picked }}</div></div></div>
+    <div class="col-md-2"><div class="card card-body text-center"><div class="small text-muted">Empacado</div><div class="h3 mb-0 text-success">{{ total_packed }}</div></div></div>
+    <div class="col-md-3"><div class="card card-body text-center"><div class="small text-muted">Pendiente</div><div class="h3 mb-0 {% if total_pending > 0 %}text-warning{% endif %}">{{ total_pending }}</div></div></div>
+    <div class="col-md-3"><div class="card card-body text-center"><div class="small text-muted">Bultos</div><div class="h3 mb-0 text-primary">{{ total_packages }}</div></div></div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header"><strong>Líneas a empacar</strong></div>
+    <div class="table-responsive">
+      <table class="table table-sm mb-0 align-middle">
+        <thead class="table-light">
+          <tr><th>SKU</th><th>Producto</th><th>Bucket</th><th class="text-end">Pickeada</th><th class="text-end">Empacada</th><th class="text-end">Pendiente</th><th>Estado</th></tr>
+        </thead>
+        <tbody>
+          {% for ln in lines %}
+          <tr>
+            <td><strong>{{ ln.sku }}</strong></td>
+            <td class="small">{{ ln.product_name or '—' }}</td>
+            <td><span class="badge bg-{{ 'primary' if ln.stock_bucket=='MAIN' else 'warning text-dark' }}">{{ ln.stock_bucket }}</span></td>
+            <td class="text-end">{{ ln.qty_picked }}</td>
+            <td class="text-end text-success">{{ ln.qty_packed }}</td>
+            <td class="text-end {% if ln.qty_pending > 0 %}text-warning fw-bold{% endif %}">{{ ln.qty_pending }}</td>
+            <td>
+              {% set lb = {'OPEN':'secondary','PARTIAL':'warning text-dark','PACKED':'success'}.get(ln.status,'secondary') %}
+              <span class="badge bg-{{ lb }}">{{ ln.status }}</span>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="7" class="text-center text-muted py-3">Sin líneas.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {% if run.status not in ('DISPATCHED','CLOSED') %}
+  <div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <strong>Bultos</strong>
+      <form method="post" action="{{ url_for('wms_packing_package_new', run_id=run.id) }}" class="d-flex gap-2">
+        <input name="weight" type="number" step="0.01" placeholder="Peso (kg)" class="form-control form-control-sm" style="width:140px">
+        <input name="volume" type="number" step="0.001" placeholder="Volumen (m³)" class="form-control form-control-sm" style="width:140px">
+        <button class="btn btn-sm btn-primary"><i class="bi bi-plus-lg"></i> Crear bulto</button>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+
+  {% for ps in pkg_summary %}
+  <div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <div>
+        <strong>{{ ps.pkg.package_code }}</strong>
+        {% set pb = {'OPEN':'secondary','CLOSED':'success','DISPATCHED':'dark'}.get(ps.pkg.status,'secondary') %}
+        <span class="badge bg-{{ pb }} ms-2">{{ ps.pkg.status }}</span>
+        <span class="text-muted small ms-2">{{ ps.lines_count }} líneas / {{ ps.units_total }} uds</span>
+        {% if ps.pkg.weight %}<span class="text-muted small ms-2">{{ ps.pkg.weight }} kg</span>{% endif %}
+        {% if ps.pkg.volume %}<span class="text-muted small ms-2">{{ ps.pkg.volume }} m³</span>{% endif %}
+      </div>
+      {% if ps.pkg.status == 'OPEN' and run.status not in ('DISPATCHED','CLOSED') %}
+      <form method="post" action="{{ url_for('wms_packing_package_close', run_id=run.id, pkg_id=ps.pkg.id) }}" onsubmit="return confirm('¿Cerrar bulto?');">
+        <button class="btn btn-sm btn-outline-success"><i class="bi bi-check2"></i> Cerrar bulto</button>
+      </form>
+      {% endif %}
+    </div>
+    {% if ps.lines %}
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead class="table-light"><tr><th>SKU</th><th class="text-end">Qty</th></tr></thead>
+        <tbody>
+          {% for pl in ps.lines %}
+          <tr><td>{{ pl.sku }}</td><td class="text-end"><strong>{{ pl.qty_packed }}</strong></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+    {% if ps.pkg.status == 'OPEN' and run.status not in ('DISPATCHED','CLOSED') %}
+    <div class="card-body bg-light">
+      <form method="post" action="{{ url_for('wms_packing_package_add', run_id=run.id, pkg_id=ps.pkg.id) }}">
+        <div class="row g-2 align-items-end">
+          {% for ln in lines %}
+            {% if ln.qty_pending > 0 %}
+            <div class="col-md-3">
+              <label class="form-label small mb-1">{{ ln.sku }} <span class="text-muted">(pend {{ ln.qty_pending }})</span></label>
+              <input name="qty_line_{{ ln.id }}" type="number" min="0" max="{{ ln.qty_pending }}" class="form-control form-control-sm" placeholder="0">
+            </div>
+            {% endif %}
+          {% endfor %}
+        </div>
+        <div class="mt-2">
+          <button class="btn btn-sm btn-primary"><i class="bi bi-plus-lg"></i> Agregar a bulto</button>
+        </div>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  <div class="d-flex gap-2">
+    {% if run.status == 'PACKED' %}
+    <form method="post" action="{{ url_for('wms_packing_transition', run_id=run.id) }}">
+      <input type="hidden" name="new_status" value="READY_TO_DISPATCH">
+      <button class="btn btn-primary"><i class="bi bi-truck"></i> Marcar listo para despacho</button>
+    </form>
+    {% endif %}
+    {% if run.status == 'READY_TO_DISPATCH' %}
+    <form method="post" action="{{ url_for('wms_packing_transition', run_id=run.id) }}">
+      <input type="hidden" name="new_status" value="DISPATCHED">
+      <button class="btn btn-dark"><i class="bi bi-truck"></i> Marcar despachado</button>
+    </form>
+    {% endif %}
+    {% if run.status == 'DISPATCHED' %}
+    <form method="post" action="{{ url_for('wms_packing_transition', run_id=run.id) }}">
+      <input type="hidden" name="new_status" value="CLOSED">
+      <button class="btn btn-outline-success"><i class="bi bi-check2-circle"></i> Cerrar packing</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

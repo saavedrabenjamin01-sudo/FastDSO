@@ -54,7 +54,7 @@ ROLE_PERMISSIONS = {
         'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view',
         'planner:view', 'planner:operate', 'planner:manage', 'planner:approve', 'planner:assign_picker',
         'wms:view', 'wms:moves', 'wms:pick', 'wms:kpis', 'wms:count_manage', 'wms:count_execute',
-        'wms:replen_manage', 'wms:replen_execute', 'wms:receive_manage',
+        'wms:replen_manage', 'wms:replen_execute', 'wms:receive_manage', 'wms:pack_manage',
         'users:manage', 'roles:manage'
     ],
     'Management': [
@@ -73,14 +73,14 @@ ROLE_PERMISSIONS = {
         'distribution:export', 'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view',
         'planner:view', 'planner:operate', 'planner:assign_picker', 'wms:view', 'wms:moves', 'wms:kpis',
         'wms:count_manage', 'wms:count_execute',
-        'wms:replen_manage', 'wms:replen_execute', 'wms:receive_manage'
+        'wms:replen_manage', 'wms:replen_execute', 'wms:receive_manage', 'wms:pack_manage'
     ],
     'WarehouseManager': [
         'dashboard:view', 'stock:query', 'stock_store:upload', 'stock_cd:upload', 'stock:upload',
         'planner:view', 'planner:operate', 'planner:assign_picker', 'planner:approve',
         'wms:view', 'wms:moves', 'wms:kpis', 'alerts:view', 'store_health:view',
         'wms:count_manage', 'wms:count_execute',
-        'wms:replen_manage', 'wms:replen_execute', 'wms:receive_manage'
+        'wms:replen_manage', 'wms:replen_execute', 'wms:receive_manage', 'wms:pack_manage'
     ],
     'WarehouseOperator': [
         'wms:view', 'wms:pick', 'wms:count_execute', 'wms:replen_execute'
@@ -100,7 +100,7 @@ PERMISSION_MODULES = {
     'Rebalanceo': ['rebalancing:view', 'rebalancing:run'],
     'Inventario lento': ['slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view'],
     'Planner': ['planner:view', 'planner:operate', 'planner:manage', 'planner:approve', 'planner:assign_picker'],
-    'WMS': ['wms:view', 'wms:moves', 'wms:pick', 'wms:kpis', 'wms:count_manage', 'wms:count_execute', 'wms:replen_manage', 'wms:replen_execute', 'wms:receive_manage'],
+    'WMS': ['wms:view', 'wms:moves', 'wms:pick', 'wms:kpis', 'wms:count_manage', 'wms:count_execute', 'wms:replen_manage', 'wms:replen_execute', 'wms:receive_manage', 'wms:pack_manage'],
     'Administración': ['admin:users', 'admin:reset', 'audit:view', 'users:manage', 'roles:manage'],
 }
 MIN_WEEKS = 3  # mínimo de semanas de historia requeridas por SKU–Tienda
@@ -1454,6 +1454,87 @@ class WmsReceivingLine(db.Model):
     product = db.relationship('Product')
     loc = db.relationship('WmsLocation')
     received_by = db.relationship('User')
+
+
+# ------------------ Packing / Dispatch ------------------
+WMS_PACK_RUN_STATUSES = ['DRAFT', 'IN_PROGRESS', 'PACKED', 'READY_TO_DISPATCH', 'DISPATCHED', 'CLOSED']
+WMS_PACK_LINE_STATUSES = ['OPEN', 'PARTIAL', 'PACKED']
+WMS_PACK_PACKAGE_STATUSES = ['OPEN', 'CLOSED', 'DISPATCHED']
+WMS_PACK_TYPES = ['STORE_TRANSFER', 'WEB_ORDER', 'MANUAL']
+
+
+class WmsPackingRun(db.Model):
+    __tablename__ = 'wms_packing_run'
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(40), nullable=False, index=True)
+    wave_id = db.Column(db.Integer, db.ForeignKey('wms_pick_wave.id'), nullable=True, index=True)
+    plan_id = db.Column(db.Integer, db.ForeignKey('distribution_plan.id'), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    packing_type = db.Column(db.String(20), nullable=False, default='MANUAL')
+    external_reference = db.Column(db.String(200), nullable=True)
+    status = db.Column(db.String(30), nullable=False, default='DRAFT')
+    note = db.Column(db.Text, nullable=True)
+    ready_at = db.Column(db.DateTime, nullable=True)
+    dispatched_at = db.Column(db.DateTime, nullable=True)
+    closed_at = db.Column(db.DateTime, nullable=True)
+
+    created_by = db.relationship('User')
+    wave = db.relationship('WmsPickWave')
+    plan = db.relationship('DistributionPlan')
+    lines = db.relationship('WmsPackingLine', backref='run', lazy='dynamic',
+                            cascade='all, delete-orphan')
+    packages = db.relationship('WmsPackage', backref='run', lazy='dynamic',
+                               cascade='all, delete-orphan')
+
+
+class WmsPackingLine(db.Model):
+    __tablename__ = 'wms_packing_line'
+    id = db.Column(db.Integer, primary_key=True)
+    packing_run_id = db.Column(db.Integer, db.ForeignKey('wms_packing_run.id'), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=True)
+    sku = db.Column(db.String(64), nullable=False, index=True)
+    product_name = db.Column(db.String(255), nullable=True)
+    stock_bucket = db.Column(db.String(10), nullable=False, default='MAIN')
+    qty_picked = db.Column(db.Integer, nullable=False, default=0)
+    qty_packed = db.Column(db.Integer, nullable=False, default=0)
+    qty_pending = db.Column(db.Integer, nullable=False, default=0)
+    status = db.Column(db.String(20), nullable=False, default='OPEN')
+    note = db.Column(db.Text, nullable=True)
+
+    product = db.relationship('Product')
+
+
+class WmsPackage(db.Model):
+    __tablename__ = 'wms_package'
+    id = db.Column(db.Integer, primary_key=True)
+    packing_run_id = db.Column(db.Integer, db.ForeignKey('wms_packing_run.id'), nullable=False, index=True)
+    package_code = db.Column(db.String(40), nullable=False)
+    package_number = db.Column(db.Integer, nullable=False, default=1)
+    status = db.Column(db.String(20), nullable=False, default='OPEN')
+    weight = db.Column(db.Float, nullable=True)
+    volume = db.Column(db.Float, nullable=True)
+    note = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    closed_at = db.Column(db.DateTime, nullable=True)
+
+    package_lines = db.relationship('WmsPackageLine', backref='package', lazy='dynamic',
+                                    cascade='all, delete-orphan')
+
+
+class WmsPackageLine(db.Model):
+    __tablename__ = 'wms_package_line'
+    id = db.Column(db.Integer, primary_key=True)
+    package_id = db.Column(db.Integer, db.ForeignKey('wms_package.id'), nullable=False, index=True)
+    packing_line_id = db.Column(db.Integer, db.ForeignKey('wms_packing_line.id'), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=True)
+    sku = db.Column(db.String(64), nullable=False)
+    qty_packed = db.Column(db.Integer, nullable=False, default=0)
+    note = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    packing_line = db.relationship('WmsPackingLine')
+    product = db.relationship('Product')
 
 
 # ------------------ Operational Stock Helpers ------------------
@@ -24777,6 +24858,414 @@ def wms_receiving_export(run_id):
     return send_file(buf, as_attachment=True,
                      download_name=f'recepcion_{run.code}.xlsx',
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+# ====================================================================
+# Packing / Dispatch — engine + routes
+# ====================================================================
+WMS_WAVE_TERMINAL = ('PICKED', 'CLOSED', 'DONE')
+
+
+def _next_pack_code():
+    last = WmsPackingRun.query.order_by(WmsPackingRun.id.desc()).first()
+    n = (last.id + 1) if last else 1
+    return f"PACK-{datetime.utcnow().strftime('%Y%m%d')}-{n:04d}"
+
+
+def _next_package_code(run_id):
+    n = WmsPackage.query.filter_by(packing_run_id=run_id).count() + 1
+    return f"BULTO-{run_id:05d}-{n:03d}", n
+
+
+def _packing_type_for_wave(wave):
+    src = (wave.wave_source or '').upper()
+    if src == 'MANUAL_WEB':
+        return 'WEB_ORDER'
+    if src == 'MANUAL_OTHER':
+        return 'MANUAL'
+    return 'STORE_TRANSFER'
+
+
+def create_packing_run_from_wave(wave_id, user_id, note=None):
+    """Create packing run + lines from a completed wave's actual picked qtys.
+    Returns (run, err)."""
+    wave = WmsPickWave.query.get(wave_id)
+    if not wave:
+        return None, 'Wave no encontrada.'
+    if wave.status not in WMS_WAVE_TERMINAL:
+        return None, f'La wave debe estar en {WMS_WAVE_TERMINAL} (actual: {wave.status}).'
+
+    existing = WmsPackingRun.query.filter_by(wave_id=wave.id).filter(
+        WmsPackingRun.status != 'CLOSED').first()
+    if existing:
+        return None, f'Ya existe un packing run abierto para esta wave: {existing.code}.'
+
+    tasks = list(wave.tasks)
+    agg = {}
+    for t in tasks:
+        qty_p = int(t.qty_picked or 0)
+        if qty_p <= 0:
+            continue
+        key = (t.product_id, t.sku)
+        if key in agg:
+            agg[key]['qty_picked'] += qty_p
+        else:
+            agg[key] = {
+                'product_id': t.product_id, 'sku': t.sku,
+                'product_name': t.product_name, 'qty_picked': qty_p,
+            }
+    if not agg:
+        return None, 'La wave no tiene unidades pickeadas.'
+
+    try:
+        recheck = WmsPackingRun.query.filter_by(wave_id=wave.id).filter(
+            WmsPackingRun.status != 'CLOSED').with_for_update(read=False).first() \
+            if db.engine.dialect.name != 'sqlite' else \
+            WmsPackingRun.query.filter_by(wave_id=wave.id).filter(
+                WmsPackingRun.status != 'CLOSED').first()
+        if recheck:
+            return None, f'Ya existe un packing run abierto para esta wave: {recheck.code}.'
+        run = WmsPackingRun(
+            code=_next_pack_code(), wave_id=wave.id, plan_id=wave.plan_id,
+            created_by_user_id=user_id,
+            packing_type=_packing_type_for_wave(wave),
+            external_reference=wave.external_reference,
+            status='DRAFT', note=note,
+        )
+        db.session.add(run)
+        db.session.flush()
+        for k, v in agg.items():
+            db.session.add(WmsPackingLine(
+                packing_run_id=run.id, product_id=v['product_id'], sku=v['sku'],
+                product_name=v['product_name'], stock_bucket=wave.source_stock_bucket or 'MAIN',
+                qty_picked=v['qty_picked'], qty_packed=0, qty_pending=v['qty_picked'],
+                status='OPEN',
+            ))
+        db.session.commit()
+        try:
+            log_audit('wms_packing_create', message=f'run_id={run.id} code={run.code} wave={wave.id}', entity_type='WmsPackingRun', entity_id=run.id)
+        except Exception:
+            pass
+        print(f"[PACK] run created id={run.id} code={run.code} wave={wave.id} type={run.packing_type} lines={len(agg)}")
+        return run, None
+    except Exception as e:
+        db.session.rollback()
+        print(f"[PACK] create failed: {e}")
+        return None, f'Error: {e}'
+
+
+def create_manual_packing_run(packing_type, user_id, external_reference=None, note=None):
+    """Create empty manual packing run; lines added by user later (V1: lines
+    must come from wave; pure manual would need a separate UI for line entry,
+    out of V1 scope). Returns (run, err)."""
+    if packing_type not in WMS_PACK_TYPES:
+        return None, 'Tipo de packing inválido.'
+    try:
+        run = WmsPackingRun(
+            code=_next_pack_code(), created_by_user_id=user_id,
+            packing_type=packing_type, external_reference=external_reference,
+            status='DRAFT', note=note,
+        )
+        db.session.add(run)
+        db.session.commit()
+        try:
+            log_audit('wms_packing_create_manual', message=f'run_id={run.id} type={packing_type}', entity_type='WmsPackingRun', entity_id=run.id)
+        except Exception:
+            pass
+        print(f"[PACK] run created id={run.id} code={run.code} type={packing_type} (manual sin líneas)")
+        return run, None
+    except Exception as e:
+        db.session.rollback()
+        return None, f'Error: {e}'
+
+
+def _recalc_run_status(run):
+    """Recalculate IN_PROGRESS / PACKED based on lines. Does NOT downgrade
+    READY_TO_DISPATCH/DISPATCHED/CLOSED."""
+    if run.status in ('READY_TO_DISPATCH', 'DISPATCHED', 'CLOSED'):
+        return
+    lines = list(run.lines)
+    if not lines:
+        return
+    total_pending = sum(int(l.qty_pending or 0) for l in lines)
+    total_packed = sum(int(l.qty_packed or 0) for l in lines)
+    if total_pending == 0 and total_packed > 0:
+        run.status = 'PACKED'
+    elif total_packed > 0:
+        run.status = 'IN_PROGRESS'
+
+
+def create_package_for_run(run_id, user_id, weight=None, volume=None, note=None):
+    run = WmsPackingRun.query.get(run_id)
+    if not run:
+        return None, 'Run no encontrado.'
+    if run.status in ('DISPATCHED', 'CLOSED'):
+        return None, f'No se puede agregar bultos en estado {run.status}.'
+    try:
+        code, num = _next_package_code(run_id)
+        pkg = WmsPackage(
+            packing_run_id=run.id, package_code=code, package_number=num,
+            status='OPEN', weight=weight, volume=volume, note=note,
+        )
+        db.session.add(pkg)
+        db.session.commit()
+        try:
+            log_audit('wms_packing_package_create', message=f'pkg_id={pkg.id} code={code} run={run.id}', entity_type='WmsPackage', entity_id=pkg.id)
+        except Exception:
+            pass
+        print(f"[PACK] package created id={pkg.id} run={run.id} code={code}")
+        return pkg, None
+    except Exception as e:
+        db.session.rollback()
+        return None, f'Error: {e}'
+
+
+def add_lines_to_package(package_id, items, user_id):
+    """items: list of {packing_line_id, qty}. Atomic. Validates qty <=
+    qty_pending. Updates packing line + run status."""
+    pkg = WmsPackage.query.get(package_id)
+    if not pkg:
+        return False, 'Bulto no encontrado.'
+    if pkg.status != 'OPEN':
+        return False, f'El bulto está {pkg.status}; no acepta líneas.'
+    run = WmsPackingRun.query.get(pkg.packing_run_id)
+    if run.status in ('DISPATCHED', 'CLOSED'):
+        return False, f'Run en estado {run.status}.'
+
+    try:
+        for it in items:
+            pl_id = int(it.get('packing_line_id') or 0)
+            qty = int(it.get('qty') or 0)
+            if pl_id <= 0 or qty <= 0:
+                continue
+            pl = WmsPackingLine.query.get(pl_id)
+            if not pl or pl.packing_run_id != run.id:
+                raise ValueError(f'Línea {pl_id} no pertenece al run.')
+            if qty > int(pl.qty_pending or 0):
+                raise ValueError(f'SKU {pl.sku}: qty {qty} excede pendiente {pl.qty_pending}.')
+
+            db.session.add(WmsPackageLine(
+                package_id=pkg.id, packing_line_id=pl.id,
+                product_id=pl.product_id, sku=pl.sku, qty_packed=qty,
+            ))
+            pl.qty_packed = int(pl.qty_packed or 0) + qty
+            pl.qty_pending = int(pl.qty_pending or 0) - qty
+            if pl.qty_pending <= 0:
+                pl.status = 'PACKED'
+            elif pl.qty_packed > 0:
+                pl.status = 'PARTIAL'
+            print(f"[PACK] line packed sku={pl.sku} qty={qty} package={pkg.package_code}")
+
+        _recalc_run_status(run)
+        db.session.commit()
+        try:
+            total_qty = sum(int(it.get('qty') or 0) for it in items)
+            log_audit('wms_packing_package_add', message=f'pkg_id={pkg.id} items={len(items)} qty={total_qty}', entity_type='WmsPackage', entity_id=pkg.id)
+        except Exception:
+            pass
+        return True, None
+    except Exception as e:
+        db.session.rollback()
+        print(f"[PACK] add_lines failed: {e}")
+        return False, str(e)
+
+
+def close_package(package_id, user_id):
+    pkg = WmsPackage.query.get(package_id)
+    if not pkg:
+        return False, 'Bulto no encontrado.'
+    if pkg.status != 'OPEN':
+        return False, f'Bulto ya está {pkg.status}.'
+    if pkg.package_lines.count() == 0:
+        return False, 'Bulto vacío.'
+    pkg.status = 'CLOSED'
+    pkg.closed_at = datetime.utcnow()
+    db.session.commit()
+    try:
+        log_audit('wms_packing_package_close', message=f'pkg_id={pkg.id} code={pkg.package_code}', entity_type='WmsPackage', entity_id=pkg.id)
+    except Exception:
+        pass
+    print(f"[PACK] package closed id={pkg.id} code={pkg.package_code}")
+    return True, None
+
+
+def transition_run_status(run_id, new_status, user_id):
+    """Allowed transitions:
+       PACKED -> READY_TO_DISPATCH (only if all qty_pending==0)
+       READY_TO_DISPATCH -> DISPATCHED
+       DISPATCHED -> CLOSED"""
+    run = WmsPackingRun.query.get(run_id)
+    if not run:
+        return False, 'Run no encontrado.'
+    cur = run.status
+    valid = {
+        'READY_TO_DISPATCH': (('PACKED',), 'qty_pending'),
+        'DISPATCHED': (('READY_TO_DISPATCH',), None),
+        'CLOSED': (('DISPATCHED',), None),
+    }
+    if new_status not in valid:
+        return False, 'Transición inválida.'
+    allowed_from, check = valid[new_status]
+    if cur not in allowed_from:
+        return False, f'No se puede pasar de {cur} a {new_status}.'
+    if check == 'qty_pending':
+        pending = sum(int(l.qty_pending or 0) for l in run.lines)
+        if pending > 0:
+            return False, f'Aún quedan {pending} unidades pendientes.'
+        open_pkgs = run.packages.filter_by(status='OPEN').count()
+        if open_pkgs > 0:
+            return False, f'Hay {open_pkgs} bulto(s) abierto(s); ciérralos primero.'
+    run.status = new_status
+    if new_status == 'READY_TO_DISPATCH':
+        run.ready_at = datetime.utcnow()
+    elif new_status == 'DISPATCHED':
+        run.dispatched_at = datetime.utcnow()
+        for pkg in run.packages.filter_by(status='CLOSED').all():
+            pkg.status = 'DISPATCHED'
+    elif new_status == 'CLOSED':
+        run.closed_at = datetime.utcnow()
+    db.session.commit()
+    try:
+        log_audit(f'wms_packing_{new_status.lower()}', message=f'run_id={run.id} code={run.code}', entity_type='WmsPackingRun', entity_id=run.id)
+    except Exception:
+        pass
+    print(f"[PACK] run marked {new_status} id={run.id}")
+    return True, None
+
+
+@app.route('/wms/packing')
+@login_required
+@require_permission('wms:pack_manage')
+def wms_packing():
+    status_f = (request.args.get('status') or '').strip().upper()
+    type_f = (request.args.get('type') or '').strip().upper()
+    q = WmsPackingRun.query
+    if status_f in WMS_PACK_RUN_STATUSES:
+        q = q.filter(WmsPackingRun.status == status_f)
+    if type_f in WMS_PACK_TYPES:
+        q = q.filter(WmsPackingRun.packing_type == type_f)
+    runs = q.order_by(WmsPackingRun.created_at.desc()).limit(200).all()
+    return render_template('wms_packing.html', runs=runs,
+                           statuses=WMS_PACK_RUN_STATUSES,
+                           types=WMS_PACK_TYPES,
+                           status_f=status_f, type_f=type_f)
+
+
+@app.route('/wms/packing/new', methods=['GET', 'POST'])
+@login_required
+@require_permission('wms:pack_manage')
+def wms_packing_new():
+    if request.method == 'POST':
+        wave_id = request.form.get('wave_id', type=int)
+        note = (request.form.get('note') or '').strip() or None
+        if wave_id:
+            run, err = create_packing_run_from_wave(wave_id, current_user.id, note=note)
+            if not run:
+                flash(err or 'Error.', 'danger')
+                return redirect(url_for('wms_packing_new'))
+            flash(f'Packing {run.code} creado desde wave.', 'success')
+            return redirect(url_for('wms_packing_detail', run_id=run.id))
+        flash('Selecciona una wave.', 'warning')
+        return redirect(url_for('wms_packing_new'))
+
+    waves_done = WmsPickWave.query.filter(WmsPickWave.status.in_(WMS_WAVE_TERMINAL))\
+        .order_by(WmsPickWave.pick_finished_at.desc().nullslast(),
+                  WmsPickWave.id.desc()).limit(80).all()
+    used_wave_ids = {r.wave_id for r in WmsPackingRun.query.filter(
+        WmsPackingRun.wave_id.isnot(None),
+        WmsPackingRun.status != 'CLOSED').all()}
+    waves_avail = [w for w in waves_done if w.id not in used_wave_ids]
+    return render_template('wms_packing_new.html', waves=waves_avail)
+
+
+@app.route('/wms/packing/<int:run_id>')
+@login_required
+@require_permission('wms:pack_manage')
+def wms_packing_detail(run_id):
+    run = WmsPackingRun.query.get_or_404(run_id)
+    lines = list(run.lines.order_by(WmsPackingLine.id.asc()))
+    packages = list(run.packages.order_by(WmsPackage.package_number.asc()))
+    pkg_summary = []
+    for pkg in packages:
+        plines = list(pkg.package_lines)
+        pkg_summary.append({
+            'pkg': pkg, 'lines_count': len(plines),
+            'units_total': sum(int(pl.qty_packed or 0) for pl in plines),
+            'lines': plines,
+        })
+    total_picked = sum(int(l.qty_picked or 0) for l in lines)
+    total_packed = sum(int(l.qty_packed or 0) for l in lines)
+    total_pending = sum(int(l.qty_pending or 0) for l in lines)
+    return render_template('wms_packing_detail.html', run=run, lines=lines,
+                           pkg_summary=pkg_summary,
+                           total_skus=len(lines),
+                           total_picked=total_picked, total_packed=total_packed,
+                           total_pending=total_pending,
+                           total_packages=len(packages))
+
+
+@app.route('/wms/packing/<int:run_id>/package/new', methods=['POST'])
+@login_required
+@require_permission('wms:pack_manage')
+def wms_packing_package_new(run_id):
+    weight = request.form.get('weight', type=float)
+    volume = request.form.get('volume', type=float)
+    note = (request.form.get('note') or '').strip() or None
+    pkg, err = create_package_for_run(run_id, current_user.id, weight=weight, volume=volume, note=note)
+    flash(f'Bulto {pkg.package_code} creado.' if pkg else (err or 'Error.'),
+          'success' if pkg else 'danger')
+    return redirect(url_for('wms_packing_detail', run_id=run_id))
+
+
+@app.route('/wms/packing/<int:run_id>/package/<int:pkg_id>/add', methods=['POST'])
+@login_required
+@require_permission('wms:pack_manage')
+def wms_packing_package_add(run_id, pkg_id):
+    pkg = WmsPackage.query.get_or_404(pkg_id)
+    if pkg.packing_run_id != run_id:
+        flash('Bulto no pertenece a este run.', 'danger')
+        return redirect(url_for('wms_packing_detail', run_id=run_id))
+    items = []
+    for key, val in request.form.items():
+        if key.startswith('qty_line_'):
+            try:
+                pl_id = int(key.replace('qty_line_', ''))
+                qty = int(float(val or 0))
+                if qty > 0:
+                    items.append({'packing_line_id': pl_id, 'qty': qty})
+            except Exception:
+                continue
+    if not items:
+        flash('No se ingresaron cantidades.', 'warning')
+        return redirect(url_for('wms_packing_detail', run_id=run_id))
+    ok, err = add_lines_to_package(pkg_id, items, current_user.id)
+    flash('Líneas agregadas al bulto.' if ok else (err or 'Error.'),
+          'success' if ok else 'danger')
+    return redirect(url_for('wms_packing_detail', run_id=run_id))
+
+
+@app.route('/wms/packing/<int:run_id>/package/<int:pkg_id>/close', methods=['POST'])
+@login_required
+@require_permission('wms:pack_manage')
+def wms_packing_package_close(run_id, pkg_id):
+    pkg = WmsPackage.query.get_or_404(pkg_id)
+    if pkg.packing_run_id != run_id:
+        flash('Bulto no pertenece a este run.', 'danger')
+        return redirect(url_for('wms_packing_detail', run_id=run_id))
+    ok, err = close_package(pkg_id, current_user.id)
+    flash('Bulto cerrado.' if ok else (err or 'Error.'), 'success' if ok else 'danger')
+    return redirect(url_for('wms_packing_detail', run_id=run_id))
+
+
+@app.route('/wms/packing/<int:run_id>/transition', methods=['POST'])
+@login_required
+@require_permission('wms:pack_manage')
+def wms_packing_transition(run_id):
+    new_status = (request.form.get('new_status') or '').strip().upper()
+    ok, err = transition_run_status(run_id, new_status, current_user.id)
+    flash(f'Estado: {new_status}.' if ok else (err or 'Error.'),
+          'success' if ok else 'danger')
+    return redirect(url_for('wms_packing_detail', run_id=run_id))
 
 
 def init_database():
