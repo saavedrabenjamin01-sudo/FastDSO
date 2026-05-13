@@ -1,0 +1,313 @@
+Implement internal replenishment (Reabastecimiento interno) in FastWMS.
+
+GOAL
+Add a replenishment workflow so FastWMS can move stock from reserve/bulk locations to pick-face locations when PICK locations fall below a minimum threshold.
+
+This should make picking more stable and reduce situations where operators arrive at PICK locations with insufficient stock.
+
+IMPORTANT
+This is internal warehouse replenishment, not store distribution.
+It must work inside the WMS location model and respect stock buckets (MAIN / WEB).
+
+==================================================
+PART 1 — BUSINESS SCOPE
+==================================================
+
+We need a replenishment module for internal warehouse movement:
+- source location = reserve/bulk or any valid source location
+- destination location = pick-face location
+- same physical warehouse
+- same stock bucket
+- same SKU
+
+Supported V1 scope:
+- replenishment suggestions
+- replenishment task creation
+- execution confirmation
+- manual and semi-automatic replenishment
+
+Do NOT implement advanced optimization or wave clustering yet.
+Keep V1 practical and operational.
+
+==================================================
+PART 2 — CORE BUSINESS RULES
+==================================================
+
+1) Replenishment is triggered when a PICK location falls below its minimum threshold.
+2) Stock must be replenished only within the same stock bucket:
+- MAIN replenishes MAIN
+- WEB replenishes WEB
+3) Never move stock across buckets automatically.
+4) Replenishment source should normally be:
+- BULK first
+- then other eligible locations if needed
+5) Destination should normally be:
+- PICK locations only
+6) Replenishment is an internal WMS movement, not a distribution folio.
+
+==================================================
+PART 3 — DATA MODEL
+==================================================
+
+Add these models/tables:
+
+1) WmsReplenishmentRun
+- id
+- code/reference
+- created_at
+- created_by_user_id
+- assigned_to_user_id nullable
+- status
+  allowed values:
+   DRAFT
+   ASSIGNED
+   IN_PROGRESS
+   COMPLETED
+   CLOSED
+- stock_bucket
+- note nullable
+
+2) WmsReplenishmentTask
+- id
+- run_id
+- product_id
+- sku
+- product_name
+- stock_bucket
+- source_location_id
+- source_location
+- source_box_number
+- source_location_code
+- dest_location_id
+- dest_location
+- dest_box_number
+- dest_location_code
+- qty_suggested
+- qty_confirmed nullable
+- status
+  allowed values:
+   OPEN
+   IN_PROGRESS
+   DONE
+   CANCELLED
+- created_at
+- completed_at nullable
+- completed_by_user_id nullable
+- note nullable
+
+==================================================
+PART 4 — LOCATION THRESHOLDS
+==================================================
+
+We need threshold support for PICK locations.
+
+Option A (preferred):
+Extend WmsLocation with:
+- min_units
+- target_units
+
+Meaning:
+- if available units in a PICK location drop below min_units, replenishment is needed
+- qty_suggested should aim to refill toward target_units
+
+If WmsLocation already has equivalent fields, reuse them.
+
+Rules:
+- apply thresholds per location, not globally
+- stock bucket still matters at runtime
+
+==================================================
+PART 5 — REPLENISHMENT SUGGESTION ENGINE
+==================================================
+
+Create a service:
+generate_replenishment_suggestions(stock_bucket=None, location_filter=None)
+
+Behavior:
+1) Scan PICK locations
+2) For each SKU in a PICK location, calculate:
+   available_units = on_hand_units - allocated_units
+3) If available_units < min_units:
+   needed_qty = target_units - available_units
+4) Search source inventory rows for the same SKU and same stock bucket:
+   - prefer BULK locations
+   - then other valid non-PICK locations if needed
+   - exclude the destination location itself
+   - source available > 0
+5) Create replenishment suggestions/tasks up to needed_qty
+
+Rules:
+- do not overdraw source locations
+- do not exceed target_units in destination
+- do not move across buckets
+- do not create tasks with qty_suggested <= 0
+
+==================================================
+PART 6 — DESKTOP UI
+==================================================
+
+Create new module/page:
+- /wms/replenishment
+
+And creation/suggestion page:
+- /wms/replenishment/new
+
+This page should allow:
+1) Generate replenishment suggestions
+2) Filter by:
+   - stock bucket
+   - location
+   - SKU
+   - only urgent shortages
+3) Review suggested tasks before creating a replenishment run
+
+Page should show:
+- SKU
+- Producto
+- Bucket
+- Ubicación origen
+- Ubicación destino
+- Qty sugerida
+- destination available units
+- min/target thresholds
+- source available units
+
+Actions:
+- Crear run de reabastecimiento
+- Cancelar
+
+==================================================
+PART 7 — EXECUTION
+==================================================
+
+Once a replenishment run exists:
+- it can be assigned to an operator
+- operator executes it from mobile or desktop
+- on confirmation:
+   - decrement source WmsInventory.on_hand_units
+   - increment destination WmsInventory.on_hand_units
+   - same stock_bucket only
+   - log movement
+
+This must behave like a controlled internal movement.
+
+==================================================
+PART 8 — MOBILE REPLENISHMENT EXECUTION
+==================================================
+
+Add mobile routes:
+
+1) /wms/mobile/replenishment
+Show assigned replenishment runs/tasks for current operator.
+
+2) /wms/mobile/replenishment/<run_id>
+Show one task at a time or mobile cards:
+- SKU
+- Producto
+- Bucket de stock
+- Ubicación origen
+- Caja origen
+- Ubicación destino
+- Caja destino
+- Qty sugerida
+
+Actions:
+- Escanear origen
+- Escanear destino
+- Confirmar reabastecimiento
+
+Rules:
+- confirm only if origin/destination match expected
+- quantity confirmed must be > 0
+- if partial confirmation is allowed, record qty_confirmed
+- mark task DONE on success
+
+==================================================
+PART 9 — MOVEMENT / AUDIT
+==================================================
+
+Every confirmed replenishment must create traceability.
+Either:
+- reuse existing WmsMovement / WmsMoveRun structures
+or
+- log equivalent replenishment movement records
+
+At minimum log:
+- sku
+- stock_bucket
+- source location
+- destination location
+- qty
+- user
+- timestamp
+
+==================================================
+PART 10 — SAFETY RULES
+==================================================
+
+1) Never replenish across stock buckets
+2) Never replenish from a location that lacks available stock
+3) Never overfill destination beyond target_units
+4) Do not break existing move logic
+5) Do not break picking or reservation logic
+6) If source available stock is partial, suggest only partial replenishment
+7) If destination PICK location has no existing WmsInventory row for that SKU/bucket, create it safely if needed
+
+==================================================
+PART 11 — VISUAL / UX
+==================================================
+
+Desktop:
+- use FastDSO visual language
+- clear cards + clean tables
+- badges:
+   PICK
+   BULK
+   MAIN
+   WEB
+   urgent replenishment
+
+Mobile:
+- use mobile_base.html
+- simple operator-focused layout
+- large confirm buttons
+- no desktop tables
+
+Spanish labels only:
+- Reabastecimiento
+- Generar sugerencias
+- Ubicación origen
+- Ubicación destino
+- Cantidad sugerida
+- Confirmar reabastecimiento
+
+==================================================
+PART 12 — OPTIONAL BUT RECOMMENDED
+==================================================
+
+Add a simple urgency rule:
+- if a PICK location is below min_units and has active waves/reservations consuming that SKU, mark replenishment task as urgent
+
+==================================================
+PART 13 — LOGGING
+==================================================
+
+Add logs:
+- [REPL] suggestion sku=... bucket=... source=... dest=... qty=...
+- [REPL] run created id=...
+- [REPL] task confirmed sku=... qty=... source=... dest=...
+- [REPL] blocked because source stock insufficient sku=...
+
+==================================================
+DELIVERABLES
+==================================================
+
+Deliver:
+- replenishment run model
+- replenishment task model
+- threshold support for pick locations
+- replenishment suggestion engine
+- desktop replenishment module
+- mobile replenishment execution
+- movement/audit log for replenishment
+- no breaking changes to current WMS picking/moves/inventory logic
