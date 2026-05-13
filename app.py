@@ -53,7 +53,8 @@ ROLE_PERMISSIONS = {
         'forecast_v2:view', 'forecast_v2:run', 'runs:view', 'runs:submit', 'runs:approve', 'admin:users', 'admin:reset', 'audit:view',
         'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view',
         'planner:view', 'planner:operate', 'planner:manage', 'planner:approve', 'planner:assign_picker',
-        'wms:view', 'wms:moves', 'wms:pick', 'wms:kpis', 'users:manage', 'roles:manage'
+        'wms:view', 'wms:moves', 'wms:pick', 'wms:kpis', 'wms:count_manage', 'wms:count_execute',
+        'users:manage', 'roles:manage'
     ],
     'Management': [
         'dashboard:view', 'stock:query', 'stock:export', 'distribution:export', 'distribution:edit',
@@ -69,15 +70,17 @@ ROLE_PERMISSIONS = {
     'WarehouseOps': [
         'dashboard:view', 'stock_store:upload', 'stock_cd:upload', 'stock:query', 'stock:upload',
         'distribution:export', 'rebalancing:view', 'rebalancing:run', 'slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view',
-        'planner:view', 'planner:operate', 'planner:assign_picker', 'wms:view', 'wms:moves', 'wms:kpis'
+        'planner:view', 'planner:operate', 'planner:assign_picker', 'wms:view', 'wms:moves', 'wms:kpis',
+        'wms:count_manage', 'wms:count_execute'
     ],
     'WarehouseManager': [
         'dashboard:view', 'stock:query', 'stock_store:upload', 'stock_cd:upload', 'stock:upload',
         'planner:view', 'planner:operate', 'planner:assign_picker', 'planner:approve',
-        'wms:view', 'wms:moves', 'wms:kpis', 'alerts:view', 'store_health:view'
+        'wms:view', 'wms:moves', 'wms:kpis', 'alerts:view', 'store_health:view',
+        'wms:count_manage', 'wms:count_execute'
     ],
     'WarehouseOperator': [
-        'wms:view', 'wms:pick'
+        'wms:view', 'wms:pick', 'wms:count_execute'
     ],
     'Viewer': [
         'dashboard:view', 'stock:query', 'alerts:view'
@@ -94,7 +97,7 @@ PERMISSION_MODULES = {
     'Rebalanceo': ['rebalancing:view', 'rebalancing:run'],
     'Inventario lento': ['slow_stock:view', 'slow_stock:run', 'store_health:view', 'alerts:view'],
     'Planner': ['planner:view', 'planner:operate', 'planner:manage', 'planner:approve', 'planner:assign_picker'],
-    'WMS': ['wms:view', 'wms:moves', 'wms:pick', 'wms:kpis'],
+    'WMS': ['wms:view', 'wms:moves', 'wms:pick', 'wms:kpis', 'wms:count_manage', 'wms:count_execute'],
     'Administración': ['admin:users', 'admin:reset', 'audit:view', 'users:manage', 'roles:manage'],
 }
 MIN_WEEKS = 3  # mínimo de semanas de historia requeridas por SKU–Tienda
@@ -1256,6 +1259,87 @@ class WmsPickIssue(db.Model):
     product = db.relationship('Product')
     location = db.relationship('WmsLocation')
     reported_by = db.relationship('User')
+
+
+# ------------------ Cycle Counting (Conteo cíclico) ------------------
+WMS_CC_RUN_STATUSES = ['DRAFT', 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED', 'REVIEW_PENDING', 'CLOSED']
+WMS_CC_TASK_STATUSES = ['OPEN', 'COUNTED', 'REVIEWED', 'ADJUSTED']
+WMS_CC_VARIANCE_TYPES = ['MATCH', 'SHORT', 'OVER', 'NOT_COUNTED']
+
+
+class WmsCycleCountRun(db.Model):
+    __tablename__ = 'wms_cycle_count_run'
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(40), unique=True, nullable=False, index=True)
+    note = db.Column(db.Text, nullable=True)
+    warehouse_code = db.Column(db.String(20), nullable=False, default='MAIN')
+    stock_bucket = db.Column(db.String(10), nullable=True)  # MAIN / WEB / NULL=all
+    status = db.Column(db.String(20), nullable=False, default='DRAFT')
+    assigned_to = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    assigned_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    closed_at = db.Column(db.DateTime, nullable=True)
+    closed_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    total_tasks = db.Column(db.Integer, nullable=False, default=0)
+    counted_tasks = db.Column(db.Integer, nullable=False, default=0)
+    variance_tasks = db.Column(db.Integer, nullable=False, default=0)
+
+    created_by = db.relationship('User', foreign_keys=[created_by_user_id])
+    assigned_operator = db.relationship('User', foreign_keys=[assigned_to])
+    closed_by = db.relationship('User', foreign_keys=[closed_by_user_id])
+    tasks = db.relationship(
+        'WmsCycleCountTask', backref='run', lazy='dynamic',
+        cascade='all, delete-orphan'
+    )
+
+
+class WmsCycleCountTask(db.Model):
+    __tablename__ = 'wms_cycle_count_task'
+    id = db.Column(db.Integer, primary_key=True)
+    run_id = db.Column(db.Integer, db.ForeignKey('wms_cycle_count_run.id'), nullable=False, index=True)
+    location_id = db.Column(db.Integer, db.ForeignKey('wms_location.id'), nullable=False, index=True)
+    location = db.Column(db.String(100), nullable=True)
+    box_number = db.Column(db.String(50), nullable=True)
+    location_code = db.Column(db.String(100), nullable=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=True, index=True)
+    sku = db.Column(db.String(64), nullable=True)
+    product_name = db.Column(db.String(200), nullable=True)
+    stock_bucket = db.Column(db.String(10), nullable=True)
+    expected_qty = db.Column(db.Integer, nullable=False, default=0)
+    counted_qty = db.Column(db.Integer, nullable=True)
+    variance_qty = db.Column(db.Integer, nullable=True)
+    variance_type = db.Column(db.String(20), nullable=True)
+    counted_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    counted_at = db.Column(db.DateTime, nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='OPEN')
+    note = db.Column(db.Text, nullable=True)
+
+    location_ref = db.relationship('WmsLocation')
+    product = db.relationship('Product')
+    counted_by = db.relationship('User')
+
+
+class WmsInventoryAdjustmentLog(db.Model):
+    __tablename__ = 'wms_inventory_adjustment_log'
+    id = db.Column(db.Integer, primary_key=True)
+    task_id = db.Column(db.Integer, db.ForeignKey('wms_cycle_count_task.id'), nullable=True, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    sku = db.Column(db.String(64), nullable=False)
+    location_id = db.Column(db.Integer, db.ForeignKey('wms_location.id'), nullable=False)
+    location_code = db.Column(db.String(100), nullable=True)
+    stock_bucket = db.Column(db.String(10), nullable=False, default='MAIN')
+    old_qty = db.Column(db.Integer, nullable=False, default=0)
+    new_qty = db.Column(db.Integer, nullable=False, default=0)
+    variance_qty = db.Column(db.Integer, nullable=False, default=0)
+    approved_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    note = db.Column(db.Text, nullable=True)
+
+    product = db.relationship('Product')
+    location = db.relationship('WmsLocation')
+    approved_by = db.relationship('User')
 
 
 # ------------------ Operational Stock Helpers ------------------
@@ -12115,6 +12199,226 @@ def wms_kpis():
                            global_uph=global_uph, global_lph=global_lph,
                            global_accuracy=global_accuracy,
                            operator_rows=operator_rows, operators=operators)
+
+
+# ============================================================
+# Cycle Counting (Conteo cíclico) — Phase 1: list + create
+# ============================================================
+
+def _users_with_permission(perm_code):
+    """Return active users whose role grants the given permission code."""
+    return (db.session.query(User)
+            .join(Role, User.role_id == Role.id)
+            .join(RolePermission, Role.id == RolePermission.role_id)
+            .join(Permission, RolePermission.permission_id == Permission.id)
+            .filter(User.is_active == True,
+                    Permission.code == perm_code)
+            .distinct()
+            .order_by(User.username)
+            .all())
+
+
+def _next_cycle_count_code():
+    """Generate next CC-YYYYMMDD-### code."""
+    today_prefix = f"CC-{date.today().strftime('%Y%m%d')}"
+    last = (db.session.query(WmsCycleCountRun)
+            .filter(WmsCycleCountRun.code.like(f"{today_prefix}-%"))
+            .order_by(WmsCycleCountRun.id.desc())
+            .first())
+    if not last:
+        return f"{today_prefix}-001"
+    try:
+        n = int(last.code.rsplit('-', 1)[1]) + 1
+    except (ValueError, IndexError):
+        n = 1
+    return f"{today_prefix}-{n:03d}"
+
+
+@app.route('/wms/cycle-counts')
+@login_required
+@require_permission('wms:count_manage')
+def wms_cycle_counts_list():
+    f_status = (request.args.get('status', '') or '').strip().upper()
+    f_bucket = (request.args.get('bucket', '') or '').strip().upper()
+    f_operator = request.args.get('operator_id', type=int)
+
+    q = db.session.query(WmsCycleCountRun)
+    if f_status and f_status in WMS_CC_RUN_STATUSES:
+        q = q.filter(WmsCycleCountRun.status == f_status)
+    if f_bucket and f_bucket in WMS_STOCK_BUCKETS:
+        q = q.filter(WmsCycleCountRun.stock_bucket == f_bucket)
+    if f_operator:
+        q = q.filter(WmsCycleCountRun.assigned_to == f_operator)
+
+    runs = q.order_by(WmsCycleCountRun.created_at.desc()).limit(200).all()
+
+    # KPI cards
+    kpis = {
+        'total': db.session.query(func.count(WmsCycleCountRun.id)).scalar() or 0,
+        'in_progress': db.session.query(func.count(WmsCycleCountRun.id))
+                         .filter(WmsCycleCountRun.status.in_(('ASSIGNED', 'IN_PROGRESS'))).scalar() or 0,
+        'review_pending': db.session.query(func.count(WmsCycleCountRun.id))
+                            .filter(WmsCycleCountRun.status == 'REVIEW_PENDING').scalar() or 0,
+        'closed': db.session.query(func.count(WmsCycleCountRun.id))
+                    .filter(WmsCycleCountRun.status == 'CLOSED').scalar() or 0,
+    }
+
+    operators = _users_with_permission('wms:count_execute')
+
+    return render_template('wms_cycle_counts.html',
+                           runs=runs, kpis=kpis,
+                           operators=operators,
+                           filters={'status': f_status, 'bucket': f_bucket,
+                                    'operator_id': f_operator or ''},
+                           statuses=WMS_CC_RUN_STATUSES,
+                           buckets=list(WMS_STOCK_BUCKETS))
+
+
+@app.route('/wms/cycle-counts/new', methods=['GET'])
+@login_required
+@require_permission('wms:count_manage')
+def wms_cycle_counts_new():
+    warehouses = [w.code for w in WmsWarehouse.query.order_by(WmsWarehouse.code).all()] or ['MAIN']
+    locations = (db.session.query(WmsLocation)
+                 .order_by(WmsLocation.location_code).limit(2000).all())
+    operators = _users_with_permission('wms:count_execute')
+    return render_template('wms_cycle_count_new.html',
+                           warehouses=warehouses,
+                           locations=locations,
+                           operators=operators,
+                           buckets=list(WMS_STOCK_BUCKETS))
+
+
+@app.route('/wms/cycle-counts/create', methods=['POST'])
+@login_required
+@require_permission('wms:count_manage')
+def wms_cycle_counts_create():
+    warehouse_code = (request.form.get('warehouse_code', 'MAIN') or 'MAIN').strip().upper()
+    bucket_raw = (request.form.get('stock_bucket', '') or '').strip().upper()
+    stock_bucket = bucket_raw if bucket_raw in WMS_STOCK_BUCKETS else None  # blank = all
+    location_id = request.form.get('location_id', type=int)
+    location_prefix = (request.form.get('location_prefix', '') or '').strip()
+    sku_filter = (request.form.get('sku', '') or '').strip()
+    sku_filter = normalize_sku(sku_filter) if sku_filter else ''
+    note = (request.form.get('note', '') or '').strip()
+    assigned_to = request.form.get('assigned_to', type=int)
+
+    # Resolve warehouse_id
+    wh = WmsWarehouse.query.filter_by(code=warehouse_code).first()
+    if not wh:
+        flash(f'Warehouse {warehouse_code} no existe.', 'danger')
+        return redirect(url_for('wms_cycle_counts_new'))
+
+    # Validate assigned operator actually has the execution permission
+    if assigned_to:
+        eligible_ids = {u.id for u in _users_with_permission('wms:count_execute')}
+        if assigned_to not in eligible_ids:
+            flash('El operador seleccionado no tiene permiso para ejecutar conteos cíclicos.', 'danger')
+            return redirect(url_for('wms_cycle_counts_new'))
+
+    # Build inventory query for tasks
+    inv_q = (db.session.query(WmsInventory, WmsLocation, Product)
+             .join(WmsLocation, WmsInventory.location_id == WmsLocation.id)
+             .join(Product, WmsInventory.product_id == Product.id)
+             .filter(WmsInventory.warehouse_id == wh.id))
+
+    if stock_bucket:
+        inv_q = inv_q.filter(WmsInventory.stock_bucket == stock_bucket)
+    if location_id:
+        inv_q = inv_q.filter(WmsInventory.location_id == location_id)
+    elif location_prefix:
+        inv_q = inv_q.filter(WmsLocation.location_code.like(f'{location_prefix}%'))
+    if sku_filter:
+        inv_q = inv_q.filter(Product.sku == sku_filter)
+
+    rows = inv_q.order_by(WmsLocation.location_code, Product.sku).all()
+    if not rows:
+        flash('No se encontraron ítems de inventario que coincidan con los filtros. No se creó el conteo.', 'warning')
+        return redirect(url_for('wms_cycle_counts_new'))
+
+    # Create the run
+    code = _next_cycle_count_code()
+    initial_status = 'ASSIGNED' if assigned_to else 'DRAFT'
+    run = WmsCycleCountRun(
+        code=code,
+        note=note or None,
+        warehouse_code=warehouse_code,
+        stock_bucket=stock_bucket,
+        status=initial_status,
+        assigned_to=assigned_to,
+        assigned_at=datetime.utcnow() if assigned_to else None,
+        created_by_user_id=current_user.id,
+        total_tasks=len(rows),
+    )
+    db.session.add(run)
+    db.session.flush()
+
+    # Create tasks
+    for inv, loc, prod in rows:
+        task = WmsCycleCountTask(
+            run_id=run.id,
+            location_id=loc.id,
+            location=loc.location,
+            box_number=loc.box_number,
+            location_code=loc.location_code,
+            product_id=prod.id,
+            sku=prod.sku,
+            product_name=prod.name,
+            stock_bucket=inv.stock_bucket or 'MAIN',
+            expected_qty=inv.on_hand_units or 0,
+            status='OPEN',
+        )
+        db.session.add(task)
+
+    db.session.commit()
+    print(f"[COUNT] run created id={run.id} code={code} tasks={len(rows)} bucket={stock_bucket or 'ALL'} "
+          f"warehouse={warehouse_code} assigned_to={assigned_to or '-'}")
+    log_audit('cycle_count.create', status='success',
+              message=f'Conteo cíclico creado: {code} ({len(rows)} tareas)',
+              entity_type='WmsCycleCountRun', entity_id=run.id)
+
+    flash(f'Conteo {code} creado con {len(rows)} tareas.', 'success')
+    return redirect(url_for('wms_cycle_counts_review', run_id=run.id))
+
+
+@app.route('/wms/cycle-counts/<int:run_id>')
+@login_required
+@require_permission('wms:count_manage')
+def wms_cycle_counts_review(run_id):
+    run = WmsCycleCountRun.query.get_or_404(run_id)
+
+    f_only_var = request.args.get('only_variance') in ('1', 'true', 'on')
+    f_bucket = (request.args.get('bucket', '') or '').strip().upper()
+    f_status = (request.args.get('task_status', '') or '').strip().upper()
+
+    q = run.tasks
+    if f_only_var:
+        q = q.filter(WmsCycleCountTask.variance_type.in_(('SHORT', 'OVER')))
+    if f_bucket and f_bucket in WMS_STOCK_BUCKETS:
+        q = q.filter(WmsCycleCountTask.stock_bucket == f_bucket)
+    if f_status and f_status in WMS_CC_TASK_STATUSES:
+        q = q.filter(WmsCycleCountTask.status == f_status)
+
+    tasks = q.order_by(WmsCycleCountTask.location_code, WmsCycleCountTask.sku).all()
+
+    # Summary cards
+    all_tasks = run.tasks.all()
+    summary = {
+        'total': len(all_tasks),
+        'matched': sum(1 for t in all_tasks if t.variance_type == 'MATCH'),
+        'with_variance': sum(1 for t in all_tasks if t.variance_type in ('SHORT', 'OVER')),
+        'pending': sum(1 for t in all_tasks if t.status == 'OPEN'),
+        'counted': sum(1 for t in all_tasks if t.status == 'COUNTED'),
+        'adjusted': sum(1 for t in all_tasks if t.status == 'ADJUSTED'),
+    }
+
+    return render_template('wms_cycle_count_review.html',
+                           run=run, tasks=tasks, summary=summary,
+                           filters={'only_variance': f_only_var,
+                                    'bucket': f_bucket,
+                                    'task_status': f_status},
+                           buckets=list(WMS_STOCK_BUCKETS),
+                           task_statuses=WMS_CC_TASK_STATUSES)
 
 
 @app.route('/wms/mobile/issues')

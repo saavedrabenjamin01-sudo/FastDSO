@@ -243,6 +243,12 @@
           <span class="nav-icon"><i class="bi bi-speedometer2"></i></span>
           <span class="nav-text">WMS KPIs</span>
         </a>
+        {% if current_user.has_permission('wms:count_manage') %}
+        <a class="nav-link" href="{{ url_for('wms_cycle_counts_list') }}">
+          <span class="nav-icon"><i class="bi bi-clipboard-check"></i></span>
+          <span class="nav-text">Conteos cíclicos</span>
+        </a>
+        {% endif %}
       </div>
     </div>
     {% endif %}

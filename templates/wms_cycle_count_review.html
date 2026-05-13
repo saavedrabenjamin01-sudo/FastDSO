@@ -1,0 +1,220 @@
+{% extends 'base.html' %}
+{% block content %}
+
+{% set status_colors = {
+  'DRAFT': 'secondary', 'ASSIGNED': 'info', 'IN_PROGRESS': 'primary',
+  'COMPLETED': 'success', 'REVIEW_PENDING': 'warning', 'CLOSED': 'dark'
+} %}
+{% set var_colors = {'MATCH': 'success', 'SHORT': 'danger', 'OVER': 'warning', 'NOT_COUNTED': 'secondary'} %}
+{% set task_status_colors = {'OPEN': 'secondary', 'COUNTED': 'info', 'REVIEWED': 'primary', 'ADJUSTED': 'success'} %}
+
+<div class="query-wrap" style="max-width:1400px;">
+
+  <div class="query-header d-flex justify-content-between align-items-start flex-wrap gap-2">
+    <div>
+      <h1 class="query-title">Conteo cíclico — <code>{{ run.code }}</code></h1>
+      <p class="query-subtitle">
+        Estado:
+        <span class="badge bg-{{ status_colors.get(run.status, 'secondary') }} text-uppercase">{{ run.status }}</span>
+        &nbsp;·&nbsp; Warehouse: <strong>{{ run.warehouse_code }}</strong>
+        &nbsp;·&nbsp; Bucket: <strong>{{ run.stock_bucket or 'Todos' }}</strong>
+        &nbsp;·&nbsp; Operador: <strong>{{ run.assigned_operator.username if run.assigned_operator else '—' }}</strong>
+      </p>
+      {% if run.note %}<p class="text-muted small mb-0"><i class="bi bi-sticky me-1"></i>{{ run.note }}</p>{% endif %}
+    </div>
+    <div>
+      <a href="{{ url_for('wms_cycle_counts_list') }}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-arrow-left me-1"></i>Volver
+      </a>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-lg-2">
+      <div class="query-kpi-card">
+        <div class="query-kpi-badge" style="background:linear-gradient(135deg,#6366f1,#4f46e5);">
+          <i class="bi bi-list-task"></i>
+        </div>
+        <div class="query-kpi-body">
+          <span class="query-kpi-label">Tareas totales</span>
+          <span class="query-kpi-number">{{ summary.total }}</span>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-2">
+      <div class="query-kpi-card">
+        <div class="query-kpi-badge" style="background:linear-gradient(135deg,#22c55e,#16a34a);">
+          <i class="bi bi-check2"></i>
+        </div>
+        <div class="query-kpi-body">
+          <span class="query-kpi-label">Sin diferencias</span>
+          <span class="query-kpi-number">{{ summary.matched }}</span>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-2">
+      <div class="query-kpi-card">
+        <div class="query-kpi-badge" style="background:linear-gradient(135deg,#ef4444,#b91c1c);">
+          <i class="bi bi-exclamation-triangle"></i>
+        </div>
+        <div class="query-kpi-body">
+          <span class="query-kpi-label">Con diferencia</span>
+          <span class="query-kpi-number">{{ summary.with_variance }}</span>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-2">
+      <div class="query-kpi-card">
+        <div class="query-kpi-badge" style="background:linear-gradient(135deg,#f59e0b,#d97706);">
+          <i class="bi bi-hourglass"></i>
+        </div>
+        <div class="query-kpi-body">
+          <span class="query-kpi-label">Pendientes</span>
+          <span class="query-kpi-number">{{ summary.pending }}</span>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-2">
+      <div class="query-kpi-card">
+        <div class="query-kpi-badge" style="background:linear-gradient(135deg,#0ea5e9,#0284c7);">
+          <i class="bi bi-clipboard-data"></i>
+        </div>
+        <div class="query-kpi-body">
+          <span class="query-kpi-label">Contadas</span>
+          <span class="query-kpi-number">{{ summary.counted }}</span>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-2">
+      <div class="query-kpi-card">
+        <div class="query-kpi-badge" style="background:linear-gradient(135deg,#10b981,#047857);">
+          <i class="bi bi-check2-all"></i>
+        </div>
+        <div class="query-kpi-body">
+          <span class="query-kpi-label">Ajustadas</span>
+          <span class="query-kpi-number">{{ summary.adjusted }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="query-card mb-3">
+    <form method="get" action="{{ url_for('wms_cycle_counts_review', run_id=run.id) }}" class="query-form">
+      <div class="query-field">
+        <label class="query-label">Estado tarea</label>
+        <select class="form-select form-select-sm" name="task_status">
+          <option value="">Todos</option>
+          {% for s in task_statuses %}
+          <option value="{{ s }}" {% if filters.task_status == s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="query-field">
+        <label class="query-label">Bucket</label>
+        <select class="form-select form-select-sm" name="bucket">
+          <option value="">Todos</option>
+          {% for b in buckets %}
+          <option value="{{ b }}" {% if filters.bucket == b %}selected{% endif %}>{{ b }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="query-field">
+        <label class="query-label d-block">&nbsp;</label>
+        <div class="form-check">
+          <input type="checkbox" class="form-check-input" name="only_variance" value="1" id="onlyvar"
+            {% if filters.only_variance %}checked{% endif %}>
+          <label class="form-check-label small" for="onlyvar">Solo con diferencia</label>
+        </div>
+      </div>
+      <div class="query-field-btn d-flex gap-2">
+        <button type="submit" class="btn btn-primary btn-sm query-btn">
+          <i class="bi bi-funnel me-1"></i>Filtrar
+        </button>
+        <a href="{{ url_for('wms_cycle_counts_review', run_id=run.id) }}" class="btn btn-outline-secondary btn-sm query-btn">Limpiar</a>
+      </div>
+    </form>
+  </div>
+
+  {% if tasks %}
+  <div class="query-card">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Ubicación</th>
+            <th>Caja</th>
+            <th>SKU</th>
+            <th>Producto</th>
+            <th>Bucket</th>
+            <th class="text-end">Stock sistema</th>
+            <th class="text-end">Cantidad contada</th>
+            <th class="text-end">Diferencia</th>
+            <th>Tipo</th>
+            <th>Estado</th>
+            <th>Contado por</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in tasks %}
+          <tr>
+            <td>{{ t.location or '—' }}</td>
+            <td>{{ t.box_number or '—' }}</td>
+            <td><code>{{ t.sku or '—' }}</code></td>
+            <td><span class="text-truncate d-inline-block" style="max-width:280px;" title="{{ t.product_name }}">{{ t.product_name or '' }}</span></td>
+            <td>
+              <span class="badge {% if t.stock_bucket == 'WEB' %}bg-info text-dark{% else %}bg-secondary{% endif %}">{{ t.stock_bucket or 'MAIN' }}</span>
+            </td>
+            <td class="text-end fw-semibold">{{ "{:,}".format(t.expected_qty or 0) }}</td>
+            <td class="text-end">
+              {% if t.counted_qty is not none %}
+                {{ "{:,}".format(t.counted_qty) }}
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            <td class="text-end">
+              {% if t.variance_qty is not none %}
+                <span class="fw-semibold {% if t.variance_qty < 0 %}text-danger{% elif t.variance_qty > 0 %}text-warning{% endif %}">
+                  {{ "{:+,}".format(t.variance_qty) }}
+                </span>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if t.variance_type %}
+                <span class="badge bg-{{ var_colors.get(t.variance_type, 'secondary') }} text-uppercase">{{ t.variance_type }}</span>
+              {% else %}
+                <span class="text-muted small">—</span>
+              {% endif %}
+            </td>
+            <td>
+              <span class="badge bg-{{ task_status_colors.get(t.status, 'secondary') }} text-uppercase">{{ t.status }}</span>
+            </td>
+            <td class="small text-muted">{{ t.counted_by.username if t.counted_by else '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="query-card">
+    <div class="query-empty">
+      <div class="query-empty-wrap">
+        <i class="bi bi-funnel query-empty-icon"></i>
+        <div class="query-empty-title">Sin tareas con los filtros actuales</div>
+        <a href="{{ url_for('wms_cycle_counts_review', run_id=run.id) }}" class="btn btn-sm btn-outline-primary mt-2">Limpiar filtros</a>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="alert alert-info mt-3 small">
+    <i class="bi bi-info-circle me-1"></i>
+    Las acciones de <strong>ejecución móvil</strong>, <strong>aprobación de ajustes</strong> y <strong>aplicación de inventario</strong>
+    se habilitarán en las siguientes fases del módulo.
+  </div>
+</div>
+
+{% endblock %}

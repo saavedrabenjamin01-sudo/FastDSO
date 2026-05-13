@@ -1,0 +1,185 @@
+{% extends 'base.html' %}
+{% block content %}
+
+{% set fs = filters.get('status','') %}
+{% set fb = filters.get('bucket','') %}
+{% set fop = filters.get('operator_id','') %}
+
+{% set status_colors = {
+  'DRAFT': 'secondary', 'ASSIGNED': 'info', 'IN_PROGRESS': 'primary',
+  'COMPLETED': 'success', 'REVIEW_PENDING': 'warning', 'CLOSED': 'dark'
+} %}
+
+<div class="query-wrap" style="max-width:1400px;">
+
+  <div class="query-header d-flex justify-content-between align-items-start flex-wrap gap-2">
+    <div>
+      <h1 class="query-title">FastWMS — Conteos cíclicos</h1>
+      <p class="query-subtitle">Auditoría de inventario por ubicación. Crea conteos, asigna operadores y aprueba ajustes.</p>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a href="{{ url_for('wms_cycle_counts_new') }}" class="btn btn-primary query-btn">
+        <i class="bi bi-plus-circle me-1"></i>Crear conteo
+      </a>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-lg-3">
+      <div class="query-kpi-card">
+        <div class="query-kpi-badge" style="background:linear-gradient(135deg,#6366f1,#4f46e5);">
+          <i class="bi bi-clipboard-check"></i>
+        </div>
+        <div class="query-kpi-body">
+          <span class="query-kpi-label">Total conteos</span>
+          <span class="query-kpi-number">{{ kpis.total }}</span>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="query-kpi-card">
+        <div class="query-kpi-badge" style="background:linear-gradient(135deg,#0ea5e9,#0284c7);">
+          <i class="bi bi-play-circle"></i>
+        </div>
+        <div class="query-kpi-body">
+          <span class="query-kpi-label">En progreso</span>
+          <span class="query-kpi-number">{{ kpis.in_progress }}</span>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="query-kpi-card">
+        <div class="query-kpi-badge" style="background:linear-gradient(135deg,#f59e0b,#d97706);">
+          <i class="bi bi-hourglass-split"></i>
+        </div>
+        <div class="query-kpi-body">
+          <span class="query-kpi-label">Pendientes de revisión</span>
+          <span class="query-kpi-number">{{ kpis.review_pending }}</span>
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="query-kpi-card">
+        <div class="query-kpi-badge" style="background:linear-gradient(135deg,#22c55e,#16a34a);">
+          <i class="bi bi-check2-circle"></i>
+        </div>
+        <div class="query-kpi-body">
+          <span class="query-kpi-label">Cerrados</span>
+          <span class="query-kpi-number">{{ kpis.closed }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="query-card mb-3">
+    <form method="get" action="{{ url_for('wms_cycle_counts_list') }}" class="query-form">
+      <div class="query-field">
+        <label class="query-label">Estado</label>
+        <select class="form-select form-select-sm" name="status">
+          <option value="">Todos</option>
+          {% for s in statuses %}
+          <option value="{{ s }}" {% if fs == s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="query-field">
+        <label class="query-label">Bucket</label>
+        <select class="form-select form-select-sm" name="bucket">
+          <option value="">Todos</option>
+          {% for b in buckets %}
+          <option value="{{ b }}" {% if fb == b %}selected{% endif %}>{{ b }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="query-field">
+        <label class="query-label">Operador</label>
+        <select class="form-select form-select-sm" name="operator_id">
+          <option value="">Todos</option>
+          {% for op in operators %}
+          <option value="{{ op.id }}" {% if fop and fop|string == op.id|string %}selected{% endif %}>{{ op.username }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="query-field-btn d-flex gap-2">
+        <button type="submit" class="btn btn-primary btn-sm query-btn">
+          <i class="bi bi-funnel me-1"></i>Aplicar
+        </button>
+        <a href="{{ url_for('wms_cycle_counts_list') }}" class="btn btn-outline-secondary btn-sm query-btn">Limpiar</a>
+      </div>
+    </form>
+  </div>
+
+  {% if runs %}
+  <div class="query-card">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Código</th>
+            <th>Estado</th>
+            <th>Warehouse</th>
+            <th>Bucket</th>
+            <th class="text-end">Tareas</th>
+            <th class="text-end">Contadas</th>
+            <th class="text-end">Con diferencia</th>
+            <th>Operador</th>
+            <th>Creado</th>
+            <th>Creado por</th>
+            <th class="text-center">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in runs %}
+          <tr>
+            <td><code class="fw-bold">{{ r.code }}</code></td>
+            <td>
+              <span class="badge bg-{{ status_colors.get(r.status, 'secondary') }} text-uppercase">{{ r.status }}</span>
+            </td>
+            <td>{{ r.warehouse_code }}</td>
+            <td>
+              {% if r.stock_bucket %}
+                <span class="badge {% if r.stock_bucket == 'WEB' %}bg-info text-dark{% else %}bg-secondary{% endif %}">{{ r.stock_bucket }}</span>
+              {% else %}
+                <span class="text-muted small">Todos</span>
+              {% endif %}
+            </td>
+            <td class="text-end">{{ r.total_tasks }}</td>
+            <td class="text-end">{{ r.counted_tasks }}</td>
+            <td class="text-end">
+              {% if r.variance_tasks > 0 %}
+                <span class="text-danger fw-semibold">{{ r.variance_tasks }}</span>
+              {% else %}
+                <span class="text-muted">0</span>
+              {% endif %}
+            </td>
+            <td>{{ r.assigned_operator.username if r.assigned_operator else '—' }}</td>
+            <td class="small text-muted">{{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '' }}</td>
+            <td class="small text-muted">{{ r.created_by.username if r.created_by else '—' }}</td>
+            <td class="text-center text-nowrap">
+              <a href="{{ url_for('wms_cycle_counts_review', run_id=r.id) }}" class="btn btn-sm btn-outline-primary" title="Revisar">
+                <i class="bi bi-eye"></i> Revisar
+              </a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="query-card">
+    <div class="query-empty">
+      <div class="query-empty-wrap">
+        <i class="bi bi-clipboard query-empty-icon"></i>
+        <div class="query-empty-title">Aún no hay conteos cíclicos</div>
+        <div class="query-empty-hint">Crea el primero para auditar inventario por ubicación.</div>
+        <a href="{{ url_for('wms_cycle_counts_new') }}" class="btn btn-sm btn-primary mt-2">
+          <i class="bi bi-plus-circle me-1"></i>Crear conteo
+        </a>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

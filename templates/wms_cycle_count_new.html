@@ -1,0 +1,91 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<div class="query-wrap" style="max-width:900px;">
+
+  <div class="query-header">
+    <div>
+      <h1 class="query-title">Crear conteo cíclico</h1>
+      <p class="query-subtitle">Define el alcance del conteo. Las tareas se generan automáticamente desde el inventario actual.</p>
+    </div>
+  </div>
+
+  <div class="query-card">
+    <form method="post" action="{{ url_for('wms_cycle_counts_create') }}" class="row g-3">
+
+      <div class="col-md-6">
+        <label class="form-label fw-semibold">Warehouse</label>
+        <select class="form-select" name="warehouse_code" required>
+          {% for w in warehouses %}
+          <option value="{{ w }}" {% if w == 'MAIN' %}selected{% endif %}>{{ w }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label fw-semibold">Bucket de stock</label>
+        <select class="form-select" name="stock_bucket">
+          <option value="">Todos (MAIN + WEB)</option>
+          {% for b in buckets %}
+          <option value="{{ b }}">{{ b }}</option>
+          {% endfor %}
+        </select>
+        <div class="form-text small">Conteo separado por bucket para no mezclar MAIN y WEB.</div>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label fw-semibold">Ubicación específica <span class="text-muted small">(opcional)</span></label>
+        <select class="form-select" name="location_id">
+          <option value="">— Cualquiera —</option>
+          {% for loc in locations %}
+          <option value="{{ loc.id }}">{{ loc.location_code }}{% if loc.location and loc.box_number %} ({{ loc.location }} / Caja {{ loc.box_number }}){% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label fw-semibold">Prefijo de ubicación <span class="text-muted small">(opcional)</span></label>
+        <input type="text" class="form-control" name="location_prefix" placeholder="Ej: A1- o RACK-01">
+        <div class="form-text small">Se ignora si seleccionas una ubicación específica arriba.</div>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label fw-semibold">SKU específico <span class="text-muted small">(opcional)</span></label>
+        <input type="text" class="form-control" name="sku" placeholder="Ej: 000123">
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label fw-semibold">Asignar a operador <span class="text-muted small">(opcional)</span></label>
+        <select class="form-select" name="assigned_to">
+          <option value="">— Sin asignar (queda en DRAFT) —</option>
+          {% for op in operators %}
+          <option value="{{ op.id }}">{{ op.username }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-12">
+        <label class="form-label fw-semibold">Nota</label>
+        <textarea class="form-control" name="note" rows="2" placeholder="Motivo del conteo, instrucciones, etc."></textarea>
+      </div>
+
+      <div class="col-12 d-flex justify-content-between">
+        <a href="{{ url_for('wms_cycle_counts_list') }}" class="btn btn-outline-secondary">
+          <i class="bi bi-arrow-left me-1"></i>Cancelar
+        </a>
+        <button type="submit" class="btn btn-primary">
+          <i class="bi bi-clipboard-plus me-1"></i>Crear conteo
+        </button>
+      </div>
+
+    </form>
+  </div>
+
+  <div class="alert alert-info mt-3 small">
+    <i class="bi bi-info-circle me-1"></i>
+    Las tareas se crean a partir del inventario actual: una tarea por ubicación + producto + bucket.
+    El stock de sistema queda registrado como cantidad esperada al momento de la creación.
+  </div>
+</div>
+
+{% endblock %}
