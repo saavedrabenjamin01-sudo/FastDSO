@@ -23,6 +23,9 @@
   {% if wave.urgency_level == 'URGENT' %}<i class="bi bi-lightning-fill"></i>{% endif %}
   {{ wave.urgency_level or 'MEDIUM' }}
 </span>
+<a href="{{ url_for('wms_mobile_home') }}" class="m-topbar-icon-btn" title="Inicio WMS">
+  <i class="bi bi-house-door"></i>
+</a>
 {% endblock %}
 
 {% block nav_waves_active %}active{% endblock %}

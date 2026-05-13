@@ -12,6 +12,9 @@ Mis Waves
 {% endblock %}
 
 {% block topbar_right %}
+<a href="{{ url_for('wms_mobile_home') }}" class="m-topbar-icon-btn" title="Inicio WMS">
+  <i class="bi bi-house-door"></i>
+</a>
 <a href="{{ url_for('wms_waves_list') }}" class="m-topbar-icon-btn" title="Vista escritorio">
   <i class="bi bi-display"></i>
 </a>

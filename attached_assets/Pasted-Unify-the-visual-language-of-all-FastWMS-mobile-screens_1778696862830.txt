@@ -1,0 +1,188 @@
+Unify the visual language of all FastWMS mobile screens and add a global "back home" action that always returns to the WMS mobile portal.
+
+GOAL
+The unified WMS mobile hub already exists, but now all mobile subpages must feel part of the same product experience.
+We also need a clear and always-available way to return to the WMS mobile home portal.
+
+Add a global back-home action for mobile that returns users to:
+- /wms/mobile
+
+This must apply to all WMS mobile operational screens.
+
+==================================================
+PART 1 — GLOBAL MOBILE BACK HOME ACTION
+==================================================
+
+1) Add a visible and consistent back-home action in mobile WMS screens.
+This action must return to:
+- /wms/mobile
+
+2) It should appear in all mobile WMS pages, including:
+- /wms/mobile/my-waves
+- /wms/mobile/wave/<wave_id>
+- /wms/mobile/issues
+- /wms/mobile/issues/<issue_id>
+- /wms/mobile/moves
+- /wms/mobile/inventory
+- /wms/mobile/counts
+- /wms/mobile/counts/<run_id>
+- /wms/mobile/replenishment
+- /wms/mobile/replenishment/<run_id>
+- future packing mobile pages if they exist later
+
+3) UX recommendation:
+- show a top-left or top-row button:
+   "Inicio WMS"
+or
+   "Volver al portal"
+- optionally add a small home icon
+- must be easy to tap on phone
+- must be visually secondary to the main operational actions, but always accessible
+
+4) If mobile_base.html is already shared across these routes:
+- implement the back-home action there globally
+- allow page-level override only if truly needed
+
+==================================================
+PART 2 — VISUAL UNIFICATION OF MOBILE SUBPAGES
+==================================================
+
+Unify the design of all WMS mobile pages so they feel like one coherent operator app.
+
+Applies to:
+- My Waves
+- Picking screen
+- Issues list/detail
+- Moves
+- Inventory
+- Counts
+- Replenishment
+
+REQUIREMENTS:
+1) Use the same mobile_base.html structure everywhere
+2) Use the same header style:
+   - title
+   - back-home button
+   - optional user context
+3) Use the same card language:
+   - rounded cards
+   - soft shadows
+   - compact but readable spacing
+4) Use the same badge language:
+   - MAIN = blue
+   - WEB = purple
+   - urgent = red
+   - issue = orange/red
+   - done = green
+   - info = slate/gray-blue
+
+==================================================
+PART 3 — HEADER STANDARDIZATION
+==================================================
+
+Each WMS mobile page should have a consistent top header area.
+
+Header should include:
+- page title
+- back-home action to /wms/mobile
+- optional contextual subtitle or status
+- no desktop leftovers
+- no inconsistent spacing between pages
+
+Suggested page titles:
+- Mis Waves
+- Picking
+- Incidencias
+- Movimientos
+- Inventario
+- Conteos
+- Reabastecimiento
+
+==================================================
+PART 4 — SECTION / CARD CONSISTENCY
+==================================================
+
+Across all mobile pages:
+1) Replace any remaining desktop-like containers/tables with mobile cards where practical
+2) Use the same action button style everywhere
+3) Keep quantity blocks visually consistent
+4) Keep SKU/location/bucket presentation consistent
+
+Recommended card behavior:
+- primary information at top
+- secondary metadata below
+- actions grouped clearly
+- no noisy layout
+
+==================================================
+PART 5 — OPERATIONAL PAGE-SPECIFIC CLEANUP
+==================================================
+
+1) My Waves
+- same card style as the WMS mobile home
+- clear progress and urgency display
+- action button style consistent
+
+2) Picking
+- sticky bottom action bar
+- location/SKU/bucket blocks visually emphasized
+- scan sections visually aligned with other screens
+- status and reallocation badges consistent
+
+3) Issues
+- issue cards use same card language
+- status and reason badges aligned visually
+- detail page follows same spacing rhythm
+
+4) Moves
+- move form sections should look like operational cards
+- recent moves cards match the rest of the mobile UI
+
+5) Inventory
+- result cards consistent with mobile home and wave cards
+- avoid desktop table leftovers
+
+6) Counts
+- count cards aligned with picking cards
+- counted/system/variance blocks visually consistent
+
+7) Replenishment
+- task cards consistent with picking/count cards
+- source/destination blocks visually clear and aligned
+
+==================================================
+PART 6 — NAVIGATION CONSISTENCY
+==================================================
+
+If a bottom nav exists:
+- make the active section visually clear
+- keep "Inicio WMS" available as global home target
+
+If no bottom nav exists:
+- the back-home action in the header is mandatory
+
+==================================================
+PART 7 — SPANISH LABELS
+==================================================
+
+All labels must remain in Spanish.
+
+Recommended back-home label:
+- "Inicio WMS"
+or
+- "Volver al portal"
+
+Use one standard label everywhere.
+Preferred:
+- "Inicio WMS"
+
+==================================================
+PART 8 — DELIVERABLES
+==================================================
+
+Deliver:
+- a consistent global back-home button to /wms/mobile across all mobile WMS pages
+- unified visual language across all mobile subpages
+- consistent headers, cards, badges, spacing, and buttons
+- no desktop leftovers in mobile WMS routes
+- no breaking changes to existing mobile logic
