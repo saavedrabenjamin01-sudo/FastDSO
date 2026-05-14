@@ -1,0 +1,116 @@
+Fix FastWMS receiving so confirmed receipts automatically update CD stock used by FastDSO.
+
+PROBLEM
+The receiving module works well visually and operationally, but when a receipt is confirmed, the received quantity does NOT appear in CD stock.
+As a result:
+- WMS inventory may be updated
+- but FastDSO CD stock remains unchanged
+- distribution/planning still behaves as if the stock was never received
+
+GOAL
+When a receiving run is confirmed, the received quantities must automatically update both:
+1) WmsInventory (location-level WMS stock)
+2) CD stock operational layer used by FastDSO
+
+ROOT CAUSE TO CHECK
+The current receiving confirmation logic likely updates only WmsInventory and receiving logs, but not the CD stock layer (such as StockCD / InventoryBaseline scope='cd' / equivalent operational stock source).
+
+REQUIRED FIX
+
+==================================================
+PART 1 — CONFIRM RECEIVING MUST UPDATE WMS INVENTORY
+==================================================
+
+Keep the existing correct behavior:
+- resolve/create location
+- resolve/create product
+- find/create WmsInventory row by:
+   location_id + product_id + stock_bucket
+- increment on_hand_units by qty_received
+
+==================================================
+PART 2 — CONFIRM RECEIVING MUST ALSO UPDATE CD STOCK
+==================================================
+
+After updating WmsInventory, also update the CD stock layer used by FastDSO.
+
+Review how CD stock is currently calculated in the app.
+It likely uses one or more of:
+- StockCD
+- InventoryBaseline(scope='cd')
+- InventoryEvent with store_id IS NULL
+
+Update the relevant structures so the receipt becomes visible in the CD stock module automatically.
+
+Required behavior:
+- receiving into stock_bucket MAIN must increase CD stock for that SKU
+- receiving into stock_bucket WEB should only affect WEB if your CD logic supports bucket separation
+- do not silently ignore the CD layer
+
+If the app uses StockCD as the visible/admin source:
+- find or create StockCD row for the SKU
+- increment quantity accordingly
+
+If the app relies on InventoryBaseline + InventoryEvent:
+- create/update the correct baseline/event path so CD available stock reflects the receipt
+
+==================================================
+PART 3 — KEEP CD AND WMS CONSISTENT
+==================================================
+
+The receipt confirmation must leave the system in a consistent state:
+- WMS location stock increased
+- CD operational stock increased
+- receiving run marked completed
+- logs created
+
+Do not leave WMS and FastDSO stock out of sync.
+
+==================================================
+PART 4 — BUCKET / STOCK LOGIC
+==================================================
+
+Respect the existing shared-location / separate-stock-bucket model:
+- physical location is shared
+- bucket is logical
+
+Rules:
+- MAIN receipts should contribute to CD stock available for distribution
+- WEB receipts should not be mixed into MAIN distribution stock
+- do not merge buckets incorrectly
+
+==================================================
+PART 5 — DEBUG LOGS
+==================================================
+
+Add logs:
+[RCV] inventory updated sku=... bucket=... location=... qty_received=...
+[RCV] cd stock updated sku=... bucket=... qty_received=...
+[RCV] receiving completed run_id=...
+
+==================================================
+PART 6 — UI RESULT
+==================================================
+
+After confirming a receipt:
+- stock must appear immediately in the Stock CD module
+- no extra manual reload/sync process should be required beyond normal page refresh
+
+Optional success flash:
+- "Recepción confirmada y stock CD actualizado correctamente"
+
+==================================================
+PART 7 — SAFETY
+==================================================
+
+- use one transaction for receiving confirmation + stock updates
+- rollback if any part fails
+- do not break current WMS inventory logic
+- do not mix MAIN and WEB
+- do not touch unrelated user/admin tables
+
+DELIVERABLES
+- receiving confirmation updates WmsInventory
+- receiving confirmation updates CD stock used by FastDSO
+- stock CD reflects received quantities automatically
+- no WMS/CD desynchronization after receipt

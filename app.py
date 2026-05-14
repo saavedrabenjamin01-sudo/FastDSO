@@ -24722,6 +24722,26 @@ def confirm_receiving_run(run_id, user_id):
                 note=f'bucket={ln.stock_bucket} run={run.code}',
             ))
 
+            # CD operational stock layer (used by FastDSO):
+            # MAIN receipts contribute to CD stock available for distribution.
+            # WEB receipts stay isolated in WmsInventory only — never mixed into
+            # MAIN distribution stock per bucket separation rule.
+            if ln.stock_bucket == 'MAIN':
+                db.session.add(InventoryEvent(
+                    event_type='RECEIVING_IN',
+                    event_date=date.today(),
+                    product_id=prod.id,
+                    store_id=None,
+                    qty_delta=qty,
+                    ref_type='wms_receiving_line',
+                    ref_id=str(ln.id),
+                    note=f'bucket=MAIN run={run.code} loc={loc.location_code}',
+                    created_by_user_id=user_id,
+                ))
+                print(f"[RCV] cd stock updated sku={prod.sku} bucket=MAIN qty_received={qty}")
+            else:
+                print(f"[RCV] cd stock skipped sku={prod.sku} bucket={ln.stock_bucket} (WEB isolated)")
+
             ln.status = 'RECEIVED'
             ln.received_at = datetime.utcnow()
             ln.received_by_user_id = user_id
@@ -24729,7 +24749,7 @@ def confirm_receiving_run(run_id, user_id):
             ln.product_id = prod.id
             ln.location_code = loc.location_code
             total_units += qty
-            print(f"[RCV] inventory updated sku={prod.sku} old={old_qty} new={inv.on_hand_units} bucket={ln.stock_bucket} loc={loc.location_code}")
+            print(f"[RCV] inventory updated sku={prod.sku} old={old_qty} new={inv.on_hand_units} bucket={ln.stock_bucket} loc={loc.location_code} qty_received={qty}")
 
         move_run.total_lines = len(open_lines)
         move_run.total_units = total_units
@@ -24741,7 +24761,7 @@ def confirm_receiving_run(run_id, user_id):
             log_audit('wms_receiving_confirm', message=f'run_id={run.id} code={run.code} units={total_units}', entity_type='WmsReceivingRun', entity_id=run.id)
         except Exception as ae:
             print(f"[RCV] audit log failed (non-fatal): {ae}")
-        print(f"[RCV] run completed id={run.id} code={run.code} units={total_units}")
+        print(f"[RCV] receiving completed run_id={run.id} code={run.code} units={total_units}")
         return True, None
     except Exception as e:
         db.session.rollback()
@@ -24922,7 +24942,7 @@ def wms_receiving_detail(run_id):
 def wms_receiving_confirm(run_id):
     ok, err = confirm_receiving_run(run_id, current_user.id)
     if ok:
-        flash('Recepción confirmada y stock actualizado.', 'success')
+        flash('Recepción confirmada y stock CD actualizado correctamente.', 'success')
     else:
         flash(err or 'Error al confirmar.', 'danger')
     return redirect(url_for('wms_receiving_detail', run_id=run_id))
