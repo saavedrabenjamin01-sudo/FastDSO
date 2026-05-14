@@ -24245,8 +24245,28 @@ def _apply_replen_task(task, qty_confirmed, user_id):
 @login_required
 @require_permission('wms:replen_manage')
 def wms_replenishment_list():
-    runs = WmsReplenishmentRun.query.order_by(WmsReplenishmentRun.id.desc()).limit(200).all()
-    return render_template('wms_replenishment.html', runs=runs,
+    bucket = (request.args.get('stock_bucket') or '').strip().upper() or None
+    only_urgent = request.args.get('only_urgent') in ('1', 'on', 'true')
+    suggestions = []
+    try:
+        suggestions = generate_replenishment_suggestions(
+            stock_bucket=bucket, only_urgent=only_urgent)
+    except Exception as e:
+        print(f"[REPL] list suggestions error: {e}")
+    pending = (WmsReplenishmentRun.query
+               .filter(WmsReplenishmentRun.status.in_(('DRAFT', 'ASSIGNED', 'IN_PROGRESS')))
+               .order_by(WmsReplenishmentRun.id.desc()).limit(50).all())
+    runs = (WmsReplenishmentRun.query
+            .order_by(WmsReplenishmentRun.id.desc()).limit(100).all())
+    urgent_count = sum(1 for s in suggestions if s.get('is_urgent'))
+    return render_template('wms_replenishment.html',
+                           suggestions=suggestions[:80],
+                           total_suggestions=len(suggestions),
+                           urgent_count=urgent_count,
+                           pending=pending, runs=runs,
+                           buckets=WMS_STOCK_BUCKETS,
+                           bucket=bucket or '',
+                           only_urgent=only_urgent,
                            statuses=WMS_REPLEN_RUN_STATUSES)
 
 

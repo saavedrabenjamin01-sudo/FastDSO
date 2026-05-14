@@ -1,0 +1,154 @@
+Redesign the FastWMS replenishment module so it becomes operationally intuitive for warehouse users.
+
+PROBLEM
+The current replenishment module is too abstract and not easy to understand in day-to-day warehouse operation.
+Users do not quickly understand:
+- what it is for
+- when to use it
+- why a replenishment task exists
+
+GOAL
+Reframe replenishment as a simple operational tool:
+"Move stock from reserve/BULK locations to PICK locations when PICK stock is low, so picking does not fail."
+
+This must feel obvious to a warehouse manager/operator.
+
+==================================================
+PART 1 — LANGUAGE / CONCEPT REFRAME
+==================================================
+
+1) Change the user-facing language to be clearer and more operational.
+Preferred module label:
+- "Reposición interna"
+or
+- "Reposición de picking"
+
+Add helper subtitle:
+- "Mueve stock desde reserva a ubicaciones PICK para evitar quiebres en picking."
+
+2) Avoid overly abstract wording in the UI.
+Prefer:
+- Ubicación destino
+- Stock actual
+- Mínimo
+- Objetivo
+- Cantidad a mover
+- Ubicación origen
+- Motivo
+
+==================================================
+PART 2 — NEW MAIN SCREEN STRUCTURE
+==================================================
+
+Redesign the replenishment main page into two clear sections:
+
+SECTION A:
+"Ubicaciones PICK con bajo stock"
+
+Show cards or a clear table with:
+- SKU
+- Producto
+- Bucket de stock
+- Ubicación PICK destino
+- Caja destino
+- Stock actual en PICK
+- Mínimo configurado
+- Objetivo configurado
+- Cantidad sugerida a mover
+- Ubicación origen sugerida
+- Caja origen
+- Motivo:
+   "Bajo mínimo"
+   and optionally:
+   "Wave activa afectada"
+
+Primary action:
+- "Crear reposición"
+
+SECTION B:
+"Reposiciones pendientes"
+
+Show existing replenishment tasks/runs with:
+- SKU
+- origen
+- destino
+- cantidad
+- estado
+- asignado a
+- acción para ejecutar/ver
+
+==================================================
+PART 3 — BETTER EXPLANATION OF WHY
+==================================================
+
+Every suggestion must clearly explain why it exists.
+
+For each replenishment suggestion, show:
+- current PICK available units
+- min_units
+- target_units
+- shortage amount
+
+Example message:
+- "La ubicación PICK está bajo el mínimo."
+- "Se sugiere mover 6 unidades para alcanzar el objetivo."
+
+If an active wave/reservation exists, show badge:
+- "Impacta picking activo"
+
+==================================================
+PART 4 — SIMPLIFY ACTIONS
+==================================================
+
+Reduce user confusion:
+- main action should be "Crear reposición"
+- avoid exposing too much internal run/task terminology on the first screen
+- once created, then users can see the task/run detail
+
+If runs remain in the backend, that is fine.
+But the first user-facing experience should feel like:
+- detect shortage
+- suggest source
+- create replenishment
+
+==================================================
+PART 5 — EXECUTION VIEW
+==================================================
+
+The execution/detail view must be clearer:
+- SKU
+- producto
+- bucket
+- origen
+- destino
+- cantidad a mover
+- reason/motive
+- status
+
+This should feel similar to a move task, but clearly labeled as replenishment.
+
+==================================================
+PART 6 — VISUAL / UX
+==================================================
+
+1) Use stronger explanatory cards
+2) Highlight:
+- stock actual
+- mínimo
+- objetivo
+- qty sugerida
+3) Use urgency badges if wave impact exists
+4) Keep Spanish labels
+5) Match FastDSO/FastWMS style
+
+==================================================
+PART 7 — DELIVERABLES
+==================================================
+
+Deliver:
+- replenishment module renamed/reframed in UX
+- clearer main page focused on low PICK stock
+- clearer explanation of why replenishment is needed
+- simpler creation flow
+- pending replenishment tasks shown in a second section
+- more intuitive warehouse-oriented language

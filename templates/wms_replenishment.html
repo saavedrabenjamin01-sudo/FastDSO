@@ -1,67 +1,275 @@
 {% extends "base.html" %}
-{% block title %}Reabastecimiento interno{% endblock %}
+{% block title %}Reposición interna{% endblock %}
 {% block content %}
 <div class="container-fluid">
-  <div class="d-flex align-items-center justify-content-between mb-3">
+
+  <div class="d-flex align-items-center justify-content-between mb-2">
     <div>
-      <h3 class="mb-0"><i class="bi bi-arrow-down-up text-primary"></i> Reabastecimiento interno</h3>
-      <small class="text-muted">Movimientos BULK → PICK dentro del CD</small>
+      <h3 class="mb-0"><i class="bi bi-arrow-down-up text-primary"></i> Reposición interna</h3>
+      <small class="text-muted">
+        Mueve stock desde reserva (BULK) a ubicaciones <strong>PICK</strong> para evitar quiebres en picking.
+      </small>
     </div>
     <div class="d-flex gap-2">
-      <a href="{{ url_for('wms_location_thresholds') }}" class="btn btn-outline-secondary">
-        <i class="bi bi-sliders"></i> Umbrales (min/target)
+      <a href="{{ url_for('wms_location_thresholds') }}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-sliders"></i> Mín / Objetivo por ubicación
       </a>
-      <a href="{{ url_for('wms_replenishment_new') }}" class="btn btn-primary">
-        <i class="bi bi-plus-lg"></i> Nuevo run
+      <a href="{{ url_for('wms_replenishment_new') }}?generate=1" class="btn btn-outline-primary btn-sm">
+        <i class="bi bi-magic"></i> Vista avanzada
       </a>
     </div>
   </div>
 
-  <div class="card shadow-sm">
-    <div class="card-body p-0">
-      {% if runs %}
+  <div class="row g-2 mb-3">
+    <div class="col-md-3">
+      <div class="card border-0 shadow-sm">
+        <div class="card-body py-2">
+          <div class="text-muted small">Sugerencias detectadas</div>
+          <div class="h4 mb-0 text-primary">{{ total_suggestions }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card border-0 shadow-sm">
+        <div class="card-body py-2">
+          <div class="text-muted small">Impactan picking activo</div>
+          <div class="h4 mb-0 text-danger">{{ urgent_count }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card border-0 shadow-sm">
+        <div class="card-body py-2">
+          <div class="text-muted small">Reposiciones pendientes</div>
+          <div class="h4 mb-0 text-warning">{{ pending|length }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <form method="get" class="card border-0 shadow-sm">
+        <div class="card-body py-2 d-flex gap-2 align-items-end">
+          <div class="flex-grow-1">
+            <label class="form-label small mb-1">Bucket</label>
+            <select name="stock_bucket" class="form-select form-select-sm" onchange="this.form.submit()">
+              <option value="">Todos</option>
+              {% for b in buckets %}<option value="{{ b }}" {% if bucket==b %}selected{% endif %}>{{ b }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="form-check pb-1">
+            <input class="form-check-input" type="checkbox" name="only_urgent" value="1" id="onlyUrg" {% if only_urgent %}checked{% endif %} onchange="this.form.submit()">
+            <label class="form-check-label small" for="onlyUrg">Solo urgentes</label>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ========== SECTION A: low PICK stock ========== -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+      <div>
+        <strong><i class="bi bi-exclamation-circle text-warning"></i> Ubicaciones PICK con bajo stock</strong>
+        <div class="small text-muted">Sugerencias automáticas. Revisa, ajusta cantidad y crea la reposición.</div>
+      </div>
+      {% if suggestions %}
+      <button form="frmCreate" type="submit" name="action" value="create_run" class="btn btn-success">
+        <i class="bi bi-check2-circle"></i> Crear reposición ({{ suggestions|length }})
+      </button>
+      {% endif %}
+    </div>
+
+    {% if suggestions %}
+    <form id="frmCreate" method="POST" action="{{ url_for('wms_replenishment_new') }}">
       <div class="table-responsive">
         <table class="table table-hover mb-0 align-middle">
           <thead class="table-light">
             <tr>
-              <th>Código</th>
-              <th>Estado</th>
+              <th style="width:32px"><input type="checkbox" id="selAll" checked></th>
+              <th>SKU / Producto</th>
               <th>Bucket</th>
-              <th>Asignado a</th>
-              <th>Tareas</th>
-              <th>Creado</th>
-              <th></th>
+              <th>Ubicación destino (PICK)</th>
+              <th class="text-end">Stock actual</th>
+              <th class="text-end">Mínimo</th>
+              <th class="text-end">Objetivo</th>
+              <th>Origen sugerido</th>
+              <th class="text-end">Cantidad a mover</th>
+              <th>Motivo</th>
             </tr>
           </thead>
           <tbody>
-            {% for r in runs %}
-            <tr>
-              <td><strong>{{ r.code }}</strong></td>
+            {% for s in suggestions %}
+            {% set i = loop.index0 %}
+            <tr class="{% if s.is_urgent %}table-danger{% endif %}">
               <td>
-                {% set badge = {'DRAFT':'secondary','ASSIGNED':'info','IN_PROGRESS':'warning','COMPLETED':'success','CLOSED':'dark'} %}
-                <span class="badge bg-{{ badge.get(r.status,'secondary') }}">{{ r.status }}</span>
+                <input type="checkbox" name="sel_{{ i }}" class="row-sel" checked>
+                <input type="hidden" name="pid_{{ i }}" value="{{ s.product_id }}">
+                <input type="hidden" name="sku_{{ i }}" value="{{ s.sku }}">
+                <input type="hidden" name="pname_{{ i }}" value="{{ s.product_name }}">
+                <input type="hidden" name="bucket_{{ i }}" value="{{ s.stock_bucket }}">
+                <input type="hidden" name="srcid_{{ i }}" value="{{ s.source_location_id }}">
+                <input type="hidden" name="srcloc_{{ i }}" value="{{ s.source_location or '' }}">
+                <input type="hidden" name="srcbox_{{ i }}" value="{{ s.source_box_number or '' }}">
+                <input type="hidden" name="srccode_{{ i }}" value="{{ s.source_location_code or '' }}">
+                <input type="hidden" name="dstid_{{ i }}" value="{{ s.dest_location_id }}">
+                <input type="hidden" name="dstloc_{{ i }}" value="{{ s.dest_location or '' }}">
+                <input type="hidden" name="dstbox_{{ i }}" value="{{ s.dest_box_number or '' }}">
+                <input type="hidden" name="dstcode_{{ i }}" value="{{ s.dest_location_code or '' }}">
+                {% if s.is_urgent %}<input type="hidden" name="urg_{{ i }}" value="1">{% endif %}
               </td>
-              <td><span class="badge bg-{{ 'primary' if r.stock_bucket=='MAIN' else 'purple' }}" style="{% if r.stock_bucket=='WEB' %}background:#7c3aed;{% endif %}">{{ r.stock_bucket }}</span></td>
-              <td>{{ r.assigned_to.username if r.assigned_to else '—' }}</td>
-              <td>{{ r.tasks.count() }}</td>
-              <td><small>{{ r.created_at.strftime('%Y-%m-%d %H:%M') }}</small></td>
-              <td class="text-end">
-                <a href="{{ url_for('wms_replenishment_detail', run_id=r.id) }}" class="btn btn-sm btn-outline-primary">
-                  <i class="bi bi-eye"></i> Detalle
-                </a>
+              <td>
+                <strong>{{ s.sku }}</strong>
+                <div class="small text-muted text-truncate" style="max-width:240px">{{ s.product_name }}</div>
+              </td>
+              <td>
+                <span class="badge bg-{{ 'primary' if s.stock_bucket=='MAIN' else 'dark' }}"
+                      {% if s.stock_bucket=='WEB' %}style="background:#7c3aed!important"{% endif %}>
+                  {{ s.stock_bucket }}
+                </span>
+              </td>
+              <td class="small">
+                {{ s.dest_location_label }}
+                {% if s.dest_box_number %}<br><span class="text-muted">Caja {{ s.dest_box_number }}</span>{% endif %}
+              </td>
+              <td class="text-end {% if s.dest_available <= 0 %}text-danger fw-bold{% endif %}">
+                {{ s.dest_available }}
+              </td>
+              <td class="text-end">{{ s.min_units }}</td>
+              <td class="text-end">{{ s.target_units }}</td>
+              <td class="small">
+                {{ s.source_location_label }}
+                <span class="badge bg-{{ 'warning text-dark' if s.source_location_type=='BULK' else 'secondary' }} ms-1">{{ s.source_location_type }}</span>
+                <div class="text-muted">Disp. {{ s.source_available }}</div>
+              </td>
+              <td>
+                <input type="number" name="qty_{{ i }}" min="1" max="{{ s.qty_suggested }}"
+                       value="{{ s.qty_suggested }}" class="form-control form-control-sm" style="width:90px">
+              </td>
+              <td>
+                <span class="badge bg-warning text-dark">Bajo mínimo</span>
+                {% if s.is_urgent %}<br><span class="badge bg-danger mt-1"><i class="bi bi-lightning-fill"></i> Impacta picking activo</span>{% endif %}
               </td>
             </tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
-      {% else %}
-      <div class="text-center p-5 text-muted">
-        <i class="bi bi-inbox" style="font-size:2.5rem;"></i>
-        <p class="mt-2 mb-0">No hay runs de reabastecimiento.</p>
+      <div class="card-footer bg-light d-flex justify-content-between align-items-center">
+        <div class="small text-muted">
+          <i class="bi bi-info-circle"></i>
+          La ubicación PICK está bajo el mínimo. Se sugiere mover unidades para alcanzar el objetivo.
+          {% if total_suggestions > suggestions|length %}
+            Mostrando {{ suggestions|length }} de {{ total_suggestions }}.
+            <a href="{{ url_for('wms_replenishment_new') }}?generate=1{% if bucket %}&stock_bucket={{ bucket }}{% endif %}{% if only_urgent %}&only_urgent=1{% endif %}">Ver todas</a>
+          {% endif %}
+        </div>
+        <div class="d-flex gap-2">
+          <input class="form-control form-control-sm" name="note" placeholder="Nota (opcional)" style="width:240px">
+          <button type="submit" name="action" value="create_run" class="btn btn-success btn-sm">
+            <i class="bi bi-check2-circle"></i> Crear reposición
+          </button>
+        </div>
       </div>
-      {% endif %}
+    </form>
+    <script>
+      document.getElementById('selAll').addEventListener('change', function(){
+        document.querySelectorAll('.row-sel').forEach(cb => cb.checked = this.checked);
+      });
+    </script>
+    {% else %}
+    <div class="text-center p-5 text-muted">
+      <i class="bi bi-check-circle text-success" style="font-size:2.5rem;"></i>
+      <p class="mt-2 mb-1"><strong>Sin sugerencias.</strong></p>
+      <p class="small mb-0">
+        Todas las ubicaciones PICK están sobre su mínimo, o no tienen <strong>min_units / target_units</strong> configurados.
+      </p>
+      <a href="{{ url_for('wms_location_thresholds') }}" class="btn btn-sm btn-outline-secondary mt-3">
+        <i class="bi bi-sliders"></i> Configurar umbrales
+      </a>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ========== SECTION B: pending replenishments ========== -->
+  <div class="card shadow-sm mb-3">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+      <div>
+        <strong><i class="bi bi-clock-history text-primary"></i> Reposiciones pendientes</strong>
+        <div class="small text-muted">Tareas creadas que aún no están cerradas.</div>
+      </div>
+      <span class="badge bg-warning text-dark">{{ pending|length }}</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>Código</th><th>Estado</th><th>Bucket</th>
+            <th>Asignado a</th><th class="text-end">Tareas</th>
+            <th>Creado</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% set badge = {'DRAFT':'secondary','ASSIGNED':'info','IN_PROGRESS':'warning','COMPLETED':'success','CLOSED':'dark'} %}
+          {% for r in pending %}
+          <tr>
+            <td><strong>{{ r.code }}</strong></td>
+            <td><span class="badge bg-{{ badge.get(r.status,'secondary') }}">{{ r.status }}</span></td>
+            <td>
+              <span class="badge bg-{{ 'primary' if r.stock_bucket=='MAIN' else 'dark' }}"
+                    {% if r.stock_bucket=='WEB' %}style="background:#7c3aed!important"{% endif %}>{{ r.stock_bucket }}</span>
+            </td>
+            <td>{{ r.assigned_to.username if r.assigned_to else '—' }}</td>
+            <td class="text-end">{{ r.tasks.count() }}</td>
+            <td><small>{{ r.created_at.strftime('%Y-%m-%d %H:%M') }}</small></td>
+            <td class="text-end">
+              <a href="{{ url_for('wms_replenishment_detail', run_id=r.id) }}" class="btn btn-sm btn-outline-primary">
+                <i class="bi bi-eye"></i> Ver
+              </a>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="7" class="text-center text-muted py-3">No hay reposiciones pendientes.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
   </div>
+
+  <!-- Historial reciente -->
+  <details class="mb-4">
+    <summary class="text-muted small mb-2" style="cursor:pointer">
+      <i class="bi bi-archive"></i> Historial reciente ({{ runs|length }})
+    </summary>
+    <div class="card shadow-sm">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr><th>Código</th><th>Estado</th><th>Bucket</th><th>Asignado a</th><th class="text-end">Tareas</th><th>Creado</th><th></th></tr>
+          </thead>
+          <tbody>
+            {% for r in runs %}
+            <tr>
+              <td><strong>{{ r.code }}</strong></td>
+              <td><span class="badge bg-{{ badge.get(r.status,'secondary') }}">{{ r.status }}</span></td>
+              <td>
+                <span class="badge bg-{{ 'primary' if r.stock_bucket=='MAIN' else 'dark' }}"
+                      {% if r.stock_bucket=='WEB' %}style="background:#7c3aed!important"{% endif %}>{{ r.stock_bucket }}</span>
+              </td>
+              <td>{{ r.assigned_to.username if r.assigned_to else '—' }}</td>
+              <td class="text-end">{{ r.tasks.count() }}</td>
+              <td><small>{{ r.created_at.strftime('%Y-%m-%d %H:%M') }}</small></td>
+              <td class="text-end">
+                <a href="{{ url_for('wms_replenishment_detail', run_id=r.id) }}" class="btn btn-sm btn-outline-secondary">
+                  <i class="bi bi-eye"></i>
+                </a>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7" class="text-center text-muted py-3">Sin historial.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </details>
 </div>
 {% endblock %}
